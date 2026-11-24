@@ -19,9 +19,12 @@ admin. Lessons kept in §9.
 - **Household**: from HomersLab (or the standalone household). Roles: admin, adult, kid.
 - **Adults** have their own list, see everyone else's lists, claim wishes, keep ideas for others, take part in
   exchanges, and manage kids' lists.
-- **Kids** have a list that adults manage (open question Q1: do kids sign in and add wishes themselves?). A kid's list
-  is never public unless an adult approves (decision 2026-11-24).
-- **Guests** (grandparents, friends outside the household): open question Q2.
+- **Kids** sign in and add their own wishes; a parent (a manager of their list) approves each before others see it.
+  Kids never see claims on their own list. A kid's list is never shared outside the household unless a parent approves
+  (decisions 2026-11-24).
+- **Guests** (grandparents, friends outside the household): a **share link per list**, made by the list's owner (or a
+  kid's parent): view and claim with a name, no account; revocable; hashed at rest; the token in the URL fragment.
+  Guests see claims like any giver, never the owner's (decision 2026-11-24).
 
 ## 3. Core objects
 
@@ -30,17 +33,18 @@ admin. Lessons kept in §9.
 | **List** | One per person (decision 2026-11-24: one list per person; the occasion is a note on each wish). Its **owner** is the person it is for; **managers** are the adults who keep it (a kid's parents) |
 | **Wish** | Name, optional link, price (household currency, no default), quantity, note, priority (most wanted / high / normal / low), occasion tag. Added by the owner, a manager, or (as a suggestion) anyone |
 | **Suggestion** | A wish someone else adds to your list: you see it and approve or decline it |
-| **Idea** | A gift idea someone keeps **for** a person: never shown to that person (open question Q4) |
+| **Idea** | A gift idea an adult keeps **for** a person, shared with the other givers, never shown to that person (decision 2026-11-24) |
 | **Claim** | "I'll get this": who, how many, then *bought*. Seen by everyone except the list's owner (and, for a kid's list, except the kid) |
 | **Exchange** | A draw-names event: name, date, budget, participants, exclusions (pairs who never draw each other, both ways), optionally "not the same as last year" |
 | **Assignment** | One giver → one receiver in an exchange. Each giver sees only their own receiver; nobody sees the whole draw, admins included (ADR 0004) |
 
 ## 4. Screens
 
-- **My list**: your wishes, drag to reorder, add from a link (Q6) or by hand; suggestions waiting for you.
+- **My list**: your wishes, drag to reorder, add by hand (from a shop link in M5); suggestions waiting for you; a
+  kid's wishes waiting for a parent.
 - **Family**: everyone else's lists; claim, mark bought, see who claimed what (never on your own list).
 - **For you to give**: your exchanges, the person you drew, their list, the budget.
-- **Ideas** (Q4): what you keep in mind for each person.
+- **Ideas**: what the givers keep in mind for each person.
 - **Household** (admins): people, kids' managers, exchanges (create, draw, re-draw), import.
 
 Phone first; installable (PWA). No live claim stream to a list's owner, by construction.
@@ -60,20 +64,18 @@ wishes listed for that person to claim again. A dry run first; household names s
 | **M1** | Identity and household (HomersLab headers, standalone passkeys), lists and wishes, suggestions |
 | **M2** | Claims, with the surprise invariant enforced in one view layer and tested route by route (ADR 0003) |
 | **M3** | Exchanges: draw with exclusions, each giver's view, re-draw, last year's pairs (ADR 0004) |
-| **M4** | Sheet import; ideas (Q4); kids' managers and approvals |
-| **M5** | Polish: PWA, add from a link through a hardened egress (Q6), notifications (Q5) |
+| **M4** | Sheet import; ideas; kids' wishes with a parent's approval; share links for guests |
+| **M5** | Polish: PWA, Web Push, add from a shop link through Philobiblos' hardened egress (decision 2026-11-24) |
 | **Gate** | A red-team review before the first release, as for HomersLab and Philobiblos |
 
-## 7. Open questions (for the maintainer)
+## 7. Decisions (2026-11-24)
 
-- **Q1 Kids**: do kids sign in and add their own wishes (adults approve), or do adults keep kids' lists entirely?
-- **Q2 Guests**: who outside the household sees lists, and can they claim? (A share link per list, view-and-claim,
-  revocable? Or guests as light accounts in HomersLab's sign-in?)
-- **Q3 Draw reveal**: in the app only, or also a message (mail / push) with your person?
-- **Q4 Ideas**: keep secret ideas for others (never shown to the person)? Wishlist's "Surprise me" did this badly.
-- **Q5 Notifications**: "someone suggested a wish", "the draw is done": in-app only, Web Push, or HomersLab's ntfy?
-- **Q6 Add from a link**: fetch a shop page's title, price and picture? It means Keepsake fetches pages on the
-  internet (a hardened egress like Philobiblos'); without it people type wishes by hand.
+- **Kids**: sign in and add wishes; a parent approves each (Q1).
+- **Guests**: a share link per list, view and claim with a name, revocable (Q2).
+- **Ideas**: yes, kept for a person, shared with the other givers, never shown to the person (Q4).
+- **Add from a link**: later (M5), only through a hardened egress; typed wishes first (Q6).
+- Decided by default: the draw is revealed in the app ("For you to give"); a push says only "Your draw is ready",
+  never the name, so a lock screen gives nothing away (Q3). Notifications are in-app and Web Push, as Philobiblos (Q5).
 
 ## 8. Not in scope
 

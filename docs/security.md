@@ -22,7 +22,8 @@ that private is the surprise: the person a gift is for must not learn it from Ke
 | **A kid** | see their own claims; make their list public | kids are "meant for" on their list; public only with an adult's approval |
 | **A stranger on the LAN / internet** | reach the app, forge identity headers, take over an empty install | identity headers only from the configured proxy and only once the edge strips them; standalone binds 127.0.0.1; no first-visitor admin: the first admin comes from HomersLab's roles or a one-time setup link in the data folder (Philobiblos ADR 0010) |
 | **Another website** | CSRF | SameSite=Strict; Origin required on every change; `frame-ancestors 'none'` |
-| **A hostile shop page** (add from a link, Q6) | SSRF, huge or scripted pages, decoder exploits | only if Q6 is accepted: Philobiblos' egress client and media worker, or nothing fetched at all |
+| **A hostile shop page** (add from a link, M5) | SSRF, huge or scripted pages, decoder exploits | Philobiblos' egress client (allowlist, public addresses only, size and time caps) and media worker (pictures re-encoded) |
+| **Whoever holds a share link** | read and claim on one list; reach other lists | one list only, view and claim; the owner's claims rules unchanged; revocable; hashed at rest; token in the fragment; a kid's list only with a parent's approval |
 | **Someone with a backup** | read the draw | sealed with a key that is not in the database or its backup |
 
 ## Rules
