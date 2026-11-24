@@ -9,21 +9,22 @@ that private is the surprise: the person a gift is for must not learn it from Ke
 |---|---|---|
 | Wishes, prices, notes, kids' lists | SQLite | private to the household; kids especially |
 | Claims and "bought" marks | SQLite | the surprise: never to the person a wish is for |
-| Ideas kept for someone | SQLite | the surprise |
+| Ideas kept for someone, group-gift shares | SQLite | the surprise |
+| Who asked a question | SQLite | anonymity (ADR 0008) |
 | Exchange assignments | sealed per giver; key outside the database | nobody may list the whole draw |
-| Sessions, invite links | hashed in SQLite | sign-in |
+| Sessions, invite links, guest links | hashed in SQLite | sign-in, guest access |
 
 ## Actors and what stops them
 
 | Actor | Could try | Controls |
 |---|---|---|
-| **The person a gift is for** | read claims or ideas on their own list: page data, API, live updates, filters, sort order, counts, error messages, export | ADR 0003: one view layer, claims removed before any filter/sort/count, no claim stream to owners; a viewer × list matrix of raw-response tests |
-| **A curious adult or admin** | list the whole draw | ADR 0004: sealed per giver, no route lists pairs, audit without pairs |
+| **The person a gift is for** | read claims, shares or ideas for their wishes, or who asked them: page data, API, live updates, filters, sort order, counts, "gone" flags, error messages, export, the arrival time of a question | ADR 0003: one view layer, claims and shares removed before any filter/sort/count, no claim stream to the person; questions batched to the morning (ADR 0008); a viewer × wish matrix of raw-response tests |
+| **A curious adult, host or admin** | list the whole draw before the reveal; learn who asked | ADR 0004: sealed per giver, no route lists pairs, audit without pairs; ADR 0008: asker read only by `viewFor` |
 | **A kid** | see their own claims; make their list public | kids are "meant for" on their list; public only with an adult's approval |
 | **A stranger on the LAN / internet** | reach the app, forge identity headers, take over an empty install | identity headers only from the configured proxy and only once the edge strips them; standalone binds 127.0.0.1; no first-visitor admin: the first admin comes from HomersLab's roles or a one-time setup link in the data folder (Philobiblos ADR 0010) |
 | **Another website** | CSRF | SameSite=Strict; Origin required on every change; `frame-ancestors 'none'` |
 | **A hostile shop page** (add from a link, M5) | SSRF, huge or scripted pages, decoder exploits | Philobiblos' egress client (allowlist, public addresses only, size and time caps) and media worker (pictures re-encoded) |
-| **Whoever holds a share link** | read and claim on one list; reach other lists | one list only, view and claim; the owner's claims rules unchanged; revocable; hashed at rest; token in the fragment; a kid's list only with a parent's approval |
+| **Whoever holds a guest link** | reach other people or draws; keep using it after the celebration | ADR 0009: one person or one draw only; claims, questions and a name only; draw links expire after the celebration; revocable; hashed at rest; token in the fragment; a kid's wishes only with a parent's approval |
 | **Someone with a backup** | read the draw | sealed with a key that is not in the database or its backup |
 
 ## Rules
