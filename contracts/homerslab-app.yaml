@@ -11,7 +11,6 @@ volumes: [{ name: data, mount: /data, backup: true, description: SQLite database
 env:
   KEEPSAKE_MODE: homerslab
   KEEPSAKE_DATA_DIR: /data
-  KEEPSAKE_TZ: Europe/Zurich
   # Not set here: HomersLab gives KEEPSAKE_ORIGIN, KEEPSAKE_TRUSTED_PROXY (the edge's address on the app network) and,
   # once its edge keeps identity.edge's promise, KEEPSAKE_EDGE_IDENTITY (ADR 0001). From M1 Keepsake refuses to start in
   # homerslab mode without all three.
@@ -27,6 +26,7 @@ audience: household                        # adults and kids (kids' wishes wait 
 secrets:
   - { key: KEEPSAKE_SEALING_KEY, file: true, description: 'Key that seals the draw assignments (outside the database, ADR 0004); from M3' }
 config:
+  - { key: KEEPSAKE_TZ, optional: true, description: "The household's time zone (IANA, e.g. Europe/Berlin; default UTC): celebrations' days, the morning batch" }
   - { key: KEEPSAKE_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
 network:
   # Nothing leaves Keepsake until M5's add-from-a-link, which goes through a hardened egress (spec §7).

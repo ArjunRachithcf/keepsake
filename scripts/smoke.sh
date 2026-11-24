@@ -7,6 +7,8 @@ cd "$(dirname "$0")/.."
 tag="keepsake:smoke-$$"
 work="$(mktemp -d)"
 project="${KEEPSAKE_SMOKE_PROJECT:-keepsake-m0test-$$}"
+# Never another project: cleanup runs `down -v --remove-orphans`, which would remove every container of a live one.
+[[ $project =~ ^keepsake-[a-z0-9-]+$ ]] || { echo "smoke: project must start with keepsake-: $project" >&2; exit 2; }
 hl="$project-hl"
 dc() { KEEPSAKE_IMAGE="$tag" docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" "$@"; }
 cleanup() {

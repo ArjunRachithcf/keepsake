@@ -36,3 +36,18 @@ Each new route, job or import states its actor and control here before it merges
 | Route | Actor | Control |
 |---|---|---|
 | `GET /api/health` (M0) | anyone who reaches the app | public by design; answers only `ok`, the version and the mode, nothing of the household; every response carries the CSP (`frame-ancestors 'none'`), `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, COOP/CORP same-origin (`apps/server/src/security-headers.ts`); standalone binds 127.0.0.1 and compose publishes on 127.0.0.1 only |
+| `GET /*` (web app: the build's files and the page fallback) | anyone who reaches the app | the build output only (`KEEPSAKE_WEB_DIR`), served file by file (no wildcard, no dotfiles), no household data, the same headers; `index.html` only for a GET or HEAD outside `/api` and `/assets/`; anything else (another method, `/api`, `/api?…`, an unknown `/api/…` or `/assets/…` path) is the JSON 404, and `/api` answers `no-store` (`apps/server/src/paths.ts`) |
+
+## For M1: identity
+
+M0 reads no identity, so `homerslab` mode starts without `KEEPSAKE_TRUSTED_PROXY`, `KEEPSAKE_EDGE_IDENTITY` and
+`KEEPSAKE_ORIGIN`. When M1 adds them:
+
+- trust `X-HomersLab-*` only when `req.socket.remoteAddress` (with `::ffff:` normalised) is the configured proxy; keep
+  `trustProxy: false`, never use `req.ip` or `X-Forwarded-*`;
+- drop every `X-HomersLab-*` header from any other source;
+- refuse to start in `homerslab` mode without all three, as the manifest promises;
+- the smoke test's stand-in `KEEPSAKE_TRUSTED_PROXY=127.0.0.1` is not the source address behind `-p` (docker-proxy or
+  the bridge's gateway): M1's smoke test uses the real address, or probes only public routes;
+- the logger's redaction lists `x-homerslab-person` and `x-homerslab-name`: add `x-homerslab-role` (inert today, as
+  Fastify's request serializer logs no headers, but complete if header logging is turned on).

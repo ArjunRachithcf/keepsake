@@ -8,7 +8,7 @@ services:
     environment:
       KEEPSAKE_MODE: standalone
       KEEPSAKE_DATA_DIR: /data
-      KEEPSAKE_TZ: ${KEEPSAKE_TZ:-Europe/Zurich}
+      KEEPSAKE_TZ: ${KEEPSAKE_TZ:-UTC}
     volumes: [ "./data:/data:Z" ]
     ports: [ "127.0.0.1:${KEEPSAKE_PORT:-8080}:8080" ]
     read_only: true
@@ -16,5 +16,7 @@ services:
     cap_drop: [ ALL ]
     security_opt: [ "no-new-privileges:true" ]
     mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 1.0
     pids_limit: 64
     restart: unless-stopped

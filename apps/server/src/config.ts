@@ -25,7 +25,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // and compose publishes the port on 127.0.0.1 only.
     host: env.KEEPSAKE_HOST ?? '127.0.0.1',
     port,
-    timezone: env.KEEPSAKE_TZ ?? 'Europe/Zurich',
+    timezone: env.KEEPSAKE_TZ ?? 'UTC',
     webDir: env.KEEPSAKE_WEB_DIR ?? null,
   };
 }

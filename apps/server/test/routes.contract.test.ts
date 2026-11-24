@@ -41,7 +41,12 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
     }
   });
 
-  it('only /health is open (deny by default from M1)', () => {
-    expect(ops.filter((o) => Array.isArray(o.op.security) && o.op.security.length === 0).map((o) => o.op.operationId)).toEqual(['health']);
+  // Deny by default: the top-level requirement holds no anonymous `{}`, and every operation's effective security (its
+  // own, else the top level) is non-empty and has no `{}`, except health's `[]`.
+  it('only /health is open (deny by default)', () => {
+    const isAnonymous = (sec: unknown) => !Array.isArray(sec) || sec.length === 0 || sec.some((r) => Object.keys(r as object).length === 0);
+    expect(isAnonymous(spec.security), 'top-level security').toBe(false);
+    const open = ops.filter((o) => isAnonymous(o.op.security ?? spec.security)).map((o) => o.op.operationId);
+    expect(open).toEqual(['health']);
   });
 });
