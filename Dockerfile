@@ -1,0 +1,32 @@
+# Keepsake: one image for HomersLab and standalone (ADR 0001). Runs as `node`, needs no writable root (/data is the
+# only volume; compose mounts the root read-only).
+ARG NODE_IMAGE=node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
+
+FROM ${NODE_IMAGE} AS build
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true
+RUN corepack enable
+WORKDIR /src
+COPY . .
+RUN pnpm install --frozen-lockfile \
+ && pnpm --filter @keepsake/web build \
+ && pnpm --filter @keepsake/server build \
+ && pnpm --filter @keepsake/server deploy --prod --legacy /out \
+ && cp -r apps/server/dist /out/ \
+ && cp -r apps/web/dist /out/web
+
+FROM ${NODE_IMAGE}
+ENV NODE_ENV=production \
+    KEEPSAKE_HOST=0.0.0.0 KEEPSAKE_PORT=8080 \
+    KEEPSAKE_DATA_DIR=/data KEEPSAKE_WEB_DIR=/app/web
+WORKDIR /app
+COPY --from=build /out/node_modules ./node_modules
+COPY --from=build /out/dist ./dist
+COPY --from=build /out/web ./web
+COPY LICENSE NOTICE ./
+RUN mkdir -p /data && chown node:node /data && chmod 700 /data
+USER node
+VOLUME /data
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+CMD ["node", "dist/main.js"]
