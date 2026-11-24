@@ -1,0 +1,35 @@
+# HomersLab catalog manifest (shape to align with HomersLab's feedstock format when it is final; modelled on Philobiblos')
+id: keepsake
+name: Keepsake
+tagline: Wishes, celebrations and draws for a family, the surprise kept
+category: Family
+icon: icon.svg
+version: 0.1.0
+image: ghcr.io/<owner>/keepsake:0.1.0@sha256:<digest>   # placeholders until the first release; scripts/check-release.sh refuses them
+ports: [{ container: 8080, protocol: http, public: false }]
+volumes: [{ name: data, mount: /data, backup: true, description: SQLite database (wishes, celebrations, sealed draws) }]
+env:
+  KEEPSAKE_MODE: homerslab
+  KEEPSAKE_DATA_DIR: /data
+  KEEPSAKE_TZ: Europe/Zurich
+  # Not set here: HomersLab gives KEEPSAKE_ORIGIN, KEEPSAKE_TRUSTED_PROXY (the edge's address on the app network) and,
+  # once its edge keeps identity.edge's promise, KEEPSAKE_EDGE_IDENTITY (ADR 0001). From M1 Keepsake refuses to start in
+  # homerslab mode without all three.
+identity:
+  # Required of HomersLab, not set by Keepsake: the edge deletes every X-HomersLab-* header a client sends and sets the
+  # three below itself (HomersLab #236). HomersLab answers by setting KEEPSAKE_EDGE_IDENTITY to this value.
+  edge: homerslab-v1
+  forwarded_header: X-HomersLab-Person     # stable person id
+  forwarded_name_header: X-HomersLab-Name
+  forwarded_role_header: X-HomersLab-Role  # admin | adult | kid
+  household_api: true                      # later: who manages which kid
+audience: household                        # adults and kids (kids' wishes wait for a parent, spec §2)
+secrets:
+  - { key: KEEPSAKE_SEALING_KEY, file: true, description: 'Key that seals the draw assignments (outside the database, ADR 0004); from M3' }
+config:
+  - { key: KEEPSAKE_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
+network:
+  # Nothing leaves Keepsake until M5's add-from-a-link, which goes through a hardened egress (spec §7).
+  egress: []
+health: /api/health
+resources: { memory: 256Mi, cpu: 0.25 }

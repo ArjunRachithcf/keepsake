@@ -1,0 +1,48 @@
+openapi: 3.1.0
+info:
+  title: Keepsake API
+  version: 0.1.0
+  description: |
+    HTTP API of Keepsake. Same under HomersLab and standalone (ADR 0001). Deny by default: every operation needs a
+    person unless it declares `security: []`. Claims, group-gift shares, ideas and the asker of a question are never
+    sent to the person a wish is for (ADR 0003). M0 has the health route only; docs/security.md lists each route's
+    actor and control.
+servers: [{ url: /api }]
+security: [ { homerslabPerson: [] }, { session: [] } ]
+tags: [{ name: system }]
+
+paths:
+  /health:
+    get:
+      tags: [system]
+      operationId: health
+      summary: Whether the server runs, its version and mode (public; says nothing about the household)
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+components:
+  securitySchemes:
+    homerslabPerson:
+      type: apiKey
+      in: header
+      name: X-HomersLab-Person
+      description: 'homerslab mode: set by the edge, trusted only from KEEPSAKE_TRUSTED_PROXY once KEEPSAKE_EDGE_IDENTITY=homerslab-v1 (ADR 0001)'
+    session:
+      type: apiKey
+      in: cookie
+      name: keepsake_session
+      description: 'standalone: a passkey session (HttpOnly; Secure; SameSite=Strict). From M1.'
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [ok, version, mode]
+      properties:
+        ok: { type: boolean }
+        version: { type: string }
+        mode: { enum: [homerslab, standalone] }
