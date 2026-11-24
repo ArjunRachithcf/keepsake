@@ -30,3 +30,9 @@ that private is the surprise: the person a gift is for must not learn it from Ke
 ## Rules
 
 Each new route, job or import states its actor and control here before it merges (ADR 0006).
+
+## Routes
+
+| Route | Actor | Control |
+|---|---|---|
+| `GET /api/health` (M0) | anyone who reaches the app | public by design; answers only `ok`, the version and the mode, nothing of the household; every response carries the CSP (`frame-ancestors 'none'`), `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, COOP/CORP same-origin (`apps/server/src/security-headers.ts`); standalone binds 127.0.0.1 and compose publishes on 127.0.0.1 only |

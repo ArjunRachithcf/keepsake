@@ -1,0 +1,25 @@
+{
+  "name": "@keepsake/server",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/static": "10.1.11",
+    "@keepsake/contracts": "workspace:*",
+    "@keepsake/draw": "workspace:*",
+    "fastify": "5.12.8"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "esbuild": "^0.28.2",
+    "tsx": "4.23.15",
+    "yaml": "2.9.1"
+  }
+}
