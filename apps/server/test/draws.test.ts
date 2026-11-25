@@ -8,7 +8,7 @@
 //   their receiver;
 // - the database alone (a copy, a backup) says nothing about who drew whom: the raw tables of two households with
 //   different pairs differ only in the sealed bytes, every sealed row has one length, and nothing opens without the key.
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -18,7 +18,7 @@ import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { RUNS_A_DAY, sealAssignments } from '../src/draws/draws';
 import { openReceiver, sealingKey } from '../src/draws/sealed';
-import { loadConfig } from '../src/config';
+import { isInside, loadConfig } from '../src/config';
 import { ORIGIN, TEST_KEY, homerslab, household, inDays, sessionCookie, standalone, withDraws } from './helpers';
 
 const NOW = '2026-11-01T10:00:00.000Z';
@@ -59,10 +59,9 @@ const IN = ['p_alex', 'p_sam', 'p_robin', 'p_quinn', 'p_mia'];
 const pid = (person: string) => `dp_${person.slice(2)}`;
 const audit = (db: Db) => db.select().from(t.audit).all();
 
-/** The draw's participants: Quinn and (kids drawing) Mia join Alex, Sam and Robin. */
+/** The draw's participants: Quinn joins Alex, Sam, Robin and (kids drawing) Mia. */
 function fiveInDraw(db: Db) {
-  db.update(t.draw).set({ kidsDraw: 1 }).where(eq(t.draw.id, 'd_xmas')).run();
-  for (const p of ['quinn', 'mia']) db.insert(t.drawParticipant).values({ id: `dp_${p}`, drawId: 'd_xmas', kind: 'person', personId: `p_${p}`, createdAt: NOW }).run();
+  db.insert(t.drawParticipant).values({ id: 'dp_quinn', drawId: 'd_xmas', kind: 'person', personId: 'p_quinn', createdAt: NOW }).run();
 }
 
 describe('setting up a draw', () => {
@@ -74,7 +73,7 @@ describe('setting up a draw', () => {
     expect((await as('mia').send('POST', '/api/celebrations/c_cousins/draw', body)).statusCode).toBe(403);
     const ok = await as('alex').send('POST', '/api/celebrations/c_cousins/draw', body);
     expect(ok.statusCode, ok.body).toBe(201);
-    expect(ok.json()).toMatchObject({ drawn: false, opened: 0, total: 3, canManage: true, revealOn: null, exclusions: [], mine: { opened: false, canOpen: false, receiver: null } });
+    expect(ok.json()).toMatchObject({ drawn: false, opened: 0, total: 3, canManage: true, revealOn: null, exclusions: [], mine: { opened: false, canOpen: false, receiver: null, unreadable: false } });
     expect((await as('alex').send('POST', '/api/celebrations/c_cousins/draw', body)).json()).toEqual({ error: 'this celebration has a draw already' });
     // a celebration whose host left: the admins run it
     db.update(t.celebration).set({ hostId: null }).where(eq(t.celebration.id, 'c_cousins')).run();
@@ -124,19 +123,20 @@ describe('setting up a draw', () => {
 });
 
 describe('drawing the names', () => {
-  it('refuses an impossible set of rules naming the rule, audited without pairs', async () => {
+  it('refuses rules that cannot be drawn, or that let someone work out another\'s person, naming the rule; audited without pairs', async () => {
     const db = home();
     const as = await start(db);
-    // three people, two of them a couple: one of the three can only draw... the couple's partner
-    await as('alex').send('PATCH', DRAW, { exclusions: [['p_sam', 'p_robin']] });
-    const r = await as('alex').send('POST', `${DRAW}/run`);
-    expect(r.statusCode).toBe(409);
-    expect(r.json()).toEqual({ error: 'who shouldn\'t draw whom leaves someone nobody to draw: loosen it' });
-    await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam'], exclusions: [] });
-    expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'a draw needs at least 3 people' });
+    const run = async (patch: object) => { await as('alex').send('PATCH', DRAW, patch); return (await as('alex').send('POST', `${DRAW}/run`)).json(); };
+    expect(await run({ exclusions: [['p_alex', 'p_sam'], ['p_alex', 'p_robin'], ['p_alex', 'p_mia']] }))
+      .toEqual({ error: 'who shouldn\'t draw whom leaves someone nobody to draw: loosen it' });
+    // two couples among four: whoever draws, their partner's person is certain (review H3)
+    expect(await run({ exclusions: [['p_alex', 'p_sam'], ['p_robin', 'p_mia']] }))
+      .toEqual({ error: 'these rules let someone work out another\'s person: add people or loosen who shouldn\'t draw whom' });
+    // three: whoever opens theirs knows the whole draw
+    expect(await run({ people: ['p_alex', 'p_sam', 'p_robin'], exclusions: [] })).toEqual({ error: 'a draw needs at least 4 people' });
     expect(db.select().from(t.drawAssignment).all()).toEqual([]);
     const rows = audit(db);
-    expect(rows.filter((a) => a.action === 'draw_refused')).toHaveLength(2);
+    expect(rows.filter((a) => a.action === 'draw_refused')).toHaveLength(3);
     // the audit names who did what to which draw: nothing else
     for (const a of rows) expect(Object.keys(a).sort()).toEqual(['action', 'actorId', 'at', 'id', 'subjectId']);
     expect(new Set(rows.map((a) => a.subjectId))).toEqual(new Set(['d_xmas']));
@@ -150,7 +150,7 @@ describe('drawing the names', () => {
     expect((await as('sam').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'the names are not drawn yet' });
     const r = await as('alex').send('POST', `${DRAW}/run`);
     expect(r.statusCode, r.body).toBe(200);
-    expect(r.json()).toMatchObject({ drawn: true, opened: 0, total: 5, mine: { opened: false, canOpen: true, receiver: null }, pairs: null });
+    expect(r.json()).toMatchObject({ drawn: true, opened: 0, total: 5, mine: { opened: false, canOpen: true, receiver: null, unreadable: false }, pairs: null });
     expect((await as('leo').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'you are not in this draw' });
     const received = new Set<string>();
     for (const who of ['sam', 'robin', 'quinn', 'mia', 'alex'] as const) {
@@ -174,7 +174,7 @@ describe('drawing the names', () => {
     const as = await start(db);
     await as('alex').send('PATCH', DRAW, { drawTogetherAt: new Date(Date.now() + 3_600_000).toISOString() });
     await as('alex').send('POST', `${DRAW}/run`);
-    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: false, canOpen: false, receiver: null });
+    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: false, canOpen: false, receiver: null, unreadable: false });
     expect((await as('sam').get('/api/home')).json().celebrations.find((c: { id: string }) => c.id === 'c_xmas').draw.mine).toBe('waiting');
     expect((await as('sam').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'not yet: everyone opens together at the set time' });
     await as('alex').send('PATCH', DRAW, { drawTogetherAt: new Date(Date.now() - 1000).toISOString() });
@@ -200,10 +200,13 @@ describe('drawing the names', () => {
     expect(JSON.stringify(standalone({ KEEPSAKE_SEALING_KEY: secret }))).not.toContain(secret);
   });
 
-  it('is limited to a number of tries a day', async () => {
+  it('is limited to a number of tries a day per celebration and year, which removing and making the draw again does not reset', async () => {
     const db = home();
     const as = await start(db);
-    for (let i = 0; i < RUNS_A_DAY; i++) expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    for (let i = 0; i < RUNS_A_DAY - 2; i++) expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    expect((await as('alex').send('DELETE', DRAW)).statusCode).toBe(204);
+    expect((await as('alex').send('POST', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_quinn'] })).statusCode).toBe(201);
+    for (let i = 0; i < 2; i++) expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
     expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'the names were drawn often today: try again tomorrow' });
   });
 });
@@ -220,7 +223,7 @@ describe('re-drawing', () => {
     const third = await as('alex').send('POST', `${DRAW}/run`);
     expect(third.statusCode).toBe(200);
     expect(third.json().redrawnAt).not.toBeNull();
-    expect((await as('sam').get(DRAW)).json()).toMatchObject({ opened: 0, mine: { opened: false, canOpen: true, receiver: null } });
+    expect((await as('sam').get(DRAW)).json()).toMatchObject({ opened: 0, mine: { opened: false, canOpen: true, receiver: null, unreadable: false } });
     expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'redrawn', 'redrawn']);
   });
 
@@ -235,7 +238,7 @@ describe('re-drawing', () => {
     expect(r.json()).toMatchObject({ total: 4, opened: 0 });
     expect(db.select().from(t.drawAssignment).all()).toHaveLength(4);
     const bad = await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam'] });
-    expect(bad.json()).toEqual({ error: 'a draw needs at least 3 people' });
+    expect(bad.json()).toEqual({ error: 'a draw needs at least 4 people' });
     expect((await as('alex').get(DRAW)).json().total).toBe(4);
     expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'draw_changed', 'redrawn', 'draw_refused']);
   });
@@ -272,7 +275,7 @@ describe('re-drawing', () => {
     const as = await start(db);
     await as('alex').send('POST', `${DRAW}/run`);
     const last = db.select().from(t.draw).get()!;
-    db.update(t.draw).set({ year: last.year - 1 }).where(eq(t.draw.id, 'd_xmas')).run();
+    db.update(t.draw).set({ year: last.year - 1, occasionOn: `${last.year - 1}-12-24` }).where(eq(t.draw.id, 'd_xmas')).run();
     expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
     expect((await as('alex').send('PATCH', DRAW, { budgetMinor: 100 })).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
     expect((await as('alex').send('DELETE', DRAW)).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
@@ -287,8 +290,8 @@ describe('re-drawing', () => {
     const people = ['p_alex', 'p_sam', 'p_mia', 'p_leo', 'p_quinn'];
     const out = await as('alex').send('PATCH', '/api/celebrations/c_xmas', { people });
     expect(out.statusCode).toBe(200);
-    expect((await as('alex').get(DRAW)).json().people.map((p: { id: string }) => p.id)).toEqual(['p_alex', 'p_sam']);
-    await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_quinn'] });
+    expect((await as('alex').get(DRAW)).json().people.map((p: { id: string }) => p.id)).toEqual(['p_alex', 'p_mia', 'p_sam']);
+    await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_quinn', 'p_mia'] });
     await as('alex').send('POST', `${DRAW}/run`);
     expect((await as('alex').send('PATCH', '/api/celebrations/c_xmas', { people: ['p_alex', 'p_sam', 'p_mia'] })).json())
       .toEqual({ error: 'they are in the draw: take them out of the draw first' });
@@ -319,12 +322,29 @@ describe('not last year\'s person', () => {
     }
   });
 
-  it('refused naming the rule when it leaves no way', async () => {
-    // Alex kept apart from Sam and Robin can only draw Quinn, who drew Alex last year: no way left for Quinn and the rest
+  it('whether it may be drawn never depends on last year\'s pairs: the same answer for every last year (review M1)', async () => {
+    const lasts: [string, string][][] = [
+      [['alex', 'sam'], ['sam', 'robin'], ['robin', 'quinn'], ['quinn', 'alex']],
+      [['alex', 'robin'], ['robin', 'alex'], ['sam', 'quinn'], ['quinn', 'sam']],
+      [['alex', 'quinn'], ['quinn', 'robin'], ['robin', 'sam'], ['sam', 'alex']],
+    ];
+    for (const exclusions of [[], [['p_alex', 'p_sam']], [['p_alex', 'p_sam'], ['p_robin', 'p_quinn']]]) {
+      const answers = new Set<string>();
+      for (const last of lasts) {
+        const { as } = await lastYear(last);
+        await as('alex').send('PATCH', DRAW, { exclusions });
+        const r = await as('alex').send('POST', `${DRAW}/run`);
+        answers.add(r.statusCode === 200 ? 'drawn' : r.body);
+      }
+      expect(answers.size, JSON.stringify(exclusions)).toBe(1);
+    }
+  });
+
+  it('with the rule on, everyone keeps ⌈n/2⌉+1 people they may draw; off, the same exclusion is fine', async () => {
     const { as } = await lastYear([['alex', 'sam'], ['sam', 'robin'], ['robin', 'quinn'], ['quinn', 'alex']]);
-    await as('alex').send('PATCH', DRAW, { exclusions: [['p_alex', 'p_sam'], ['p_alex', 'p_robin']] });
+    await as('alex').send('PATCH', DRAW, { exclusions: [['p_alex', 'p_sam']] });
     expect((await as('alex').send('POST', `${DRAW}/run`)).json())
-      .toEqual({ error: 'not last year\'s person leaves no way to draw: turn it off or loosen who shouldn\'t draw whom' });
+      .toEqual({ error: 'with not last year\'s person on, everyone needs more people they may draw: loosen who shouldn\'t draw whom' });
     await as('alex').send('PATCH', DRAW, { notLastYear: false });
     expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
   });
@@ -392,7 +412,7 @@ function twins(viewer: string): [Map<string, string>, Map<string, string>] {
   throw new Error('no twins');
 }
 
-interface State { opened: (viewer: string) => string[]; together?: 'later'; revealOn?: 'after'; redrawn?: true }
+interface State { opened: (viewer: string) => string[]; together?: 'later'; revealOn?: 'after'; redrawn?: true; claims?: true }
 const STATES: Record<string, State> = {
   'drawn, nobody opened': { opened: () => [] },
   'drawn, the viewer opened': { opened: (v) => IN.filter((p) => p === v) },
@@ -401,7 +421,40 @@ const STATES: Record<string, State> = {
   'draw together later': { opened: () => [], together: 'later' },
   'a reveal date set, not reached': { opened: () => IN, revealOn: 'after' },
   'drawn again after some opened': { opened: (v) => IN.filter((p) => p !== v).slice(0, 2), redrawn: true },
+  'participants claimed and chipped in on each other\'s lists (review H1)': { opened: () => IN, claims: true },
 };
+
+/** Gifts between participants: Quinn and Robin claim, Sam and Robin chip in, Alex starts a group gift. */
+function participantGifts(db: Db) {
+  const w = (id: string, personId: string) => ({ id, personId, name: `A wish ${id}`, state: 'listed' as const, position: 0, addedBy: personId, createdAt: NOW, updatedAt: NOW, celebrationId: 'c_xmas' });
+  db.insert(t.wish).values([w('w_robin_book', 'p_robin'), w('w_quinn_lamp', 'p_quinn'), w('w_mia_kite', 'p_mia')]).run();
+  db.insert(t.claim).values([
+    { id: 'cl_1', wishId: 'w_robin_book', giverId: 'p_quinn', quantity: 1, state: 'bought', createdAt: NOW, updatedAt: NOW },
+    { id: 'cl_2', wishId: 'w_sam_book', giverId: 'p_robin', quantity: 1, state: 'claimed', createdAt: NOW, updatedAt: NOW },
+    { id: 'cl_3', wishId: 'w_mia_kite', giverId: 'p_sam', quantity: 1, state: 'claimed', createdAt: NOW, updatedAt: NOW },
+  ]).run();
+  db.insert(t.groupGift).values({ wishId: 'w_quinn_lamp', organizerId: 'p_alex', targetMinor: 5000, state: 'open', createdAt: NOW, updatedAt: NOW }).run();
+  db.insert(t.share).values([
+    { id: 'sh_1', wishId: 'w_quinn_lamp', giverId: 'p_sam', amountMinor: 1000, createdAt: NOW, updatedAt: NOW },
+    { id: 'sh_2', wishId: 'w_quinn_lamp', giverId: 'p_robin', amountMinor: 1000, createdAt: NOW, updatedAt: NOW },
+  ]).run();
+}
+/** Every claim, share and organizer in an answer that names a giver, as giver ids. */
+function namedGivers(body: string): string[] {
+  const out: string[] = [];
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      if ('claims' in o && Array.isArray(o.claims)) for (const c of o.claims as { giver: { id: string } | null }[]) if (c.giver) out.push(c.giver.id);
+      if ('givers' in o && Array.isArray(o.givers)) for (const c of o.givers as { giver: { id: string } | null }[]) if (c.giver) out.push(c.giver.id);
+      if ('organizer' in o && o.organizer) out.push((o.organizer as { id: string }).id);
+      Object.values(o).forEach(walk);
+    }
+  };
+  walk(JSON.parse(body));
+  return out;
+}
 
 async function answers(viewer: Who, assignment: Map<string, string>, s: State): Promise<Record<string, string>> {
   const db = home();
@@ -411,6 +464,7 @@ async function answers(viewer: Who, assignment: Map<string, string>, s: State): 
     redrawnAt: s.redrawn ? NOW : null,
   }).where(eq(t.draw.id, 'd_xmas')).run();
   sealAssignments(db, KEY, 'd_xmas', new Map([...assignment].map(([g, r]) => [pid(g), pid(r)])));
+  if (s.claims) participantGifts(db);
   for (const p of s.opened(`p_${viewer}`)) db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, pid(p))).run();
   const as = await start(db);
   const out: Record<string, string> = {};
@@ -433,6 +487,8 @@ describe.each(Object.keys(STATES))('the surprise when %s: each viewer\'s answers
     const opened = STATES[state]!.opened(`p_${who}`).includes(`p_${who}`);
     if (IN.includes(`p_${who}`)) expect(own?.receiver?.id ?? null).toBe(opened ? a.get(`p_${who}`) : null);
     else expect(own).toBeNull();
+    // and no answer names a participant's gift to another participant, but to its own giver
+    for (const [u, body] of Object.entries(one)) for (const g of namedGivers(body.split('\n')[0]!)) expect(g, `${who} ${u}`).toBe(`p_${who}`);
   });
 });
 
@@ -491,8 +547,11 @@ describe('the database alone says nothing about who drew whom', () => {
     db.update(t.drawAssignment).set({ sealed: robin.sealed }).where(eq(t.drawAssignment.giverId, 'dp_sam')).run();
     db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, 'dp_sam')).run();
     const as = await start(db);
-    const r = await as('sam').get(DRAW);
-    expect(r.json()).toEqual({ error: 'this draw does not open with the server\'s key' });
+    // only Sam's own answer says so; the draw still answers, for Sam and for everyone else
+    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: true, canOpen: false, receiver: null, unreadable: true });
+    expect((await as('robin').get(DRAW)).statusCode).toBe(200);
+    // a row cut short (a tag under 16 bytes) does not open either
+    expect(() => openReceiver(KEY, 'd_xmas', 'dp_robin', Buffer.concat([robin.sealed.subarray(0, 24), robin.sealed.subarray(28)]))).toThrow();
   });
 });
 
@@ -509,8 +568,157 @@ describe('the sealing key', () => {
       expect(Buffer.from(readFileSync(file, 'utf8').trim(), 'base64')).toEqual(key);
       expect(() => loadConfig({ KEEPSAKE_DATA_DIR: dir, KEEPSAKE_KEYS_DIR: join(dir, 'k') })).toThrow(/must not be in KEEPSAKE_DATA_DIR/);
       expect(() => loadConfig({ KEEPSAKE_DATA_DIR: dir, KEEPSAKE_SEALING_KEY_FILE: join(dir, 'x.key') })).toThrow(/must not be in KEEPSAKE_DATA_DIR/);
+      // nor through another name for the data folder: a symlink, or a bind mount (same device and inode)
+      mkdirSync(join(dir, 'data'), { recursive: true });
+      symlinkSync(join(dir, 'data'), join(dir, 'alias'));
+      expect(() => loadConfig({ KEEPSAKE_DATA_DIR: join(dir, 'data'), KEEPSAKE_KEYS_DIR: join(dir, 'alias', 'keys') })).toThrow(/must not be in KEEPSAKE_DATA_DIR/);
+      expect(isInside(join(dir, 'data'), join(dir, 'alias', 'k'))).toBe(true);
+      expect(isInside(join(dir, 'data'), join(dir, 'keys', 'k'))).toBe(false);
       // homerslab mode makes none: HomersLab gives it, or draws stay off
       expect(loadConfig({ KEEPSAKE_MODE: 'homerslab', KEEPSAKE_EDGE_IDENTITY: 'homerslab-v1', KEEPSAKE_TRUSTED_PROXY: '10.0.0.2', KEEPSAKE_ORIGIN: 'https://k.example', KEEPSAKE_DATA_DIR: dir }).sealingKey).toBeNull();
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('gifts between the people of a draw (review H1)', () => {
+  it('name no giver to anyone but the giver until the reveal; counts stay; then names come back', async () => {
+    const db = home();
+    fiveInDraw(db);
+    db.update(t.draw).set({ drawnAt: NOW }).where(eq(t.draw.id, 'd_xmas')).run();
+    sealAssignments(db, KEY, 'd_xmas', new Map(IN.map((p, i) => [pid(p), pid(IN[(i + 1) % IN.length]!)])));
+    const as = await start(db);
+    const w = { personId: 'p_robin', name: 'A puzzle', celebrationId: 'c_xmas' };
+    const add = await as('robin').send('POST', '/api/wishes', w);
+    const wish = add.json().id as string;
+    expect((await as('quinn').send('PUT', `/api/wishes/${wish}/claim`, { quantity: 1 })).statusCode).toBe(200);
+    const seen = async (who: Who) => (await as(who).get('/api/people/p_robin')).json().wishes.find((x: { id: string }) => x.id === wish).gift;
+    expect((await seen('quinn')).claims).toEqual([{ giver: { id: 'p_quinn', name: 'Quinn' }, quantity: 1, state: 'claimed', mine: true }]);
+    for (const who of ['alex', 'sam', 'uma'] as const) {
+      const g = await seen(who);
+      expect(g.claims, who).toEqual([{ giver: null, quantity: 1, state: 'claimed', mine: false }]);
+      expect(g.left, who).toBe(0);
+    }
+    // a giver outside the draw is named as ever
+    const other = (await as('robin').send('POST', '/api/wishes', { ...w, name: 'A scarf' })).json().id as string;
+    await as('uma').send('PUT', `/api/wishes/${other}/claim`, { quantity: 1 });
+    expect((await as('alex').get('/api/people/p_robin')).json().wishes.find((x: { id: string }) => x.id === other).gift.claims[0].giver).toEqual({ id: 'p_uma', name: 'Uma' });
+    // after the reveal: named again
+    const year = db.select().from(t.draw).get()!.year;
+    db.update(t.draw).set({ year: year - 1, revealOn: inDays(-1) }).where(eq(t.draw.id, 'd_xmas')).run();
+    expect((await seen('alex')).claims[0].giver).toEqual({ id: 'p_quinn', name: 'Quinn' });
+  });
+});
+
+describe('the draw\'s day only moves later, and a reveal stays (review H2)', () => {
+  it('a celebration with drawn names cannot move earlier; later is fine and audited', async () => {
+    const db = home();
+    const as = await start(db);
+    await as('alex').send('POST', `${DRAW}/run`);
+    const d = db.select().from(t.draw).get()!;
+    expect(d.occasionOn).toBe(`${d.year}-12-24`);
+    expect((await as('alex').send('PATCH', '/api/celebrations/c_xmas', { date: inDays(1), recurrence: 'none' })).json())
+      .toEqual({ error: 'the names are drawn: its celebration can only move later' });
+    expect((await as('alex').send('PATCH', '/api/celebrations/c_xmas', { date: '2024-12-23' })).json())
+      .toEqual({ error: 'the names are drawn: its celebration can only move later' });
+    expect((await as('alex').send('PATCH', '/api/celebrations/c_xmas', { date: '2024-12-26' })).statusCode).toBe(200);
+    expect((await as('alex').get(DRAW)).json().on).toBe(`${d.year}-12-26`);
+    expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'draw_moved']);
+  });
+
+  it('a changed day in the database never brings the day or the reveal forward', async () => {
+    const db = home();
+    const as = await start(db);
+    await as('alex').send('POST', `${DRAW}/run`);
+    db.update(t.celebration).set({ date: inDays(-2), recurrence: 'none' }).where(eq(t.celebration.id, 'c_xmas')).run();
+    const g = (await as('alex').get(DRAW)).json();
+    expect(g.over).toBe(false);
+    expect((await as('alex').send('PATCH', DRAW, { revealOn: inDays(0) })).json()).toEqual({ error: 'revealOn: a day after the celebration, or never' });
+  });
+
+  it('once revealed, the reveal stays: neither the host nor a later celebration day hides it again', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const year = db.select().from(t.draw).get()!.year - 1;
+    db.update(t.draw).set({ year, drawnAt: NOW, occasionOn: `${year}-12-24`, revealOn: inDays(-1) }).where(eq(t.draw.id, 'd_xmas')).run();
+    sealAssignments(db, KEY, 'd_xmas', new Map(IN.map((p, i) => [pid(p), pid(IN[(i + 1) % IN.length]!)])));
+    const as = await start(db);
+    expect((await as('sam').get(DRAW)).json().revealed).toBe(true);
+    expect((await as('alex').send('PATCH', DRAW, { revealOn: null })).json()).toEqual({ error: 'it is revealed: it stays revealed' });
+    db.update(t.celebration).set({ date: '2024-12-31' }).where(eq(t.celebration.id, 'c_xmas')).run();
+    db.update(t.draw).set({ revealOn: null }).where(eq(t.draw.id, 'd_xmas')).run();
+    expect((await as('sam').get(DRAW)).json()).toMatchObject({ revealed: true, pairs: expect.any(Array) });
+  });
+});
+
+describe('someone in a draw leaving the household (review M2)', () => {
+  const drawn = async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    return { db, as };
+  };
+  it('before the day: the others are drawn again, everyone told if anyone had opened theirs', async () => {
+    const { db, as } = await drawn();
+    await as('sam').send('POST', `${DRAW}/open`);
+    expect((await as('alex').send('DELETE', '/api/people/p_quinn')).statusCode).toBe(204);
+    const g = (await as('sam').get(DRAW)).json();
+    expect(g).toMatchObject({ drawn: true, total: 4, opened: 0, mine: { opened: false } });
+    expect(g.redrawnAt).not.toBeNull();
+    expect(db.select().from(t.drawAssignment).all()).toHaveLength(4);
+    expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'redrawn']);
+  });
+  it('if the others are too few, the draw goes back to not drawn', async () => {
+    const db = home();
+    const as = await start(db);
+    await as('alex').send('POST', `${DRAW}/run`);
+    expect((await as('alex').send('DELETE', '/api/people/p_robin')).statusCode).toBe(204);
+    expect((await as('alex').get(DRAW)).json()).toMatchObject({ drawn: false, total: 3 });
+    expect(db.select().from(t.drawAssignment).all()).toEqual([]);
+    expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'draw_cleared']);
+  });
+  it('not once someone opened theirs and a gift is bought since: they stay until its day', async () => {
+    const { db, as } = await drawn();
+    await as('sam').send('POST', `${DRAW}/open`);
+    await as('quinn').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 });
+    await as('quinn').send('PATCH', '/api/wishes/w_sam_book/claim', { state: 'bought' });
+    expect((await as('alex').send('DELETE', '/api/people/p_robin')).json()).toEqual({ error: 'they are in a draw that can no longer change: remove them after its celebration' });
+    expect(db.select().from(t.person).where(eq(t.person.id, 'p_robin')).get()).toBeTruthy();
+    // and the celebration cannot go either
+    expect((await as('alex').send('DELETE', '/api/celebrations/c_xmas')).json()).toEqual({ error: 'a gift is bought already: the draw stays as it is' });
+  });
+  it('after its day: their rows go; whoever drew them keeps nobody', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const year = db.select().from(t.draw).get()!.year - 1;
+    db.update(t.draw).set({ year, drawnAt: NOW, occasionOn: `${year}-12-24` }).where(eq(t.draw.id, 'd_xmas')).run();
+    sealAssignments(db, KEY, 'd_xmas', new Map(IN.map((p, i) => [pid(p), pid(IN[(i + 1) % IN.length]!)])));
+    for (const p of IN) db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, pid(p))).run();
+    const as = await start(db);
+    expect((await as('alex').send('DELETE', '/api/people/p_quinn')).statusCode).toBe(204);
+    // IN: alex → sam → robin → quinn → mia → alex: Robin drew Quinn
+    expect((await as('robin').get(DRAW)).json().mine).toMatchObject({ opened: true, receiver: null, unreadable: false });
+    expect((await as('sam').get(DRAW)).json().mine.receiver).toEqual({ id: 'p_robin', name: 'Robin' });
+  });
+});
+
+describe('key rotation', () => {
+  it('a previous key still opens its rows; rotate-key seals them again with the new one', async () => {
+    const db = home();
+    fiveInDraw(db);
+    db.update(t.draw).set({ drawnAt: NOW }).where(eq(t.draw.id, 'd_xmas')).run();
+    sealAssignments(db, KEY, 'd_xmas', new Map(IN.map((p, i) => [pid(p), pid(IN[(i + 1) % IN.length]!)])));
+    db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, 'dp_sam')).run();
+    const NEW = Buffer.alloc(32, 11).toString('base64');
+    const cfg = standalone({ KEEPSAKE_SEALING_KEY: NEW, KEEPSAKE_SEALING_KEY_PREVIOUS: TEST_KEY });
+    const as = await start(db, cfg);
+    expect((await as('sam').get(DRAW)).json().mine.receiver).toEqual({ id: 'p_robin', name: 'Robin' });
+    const { rotateKey } = await import('../src/draws/draws');
+    const { keyring } = await import('../src/draws/sealed');
+    expect(rotateKey(db, keyring(cfg))).toEqual({ resealed: 5, unreadable: 0 });
+    // without the previous key now
+    const as2 = await start(db, standalone({ KEEPSAKE_SEALING_KEY: NEW }));
+    expect((await as2('sam').get(DRAW)).json().mine.receiver).toEqual({ id: 'p_robin', name: 'Robin' });
+    expect(JSON.stringify(standalone({ KEEPSAKE_SEALING_KEY: NEW, KEEPSAKE_SEALING_KEY_PREVIOUS: TEST_KEY }))).not.toContain(TEST_KEY);
   });
 });

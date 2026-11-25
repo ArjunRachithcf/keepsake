@@ -23,8 +23,12 @@ import {
 } from './household/people';
 import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
 import { setProfile, type ProfileInput } from './household/profile';
-import { checkPeopleChange, createDraw, dropLeavers, editDraw, openDraw, removeDraw, runDraw, type DrawInput } from './draws/draws';
-import { usableKey } from './draws/sealed';
+import {
+  auditMoves, beforePersonRemoved, checkCelebrationMove, checkCelebrationRemoval, checkPeopleChange, createDraw, dropLeavers, editDraw, openDraw,
+  removeDraw, runDraw, type DrawInput,
+} from './draws/draws';
+import { keyring } from './draws/sealed';
+import { asDb } from './db/open';
 import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
 import { isId } from './validate';
@@ -132,7 +136,15 @@ export function dataFor(cfg: Config, db: Db) {
     people: {
       add: (r: Req, i: PersonInput) => { admin(r); return addPerson(db, i).id; },
       edit: (r: Req, id: string, patch: Partial<PersonInput>) => { admin(r); editPerson(db, id, patch); },
-      remove: (r: Req, id: string) => changed(removePerson(db, id, admin(r).id)),
+      /** Someone in a drawn draw leaves it first, under the re-draw rules (draws/draws.ts), in the same transaction. */
+      remove: (r: Req, id: string) => {
+        const by = admin(r);
+        db.transaction((tx) => {
+          beforePersonRemoved(asDb(tx), by, id, day(), keyring(cfg));
+          removePerson(asDb(tx), id, by.id);
+        });
+        changed(0);
+      },
       setManagers: (r: Req, kidId: string, ids: string[]) => { admin(r); setManagers(db, kidId, ids); },
       setCurrency: (r: Req, code: string | null) => { admin(r); setCurrency(db, code); },
       hasPasskey: (id: string) => hasPasskey(db, mustGetPerson(db, id).id),
@@ -163,21 +175,25 @@ export function dataFor(cfg: Config, db: Db) {
     /** A celebration's draw (draws/draws.ts), as the request's person: each returns the celebration's id for the view layer. */
     draws: {
       create: (r: Req, celebrationId: string, i: DrawInput) => createDraw(db, me(r), celebrationId, i, day()),
-      edit: (r: Req, celebrationId: string, patch: Partial<DrawInput>) => editDraw(db, me(r), celebrationId, patch, day(), usableKey(cfg)),
+      edit: (r: Req, celebrationId: string, patch: Partial<DrawInput>) => editDraw(db, me(r), celebrationId, patch, day(), keyring(cfg)),
       remove: (r: Req, celebrationId: string) => removeDraw(db, me(r), celebrationId, day()),
-      run: (r: Req, celebrationId: string) => runDraw(db, me(r), celebrationId, day(), usableKey(cfg)),
-      open: (r: Req, celebrationId: string) => openDraw(db, me(r), celebrationId, new Date(), usableKey(cfg)),
+      run: (r: Req, celebrationId: string) => runDraw(db, me(r), celebrationId, day(), keyring(cfg)),
+      open: (r: Req, celebrationId: string) => openDraw(db, me(r), celebrationId, new Date(), keyring(cfg)),
     },
     celebrations: {
       add: (r: Req, i: CelebrationInput) => changed(addCelebration(db, me(r), i).id),
       edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => {
         // Someone in a drawn draw stays in the celebration until the draw changes; a draw not drawn yet lets them go.
         if (patch.people) checkPeopleChange(db, id, patch.people, day());
+        // A drawn draw's day only moves later (review H2); a move is audited.
+        const moved = checkCelebrationMove(db, me(r), id, patch, day());
         editCelebration(db, me(r), id, patch);
+        auditMoves(db, me(r), moved);
         if (patch.people) dropLeavers(db, id, patch.people);
         changed(0);
       },
-      remove: (r: Req, id: string) => changed(removeCelebration(db, me(r), id)),
+      /** A drawn draw before its day goes only under the re-draw rules. */
+      remove: (r: Req, id: string) => { checkCelebrationRemoval(db, me(r), id, day()); return changed(removeCelebration(db, me(r), id)); },
     },
   };
 }

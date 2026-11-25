@@ -138,7 +138,7 @@ export const profile = sqliteTable('profile', {
  * who created, changed, drew, re-drew, removed it or set its reveal, and refused tries; never the pairs). Kept when a
  * person or the draw is removed.
  */
-export const AUDIT_ACTIONS = ['passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed'] as const;
+export const AUDIT_ACTIONS = ['passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared'] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
   at: text('at').notNull(),
@@ -237,6 +237,14 @@ export const draw = sqliteTable('draw', {
   drawTogetherAt: text('draw_together_at'),
   revealOn: text('reveal_on'),
   drawnAt: text('drawn_at'),
+  /**
+   * The celebration's day this draw was drawn for (set at drawing, only ever moved later): the draw's day is the later
+   * of this and the celebration's day now, so moving the celebration can never bring "its day has come" or the reveal
+   * forward (PR #10 review, H2).
+   */
+  occasionOn: text('occasion_on'),
+  /** The day every pair was first shown: once revealed, it stays revealed. */
+  revealedAt: text('revealed_at'),
   /** Set when the names were drawn again after someone had opened theirs: everyone is told to open theirs again. */
   redrawnAt: text('redrawn_at'),
   createdBy: text('created_by').references(() => person.id, { onDelete: 'set null' }),
@@ -264,6 +272,14 @@ export const drawParticipant = sqliteTable('draw_participant', {
   check('draw_participant_kind', sql`${t.kind} IN ('person', 'guest')`),
   check('draw_participant_has_person', sql`${t.kind} <> 'person' OR ${t.personId} IS NOT NULL`),
 ]);
+
+/** Each try to draw a celebration's names in a year (drawn, re-drawn or refused): counted per celebration and year, so removing and re-creating a draw does not reset them. */
+export const drawTry = sqliteTable('draw_try', {
+  id: text('id').primaryKey(),
+  celebrationId: text('celebration_id').notNull().references(() => celebration.id, { onDelete: 'cascade' }),
+  year: integer('year').notNull(),
+  at: text('at').notNull(),
+}, (t) => [index('draw_try_celebration').on(t.celebrationId, t.year, t.at)]);
 
 /** Two participants who never draw each other, either way (the host's to see and change). */
 export const drawExclusion = sqliteTable('draw_exclusion', {

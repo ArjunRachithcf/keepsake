@@ -611,7 +611,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Draws the names, or draws them again (its host): freely until someone opened theirs; after that only before the day, never once a gift is bought, and everyone opens theirs again. An impossible set of rules is a 409 naming the rule */
+        /** Draws the names, or draws them again (its host): freely until someone opened theirs; after that only before the day, never once a gift is bought since the draw, and everyone opens theirs again. Rules that cannot be drawn, or that would let someone work out another's person, are a 409 naming the rule */
         post: operations["runDraw"];
         delete?: never;
         options?: never;
@@ -976,6 +976,8 @@ export interface components {
                 opened: boolean;
                 canOpen: boolean;
                 receiver: components["schemas"]["PersonRef"] | null;
+                /** @description Their row does not open with the keys on the server (a lost key): the host draws again */
+                unreadable: boolean;
             } | null;
             /** @description Every giver and their person: only after the reveal date, only for the participants and the host */
             pairs: {

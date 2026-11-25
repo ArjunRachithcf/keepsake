@@ -797,7 +797,7 @@ paths:
     post:
       tags: [draws]
       operationId: runDraw
-      summary: 'Draws the names, or draws them again (its host): freely until someone opened theirs; after that only before the day, never once a gift is bought, and everyone opens theirs again. An impossible set of rules is a 409 naming the rule'
+      summary: 'Draws the names, or draws them again (its host): freely until someone opened theirs; after that only before the day, never once a gift is bought since the draw, and everyone opens theirs again. Rules that cannot be drawn, or that would let someone work out another''s person, are a 409 naming the rule'
       responses:
         '200': { $ref: '#/components/responses/DrawAnswer' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -1353,11 +1353,12 @@ components:
           anyOf:
             - type: object
               additionalProperties: false
-              required: [opened, canOpen, receiver]
+              required: [opened, canOpen, receiver, unreadable]
               properties:
                 opened: { type: boolean }
                 canOpen: { type: boolean }
                 receiver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+                unreadable: { type: boolean, description: 'Their row does not open with the keys on the server (a lost key): the host draws again' }
             - { type: 'null' }
         pairs:
           description: 'Every giver and their person: only after the reveal date, only for the participants and the host'

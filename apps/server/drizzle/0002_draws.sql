@@ -9,6 +9,8 @@ CREATE TABLE `draw` (
 	`draw_together_at` text,
 	`reveal_on` text,
 	`drawn_at` text,
+	`occasion_on` text,
+	`revealed_at` text,
 	`redrawn_at` text,
 	`created_by` text,
 	`created_at` text NOT NULL,
@@ -55,6 +57,15 @@ CREATE TABLE `draw_participant` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `draw_participant_person` ON `draw_participant` (`draw_id`,`person_id`);--> statement-breakpoint
+CREATE TABLE `draw_try` (
+	`id` text PRIMARY KEY NOT NULL,
+	`celebration_id` text NOT NULL,
+	`year` integer NOT NULL,
+	`at` text NOT NULL,
+	FOREIGN KEY (`celebration_id`) REFERENCES `celebration`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE INDEX `draw_try_celebration` ON `draw_try` (`celebration_id`,`year`,`at`);--> statement-breakpoint
 PRAGMA foreign_keys=OFF;--> statement-breakpoint
 CREATE TABLE `__new_audit` (
 	`id` text PRIMARY KEY NOT NULL,
@@ -62,7 +73,7 @@ CREATE TABLE `__new_audit` (
 	`actor_id` text NOT NULL,
 	`action` text NOT NULL,
 	`subject_id` text NOT NULL,
-	CONSTRAINT "audit_action" CHECK(action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed'))
+	CONSTRAINT "audit_action" CHECK(action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared'))
 );
 --> statement-breakpoint
 INSERT INTO `__new_audit`("id", "at", "actor_id", "action", "subject_id") SELECT "id", "at", "actor_id", "action", "subject_id" FROM `audit`;--> statement-breakpoint

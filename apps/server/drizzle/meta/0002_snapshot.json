@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "35b57b32-6817-4f2a-9fee-857c9e9004da",
+  "id": "c0e2b624-52da-4d4e-b6b9-718d5836aa0c",
   "prevId": "f2ee91d4-6c43-408d-adae-f0d1a6278528",
   "tables": {
     "audit": {
@@ -58,7 +58,7 @@
       "checkConstraints": {
         "audit_action": {
           "name": "audit_action",
-          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed')"
+          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared')"
         }
       }
     },
@@ -441,6 +441,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "occasion_on": {
+          "name": "occasion_on",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revealed_at": {
+          "name": "revealed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "redrawn_at": {
           "name": "redrawn_at",
           "type": "text",
@@ -775,6 +789,68 @@
           "value": "\"draw_participant\".\"kind\" <> 'person' OR \"draw_participant\".\"person_id\" IS NOT NULL"
         }
       }
+    },
+    "draw_try": {
+      "name": "draw_try",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "celebration_id": {
+          "name": "celebration_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "at": {
+          "name": "at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "draw_try_celebration": {
+          "name": "draw_try_celebration",
+          "columns": [
+            "celebration_id",
+            "year",
+            "at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "draw_try_celebration_id_celebration_id_fk": {
+          "name": "draw_try_celebration_id_celebration_id_fk",
+          "tableFrom": "draw_try",
+          "tableTo": "celebration",
+          "columnsFrom": [
+            "celebration_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "group_gift": {
       "name": "group_gift",

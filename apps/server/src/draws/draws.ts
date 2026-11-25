@@ -13,17 +13,17 @@
 // someone has opened theirs; after that, only before the celebration's day, never once a participant has marked a gift
 // bought for another (the caller's own wishes left out: their gifts are not theirs to learn), and everyone opens
 // theirs again (`redrawn_at`). Once the celebration's day has come, only the reveal date changes.
-import { randomInt } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { and, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { DrawError, draw as drawNames, feasible, type Blocker, type Rules } from '@keepsake/draw';
 import { asDb, type Db } from '../db/open';
 import * as t from '../db/schema';
 import { Refused, type Message } from '../errors';
-import { mustGetCelebration, peopleOf, type Celebration } from '../celebrations/celebrations';
+import { canChange, mustGetCelebration, peopleOf, type Celebration } from '../celebrations/celebrations';
 import { daysBetween, nextDate, onYear } from '../celebrations/dates';
 import { currency, getPerson, type Person } from '../household/people';
-import { SealError, keyId, openReceiver, sealReceiver } from './sealed';
+import { keyId, openRow, sealReceiver, type Keyring } from './sealed';
 
 export type Draw = typeof t.draw.$inferSelect;
 export type Participant = typeof t.drawParticipant.$inferSelect;
@@ -41,8 +41,10 @@ export interface DrawInput {
 }
 const RULE_FIELDS = ['people', 'exclusions', 'kidsDraw', 'notLastYear'] as const;
 
-/** Tries to draw (drawn, re-drawn or refused) per draw and day: bounds how often a host can ask "is this possible?". */
+/** Tries to draw (drawn, re-drawn or refused) per celebration and year, in a day: bounds the work a host can ask for. */
 export const RUNS_A_DAY = 20;
+/** How long one draw may search (rejection above 16 people) before it is refused as too tight. */
+export const DRAW_BUDGET_MS = 300;
 export const MAX_EXCLUSIONS = 200;
 
 const ts = () => new Date().toISOString();
@@ -51,12 +53,29 @@ const ts = () => new Date().toISOString();
 
 /** The year of the celebration's next day on or after `today`: the year a new draw is for. */
 export const drawYear = (c: Celebration, today: string) => Number(nextDate(c.date, c.recurrence, today).slice(0, 4));
-/** The draw's occasion: the celebration's day in the draw's year, as the celebration is now. */
-export const occasionOf = (c: Pick<Celebration, 'date' | 'recurrence'>, d: Pick<Draw, 'year'>) => (c.recurrence === 'yearly' ? onYear(c.date, d.year) : c.date);
+/** The celebration's day in the draw's year, as the celebration is now. */
+export const dayOf = (c: Pick<Celebration, 'date' | 'recurrence'>, year: number) => (c.recurrence === 'yearly' ? onYear(c.date, year) : c.date);
+/**
+ * The draw's day: the later of the celebration's day now and the day it was drawn for (`occasion_on`), so it only ever
+ * moves later (review H2).
+ */
+export const occasionOf = (c: Pick<Celebration, 'date' | 'recurrence'>, d: Pick<Draw, 'year' | 'occasionOn'>) => {
+  const now = dayOf(c, d.year);
+  return d.occasionOn && d.occasionOn > now ? d.occasionOn : now;
+};
 /** Its day has come: from then on only the reveal date changes. */
 export const dayHasCome = (c: Celebration, d: Draw, today: string) => today >= occasionOf(c, d);
-/** Every pair is shown to the participants (and the host) from the reveal date on, and never before the day after the celebration. */
-export const isRevealed = (c: Celebration, d: Draw, today: string) => d.revealOn !== null && today >= d.revealOn && today > occasionOf(c, d);
+/**
+ * Every pair is shown to the participants (and the host) from the reveal date on, and never before the day after the
+ * celebration; once shown, for good (`revealed_at`).
+ */
+export const isRevealed = (c: Celebration, d: Draw, today: string) => d.revealedAt !== null || (d.drawnAt !== null && d.revealOn !== null && today >= d.revealOn && today > occasionOf(c, d));
+/** isRevealed, latched the first time it holds. */
+export function revealedNow(db: Db, c: Celebration, d: Draw, today: string): boolean {
+  if (!isRevealed(c, d, today)) return false;
+  if (!d.revealedAt) db.update(t.draw).set({ revealedAt: today }).where(eq(t.draw.id, d.id)).run();
+  return true;
+}
 /** Whether a giver may open theirs now. */
 export const opensNow = (d: Draw, now: Date) => d.drawnAt !== null && (d.drawTogetherAt === null || now.getTime() >= Date.parse(d.drawTogetherAt));
 
@@ -87,17 +106,22 @@ export function exclusionsOf(db: Db, drawId: string): { a: string; b: string }[]
   return db.select({ a: t.drawExclusion.a, b: t.drawExclusion.b }).from(t.drawExclusion).where(eq(t.drawExclusion.drawId, drawId)).all();
 }
 
-/** The caller's own receiver (a participant id), once they have opened their draw; null otherwise. */
-export function openOwn(db: Db, key: Buffer, d: Draw, me: Participant): string | null {
+/**
+ * The caller's own receiver (a participant id) once they have opened their draw: null when they have not (or have no
+ * row), 'unreadable' when their row does not open with the keys here (only their own answer says so).
+ */
+export function openOwn(db: Db, ring: Keyring, d: Draw, me: Participant): string | 'unreadable' | null {
   if (!me.openedAt || me.drawId !== d.id) return null;
   const row = db.select().from(t.drawAssignment).where(and(eq(t.drawAssignment.drawId, d.id), eq(t.drawAssignment.giverId, me.id))).get();
-  return row ? openReceiver(key, d.id, me.id, row.sealed) : null;
+  return row ? openRow(ring, d.id, row) ?? 'unreadable' : null;
 }
 
-/** Every giver → receiver (participant ids). Only after the reveal (the view layer) or inside a new draw (last year's). */
-export function openAll(db: Db, key: Buffer, d: Draw): Map<string, string> {
-  return new Map(db.select().from(t.drawAssignment).where(eq(t.drawAssignment.drawId, d.id)).all()
-    .map((row) => [row.giverId, openReceiver(key, d.id, row.giverId, row.sealed)]));
+/**
+ * Every giver → receiver (participant ids; null for a row that does not open). Only after the reveal (the view layer)
+ * or inside a new draw (last year's pairs).
+ */
+export function openAll(db: Db, ring: Keyring, d: Draw): Map<string, string | null> {
+  return new Map(db.select().from(t.drawAssignment).where(eq(t.drawAssignment.drawId, d.id)).all().map((row) => [row.giverId, openRow(ring, d.id, row)]));
 }
 
 // --- Changing ----------------------------------------------------------------------------------------------------
@@ -113,7 +137,7 @@ function managing(db: Db, me: Person, celebrationId: string): Celebration {
 }
 
 /** The input checked against the celebration and the household; returns it with duplicates gone. */
-function checked(db: Db, c: Celebration, i: DrawInput, d: Pick<Draw, 'year'>): DrawInput {
+function checked(db: Db, c: Celebration, i: DrawInput, d: Pick<Draw, 'year' | 'occasionOn'>): DrawInput {
   const inCelebration = new Set(peopleOf(db, c.id));
   const people = [...new Set(i.people)];
   for (const id of people) {
@@ -163,7 +187,7 @@ const settings = (i: DrawInput) => ({
 export function createDraw(db: Db, me: Person, celebrationId: string, i: DrawInput, today: string): string {
   const c = managing(db, me, celebrationId);
   const year = drawYear(c, today);
-  const d0 = { year };
+  const d0 = { year, occasionOn: null };
   if (today >= occasionOf(c, d0)) throw new Refused(409, 'its day has come: the draw stays as it is');
   if (db.select({ id: t.draw.id }).from(t.draw).where(and(eq(t.draw.celebrationId, c.id), eq(t.draw.year, year))).get()) {
     throw new Refused(409, 'this celebration has a draw already');
@@ -227,28 +251,29 @@ export function canRedraw(db: Db, me: Person, c: Celebration, d: Draw, today: st
 }
 
 const BLOCKED: Record<Blocker, Message> = {
-  too_few: 'a draw needs at least 3 people',
+  too_few: 'a draw needs at least 4 people',
   too_many: 'a draw holds at most 100 people',
   exclusions: 'who shouldn\'t draw whom leaves someone nobody to draw: loosen it',
-  last_year: 'not last year\'s person leaves no way to draw: turn it off or loosen who shouldn\'t draw whom',
+  last_year_margin: 'with not last year\'s person on, everyone needs more people they may draw: loosen who shouldn\'t draw whom',
+  guessable: 'these rules let someone work out another\'s person: add people or loosen who shouldn\'t draw whom',
   too_tight: 'the rules leave too few ways to draw: loosen them',
 };
 
-/** Last year's pairs in this draw's participant ids (by person), for "not last year's person". */
-function lastYearOf(db: Db, key: Buffer, d: Draw, ps: Participant[]): Map<string, string> | null {
+/**
+ * Last year's pairs in this draw's participant ids (by person), for "not last year's person". Used only while drawing:
+ * whether a draw may be made never depends on them (the margin rule, @keepsake/draw). A row that does not open adds
+ * no constraint.
+ */
+function lastYearOf(db: Db, ring: Keyring, d: Draw, ps: Participant[]): Map<string, string> | null {
   if (!d.notLastYear) return null;
   const last = db.select().from(t.draw).where(and(eq(t.draw.celebrationId, d.celebrationId), eq(t.draw.year, d.year - 1))).get();
   if (!last?.drawnAt) return null;
   const lastPs = participantsOf(db, [last.id]);
   const personOf = new Map(lastPs.map((p) => [p.id, p.personId]));
   const nowOf = new Map(ps.map((p) => [p.personId, p.id]));
-  let pairs: Map<string, string>;
-  try { pairs = openAll(db, key, last); } catch (e) {
-    if (e instanceof SealError) throw new Refused(409, 'last year\'s draw does not open with this key: turn off not last year\'s person');
-    throw e;
-  }
   const out = new Map<string, string>();
-  for (const [g, r] of pairs) {
+  for (const [g, r] of openAll(db, ring, last)) {
+    if (!r) continue;
     const a = nowOf.get(personOf.get(g) ?? null), b = nowOf.get(personOf.get(r) ?? null);
     if (a && b) out.set(a, b);
   }
@@ -264,19 +289,42 @@ export function sealAssignments(db: Db, key: Buffer, drawId: string, pairs: Read
   }
 }
 
-function runsToday(db: Db, drawId: string): number {
+/** Tries in the last 24 hours for the celebration and year (whatever draw ids came and went). */
+function runsToday(db: Db, d: Draw): number {
   const since = new Date(Date.now() - 86_400_000).toISOString();
-  return db.select({ id: t.audit.id }).from(t.audit).where(and(eq(t.audit.subjectId, drawId), inArray(t.audit.action, ['drawn', 'redrawn', 'draw_refused']), gte(t.audit.at, since))).all().length;
+  return db.select({ id: t.drawTry.id }).from(t.drawTry).where(and(eq(t.drawTry.celebrationId, d.celebrationId), eq(t.drawTry.year, d.year), gte(t.drawTry.at, since))).all().length;
+}
+
+/**
+ * A uniform whole number in [0, n) from node:crypto, for n up to 2^48: 48-bit values from a pool of random bytes,
+ * rejected above the largest multiple of n (so no value is likelier than another). Faster than randomInt per call.
+ */
+function cryptoRandom(): (n: number) => number {
+  let pool = Buffer.alloc(0), at = 0;
+  const next48 = () => {
+    if (at + 6 > pool.length) { pool = randomBytes(6 * 1024); at = 0; }
+    const v = pool.readUIntBE(at, 6);
+    at += 6;
+    return v;
+  };
+  return (n) => {
+    if (!Number.isSafeInteger(n) || n < 1 || n > 2 ** 48) throw new RangeError('cryptoRandom: n out of range');
+    const limit = 2 ** 48 - (2 ** 48 % n);
+    for (;;) { const v = next48(); if (v < limit) return v % n; }
+  };
 }
 
 /** The new pairs under the rules as they are in the database now, or the rule that blocks them. */
-function prepare(db: Db, d: Draw, key: Buffer): { pairs: Map<string, string> } | { blocked: Blocker } {
+function prepare(db: Db, d: Draw, ring: Keyring): { pairs: Map<string, string> } | { blocked: Blocker } {
   const ps = participantsOf(db, [d.id]).filter((p) => p.kind === 'person').sort((a, b) => a.id.localeCompare(b.id));
   const ids = ps.map((p) => p.id);
-  const rules: Rules = { exclusions: exclusionsOf(db, d.id).map((e) => [e.a, e.b] as const), lastYear: lastYearOf(db, key, d, ps) };
-  const f = feasible(ids, rules);
+  const exclusions = exclusionsOf(db, d.id).map((e) => [e.a, e.b] as const);
+  // Feasibility from the participants and the exclusions alone; last year's pairs only once it is decided.
+  const f = feasible(ids, { exclusions, notLastYear: d.notLastYear === 1 });
   if (!f.ok) return { blocked: f.rule };
-  try { return { pairs: drawNames(ids, rules, (n) => randomInt(n)) }; } catch (e) { if (e instanceof DrawError) return { blocked: e.rule }; throw e; }
+  const rules: Rules = { exclusions, notLastYear: d.notLastYear === 1, lastYear: lastYearOf(db, ring, d, ps) };
+  const until = Date.now() + DRAW_BUDGET_MS;
+  try { return { pairs: drawNames(ids, rules, cryptoRandom(), { outOfTime: () => Date.now() > until }) }; } catch (e) { if (e instanceof DrawError) return { blocked: e.rule }; throw e; }
 }
 
 /**
@@ -287,7 +335,8 @@ function commit(db: Db, me: Person, d: Draw, key: Buffer, pairs: Map<string, str
   const again = d.drawnAt !== null;
   const told = again && anyOpened(db, d);
   sealAssignments(db, key, d.id, pairs);
-  db.update(t.draw).set({ drawnAt: ts(), redrawnAt: told ? ts() : d.redrawnAt, updatedAt: ts() }).where(eq(t.draw.id, d.id)).run();
+  const c = mustGetCelebration(db, d.celebrationId);
+  db.update(t.draw).set({ drawnAt: ts(), redrawnAt: told ? ts() : d.redrawnAt, occasionOn: occasionOf(c, d), updatedAt: ts() }).where(eq(t.draw.id, d.id)).run();
   if (told) db.update(t.drawParticipant).set({ openedAt: null }).where(eq(t.drawParticipant.drawId, d.id)).run();
   audit(db, me.id, again ? 'redrawn' : 'drawn', d.id);
 }
@@ -297,25 +346,27 @@ function refuse(db: Db, me: Person, d: Draw, rule: Blocker): never {
   audit(db, me.id, 'draw_refused', d.id);
   throw new Refused(409, BLOCKED[rule]);
 }
+/** Counts a try (whatever comes of it), or refuses one beyond RUNS_A_DAY. */
 const often = (db: Db, d: Draw) => {
-  if (runsToday(db, d.id) >= RUNS_A_DAY) throw new Refused(409, 'the names were drawn often today: try again tomorrow');
+  if (runsToday(db, d) >= RUNS_A_DAY) throw new Refused(409, 'the names were drawn often today: try again tomorrow');
+  db.insert(t.drawTry).values({ id: ulid(), celebrationId: d.celebrationId, year: d.year, at: ts() }).run();
 };
 class Blocked { constructor(readonly rule: Blocker) {} }
 
-const needKey = (key: Buffer | null): Buffer => {
-  if (!key) throw new Refused(409, 'draws need the sealing key on the server (KEEPSAKE_SEALING_KEY)');
-  return key;
+const needKey = (ring: Keyring | null): Buffer => {
+  if (!ring?.current) throw new Refused(409, 'draws need the sealing key on the server (KEEPSAKE_SEALING_KEY)');
+  return ring.current;
 };
 
 /** Draw (or re-draw) the names. Returns the celebration's id. */
-export function runDraw(db: Db, me: Person, celebrationId: string, today: string, key: Buffer | null): string {
+export function runDraw(db: Db, me: Person, celebrationId: string, today: string, ring: Keyring): string {
   const c = managing(db, me, celebrationId);
   const d = latestDraw(db, c.id);
   if (!d) throw new Refused(404, 'this celebration has no draw');
   mayChangePairs(db, me, c, d, today);
-  const k = needKey(key);
+  const k = needKey(ring);
   often(db, d);
-  const p = prepare(db, d, k);
+  const p = prepare(db, d, ring);
   if ('blocked' in p) refuse(db, me, d, p.blocked);
   db.transaction((tx) => commit(asDb(tx), me, d, k, p.pairs));
   return c.id;
@@ -325,7 +376,7 @@ export function runDraw(db: Db, me: Person, celebrationId: string, today: string
  * Changes the draw. Once its day has come only the reveal date changes. Once drawn, a change to who draws or the rules
  * draws the names again, under the re-draw rules. Returns the celebration's id.
  */
-export function editDraw(db: Db, me: Person, celebrationId: string, patch: Partial<DrawInput>, today: string, key: Buffer | null): string {
+export function editDraw(db: Db, me: Person, celebrationId: string, patch: Partial<DrawInput>, today: string, ring: Keyring): string {
   const c = managing(db, me, celebrationId);
   const d = latestDraw(db, c.id);
   if (!d) throw new Refused(404, 'this celebration has no draw');
@@ -336,8 +387,9 @@ export function editDraw(db: Db, me: Person, celebrationId: string, patch: Parti
   const rulesChange = RULE_FIELDS.some((k) => !same(k));
   const otherChange = (['budgetMinor', 'drawTogetherAt'] as const).some((k) => !same(k));
   if (dayHasCome(c, d, today) && (rulesChange || otherChange)) throw new Refused(409, 'its day has come: the draw stays as it is');
+  if (!same('revealOn') && isRevealed(c, d, today)) throw new Refused(409, 'it is revealed: it stays revealed');
   if (rulesChange && d.drawnAt) mayChangePairs(db, me, c, d, today);
-  const k = rulesChange && d.drawnAt ? needKey(key) : null;
+  const k = rulesChange && d.drawnAt ? needKey(ring) : null;
   if (k) often(db, d);
   try {
     db.transaction((tx0) => {
@@ -348,7 +400,7 @@ export function editDraw(db: Db, me: Person, celebrationId: string, patch: Parti
       if (!same('revealOn')) audit(tx, me.id, 'reveal_set', d.id);
       if (!k) return;
       // Drawn again under the new rules in the same transaction: a refusal leaves the rules as they were.
-      const p = prepare(tx, d, k);
+      const p = prepare(tx, d, ring);
       if ('blocked' in p) throw new Blocked(p.blocked);
       commit(tx, me, d, k, p.pairs);
     });
@@ -372,13 +424,13 @@ export function removeDraw(db: Db, me: Person, celebrationId: string, today: str
 }
 
 /** A giver opens theirs (after the draw-together time). Returns the celebration's id. */
-export function openDraw(db: Db, me: Person, celebrationId: string, now: Date, key: Buffer | null): string {
+export function openDraw(db: Db, me: Person, celebrationId: string, now: Date, ring: Keyring): string {
   const { c, d } = mustDraw(db, celebrationId);
   const mine = participantsOf(db, [d.id]).find((p) => p.kind === 'person' && p.personId === me.id);
   if (!mine) throw new Refused(403, 'you are not in this draw');
   if (!d.drawnAt) throw new Refused(409, 'the names are not drawn yet');
   if (!opensNow(d, now)) throw new Refused(409, 'not yet: everyone opens together at the set time');
-  needKey(key);
+  needKey(ring);
   if (!mine.openedAt) db.update(t.drawParticipant).set({ openedAt: now.toISOString() }).where(eq(t.drawParticipant.id, mine.id)).run();
   return c.id;
 }
@@ -402,5 +454,101 @@ export function dropLeavers(db: Db, celebrationId: string, people: string[]): vo
   for (const p of participantsOf(db, [d.id])) if (p.kind === 'person' && !people.includes(p.personId!)) db.delete(t.drawParticipant).where(eq(t.drawParticipant.id, p.id)).run();
 }
 
+/**
+ * Before a celebration's day or recurrence changes: a drawn draw whose day has not come may only move later (its day
+ * is latched at drawing). Returns the draws that move, to audit after the change (`auditMoves`).
+ */
+export function checkCelebrationMove(db: Db, me: Person, celebrationId: string, patch: { date?: string; recurrence?: 'none' | 'yearly' }, today: string): string[] {
+  if (patch.date === undefined && patch.recurrence === undefined) return [];
+  const c = mustGetCelebration(db, celebrationId);
+  if (!canChange(me, c)) return []; // the change refuses them itself (403)
+  const next = { date: patch.date ?? c.date, recurrence: patch.recurrence ?? c.recurrence };
+  const drawn = db.select().from(t.draw).where(eq(t.draw.celebrationId, c.id)).all().filter((d) => d.drawnAt !== null);
+  for (const d of drawn) {
+    if (dayHasCome(c, d, today)) continue;
+    if (dayOf(next, d.year) < occasionOf(c, d)) throw new Refused(409, 'the names are drawn: its celebration can only move later');
+  }
+  return drawn.filter((d) => dayOf(next, d.year) !== dayOf(c, d.year)).map((d) => d.id);
+}
+export function auditMoves(db: Db, me: Person, drawIds: string[]): void {
+  for (const id of drawIds) audit(db, me.id, 'draw_moved', id);
+}
+
+/**
+ * Before a celebration is removed: a drawn draw whose day has not come goes only under the re-draw rules (before anyone
+ * opened theirs, or while nobody has bought a gift since the draw). After its day, nothing is left to break.
+ */
+export function checkCelebrationRemoval(db: Db, me: Person, celebrationId: string, today: string): void {
+  const c = mustGetCelebration(db, celebrationId);
+  if (!canChange(me, c)) return; // the removal refuses them itself (403)
+  const d = latestDraw(db, c.id);
+  if (d?.drawnAt && !dayHasCome(c, d, today)) mayChangePairs(db, me, c, d, today);
+}
+
+/**
+ * Before someone leaves the household (review M2), for each draw they are in whose names are drawn and whose day has
+ * not come: under the re-draw rules they are taken out and the names are drawn again among the others, everyone told
+ * if anyone had opened theirs; if the others cannot be drawn (too few, say), the draw goes back to not drawn, also
+ * told. If the re-draw rules do not allow it (someone opened theirs and a gift is bought since), they stay until its
+ * day (409). In a draw whose day has come their rows simply go: whoever drew them keeps nobody, and nobody is drawn
+ * for again. Run inside the removal's transaction.
+ */
+export function beforePersonRemoved(db: Db, me: Person, personId: string, today: string, ring: Keyring): void {
+  const mine = db.select().from(t.drawParticipant).where(and(eq(t.drawParticipant.kind, 'person'), eq(t.drawParticipant.personId, personId))).all();
+  for (const p of mine) {
+    const d = db.select().from(t.draw).where(eq(t.draw.id, p.drawId)).get()!;
+    const c = mustGetCelebration(db, d.celebrationId);
+    if (!d.drawnAt || dayHasCome(c, d, today)) continue;
+    try { mayChangePairs(db, me, c, d, today); } catch (e) {
+      if (e instanceof Refused) throw new Refused(409, 'they are in a draw that can no longer change: remove them after its celebration');
+      throw e;
+    }
+    const key = needKey(ring);
+    db.delete(t.drawParticipant).where(eq(t.drawParticipant.id, p.id)).run();
+    const left = db.select().from(t.draw).where(eq(t.draw.id, d.id)).get()!;
+    const next = prepare(db, left, ring);
+    if ('pairs' in next) { commit(db, me, left, key, next.pairs); continue; }
+    const told = anyOpened(db, left);
+    db.delete(t.drawAssignment).where(eq(t.drawAssignment.drawId, d.id)).run();
+    db.update(t.draw).set({ drawnAt: null, redrawnAt: told ? ts() : left.redrawnAt, updatedAt: ts() }).where(eq(t.draw.id, d.id)).run();
+    db.update(t.drawParticipant).set({ openedAt: null }).where(eq(t.drawParticipant.drawId, d.id)).run();
+    audit(db, me.id, 'draw_cleared', d.id);
+  }
+}
+
+/** Every drawn draw not revealed yet, with its people and day: whose gifts to each other stay unnamed (view, review H1). */
+export function unrevealedDraws(db: Db, today: string): { people: Set<string>; on: string }[] {
+  const cs = new Map(db.select().from(t.celebration).all().map((c) => [c.id, c]));
+  const drawn = db.select().from(t.draw).all().filter((d) => d.drawnAt !== null && !isRevealed(cs.get(d.celebrationId)!, d, today));
+  const ps = participantsOf(db, drawn.map((d) => d.id));
+  return drawn.map((d) => ({
+    people: new Set(ps.filter((p) => p.drawId === d.id && p.personId).map((p) => p.personId!)),
+    on: occasionOf(cs.get(d.celebrationId)!, d),
+  }));
+}
+
 /** Days until the draw's occasion (for the view). */
 export const daysUntil = (c: Celebration, d: Draw, today: string) => daysBetween(today, occasionOf(c, d));
+
+/**
+ * `keepsake rotate-key`: every sealed row not under the current key is opened with the key its id names (the previous
+ * one, KEEPSAKE_SEALING_KEY_PREVIOUS) and sealed again with the current key, in one transaction. Rows that open with
+ * neither stay as they are and are counted. Returns the counts only.
+ */
+export function rotateKey(db: Db, ring: Keyring): { resealed: number; unreadable: number } {
+  const key = needKey(ring);
+  const id = keyId(key);
+  let resealed = 0, unreadable = 0;
+  db.transaction((tx0) => {
+    const tx = asDb(tx0);
+    for (const row of tx.select().from(t.drawAssignment).all()) {
+      if (row.keyId === id) continue;
+      const r = openRow(ring, row.drawId, row);
+      if (!r) { unreadable++; continue; }
+      tx.update(t.drawAssignment).set({ sealed: sealReceiver(key, row.drawId, row.giverId, r), keyId: id })
+        .where(and(eq(t.drawAssignment.drawId, row.drawId), eq(t.drawAssignment.giverId, row.giverId))).run();
+      resealed++;
+    }
+  });
+  return { resealed, unreadable };
+}
