@@ -96,8 +96,10 @@ describe('the HomersLab manifest', () => {
 
   it('names its egress: the push services the client allows, and the shops from KEEPSAKE_SHOP_HOSTS; the VAPID key as a secret file', () => {
     const m = parse(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'));
-    expect(m.network.egress).toEqual(PUSH_HOSTS.map((h) => (typeof h === 'string' ? h : '*.notify.windows.com')));
-    expect(m.network.egress_from_config).toEqual(['KEEPSAKE_SHOP_HOSTS']);
+    // Philobiblos' convention (PR #12 review, N2): config as '${VAR}' in egress, the push services as push_egress.
+    expect(m.network.egress).toEqual(['${KEEPSAKE_SHOP_HOSTS}']);
+    expect(m.network.push_egress).toEqual(PUSH_HOSTS.map((h) => (typeof h === 'string' ? h : '*.notify.windows.com')));
+    expect(Object.keys(m.network).sort()).toEqual(['egress', 'push_egress']);
     expect(m.secrets.map((x: { key: string; file: boolean }) => [x.key, x.file])).toEqual([['KEEPSAKE_SEALING_KEY', true], ['KEEPSAKE_VAPID_KEY', true]]);
     expect(Object.keys(m.env)).not.toContain('KEEPSAKE_VAPID_KEY');
   });

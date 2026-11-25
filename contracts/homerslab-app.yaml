@@ -36,9 +36,11 @@ config:
   - { key: KEEPSAKE_VAPID_SUBJECT, optional: true, description: 'Who runs this Keepsake, for the push services (mailto: or https:; default mailto:keepsake@example.org, which names no household)' }
   - { key: KEEPSAKE_EGRESS, optional: true, description: 'off: nothing leaves Keepsake (no push, no shop page); default on' }
 network:
-  # One egress client (ADR 0011): https on 443 to these only, public addresses only. The Web Push services (ADR 0010),
-  # and the shops the household lists in KEEPSAKE_SHOP_HOSTS (none by default).
-  egress: [fcm.googleapis.com, updates.push.services.mozilla.com, web.push.apple.com, '*.notify.windows.com']
-  egress_from_config: [KEEPSAKE_SHOP_HOSTS]
+  # Philobiblos' convention (PR #12 review, N2). Enforced by Keepsake's one egress client as well (ADR 0011): https on
+  # 443, public addresses only, nothing else reachable. The shops the household lists in KEEPSAKE_SHOP_HOSTS (comma
+  # separated, none by default: "Add from a link" is off), redirects only to another listed shop.
+  egress: ['${KEEPSAKE_SHOP_HOSTS}']
+  # Web Push (ADR 0010): the browsers' push services, https on 443; only the encrypted, fixed {"v":1}.
+  push_egress: [fcm.googleapis.com, updates.push.services.mozilla.com, web.push.apple.com, '*.notify.windows.com']
 health: /api/health
 resources: { memory: 256Mi, cpu: 0.25 }
