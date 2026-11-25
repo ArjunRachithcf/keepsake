@@ -15,7 +15,8 @@
 //   in the X-Keepsake-Link header). A session lasts as long as the link (up to GUEST_DAYS, a browser's limit) unless
 //   unused for GUEST_IDLE_DAYS; that device may exchange the token again, any other is told it was opened on another
 //   device. Its maker sees it opened, and the opening is audited: someone who opens a link not meant for them locks its
-//   guest out, and the guest notices.
+//   guest out, and the guest notices. A link's managers give it a new address (review M-b): a new token on the same
+//   row, so a draw guest keeps their place, pair and claims.
 // - A guest may set their name, claim (then bought, given, back), open their draw and ask a question: nothing else, and
 //   only on the one person or draw their link reaches. Revoking a link ends its sessions at once.
 import { and, count, desc, eq, isNotNull, isNull } from 'drizzle-orm';
@@ -165,6 +166,22 @@ export function revokeLink(db: Db, me: Person, id: string, leave: (linkId: strin
     audit(tx as unknown as Db, me.id, 'link_revoked', l.id);
   });
   if (l.kind === 'draw') leave(l.id);
+}
+
+/**
+ * A new address for a link (review M-b), by whoever manages it: a new token on the same row, opened by nobody yet, its
+ * sessions ended. A draw guest keeps their place in the draw, their pair and their claims; whoever held the old
+ * address is out. Audited; the token is shown once, as at creation.
+ */
+export function reissueLink(db: Db, me: Person, id: string): { id: string; token: string } {
+  const l = managed(db, me, id);
+  const token = newToken();
+  db.transaction((tx) => {
+    tx.update(t.guestLink).set({ tokenHash: hashToken(token), openedAt: null, openedBy: null }).where(eq(t.guestLink.id, l.id)).run();
+    tx.delete(t.guestSession).where(eq(t.guestSession.linkId, l.id)).run();
+    audit(tx as unknown as Db, me.id, 'link_reissued', l.id);
+  });
+  return { id: l.id, token };
 }
 
 // --- The guest's side -----------------------------------------------------------------------------------------------

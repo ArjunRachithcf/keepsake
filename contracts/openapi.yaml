@@ -988,6 +988,21 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /links/{linkId}/address:
+    parameters:
+      - { $ref: '#/components/parameters/linkId' }
+    post:
+      tags: [links]
+      operationId: reissueLink
+      summary: 'A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited'
+      responses:
+        '200':
+          description: The new address
+          content: { application/json: { schema: { $ref: '#/components/schemas/GuestLinkMade' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /people/{personId}/links:
     parameters:
       - { $ref: '#/components/parameters/personId' }

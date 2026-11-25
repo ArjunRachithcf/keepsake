@@ -1,5 +1,5 @@
 // Guest links (ADR 0009) as the household sees them: make a share link or a personal draw link (the address is shown
-// once), list the ones you manage (never their address again), revoke. Who may is guests/guests.ts's and draws/draws.ts's.
+// once), list the ones you manage (never their address again), revoke, or give one a new address. Who may is guests/guests.ts's and draws/draws.ts's.
 import type { Data } from '../data';
 import type { Router } from '../router';
 import { object, plainText } from '../validate';
@@ -20,4 +20,7 @@ export function linkRoutes(api: Router, data: Data) {
   });
 
   api.delete('/links/:linkId', (r) => data.links.revoke(r, r.params.linkId));
+
+  // A new address for the same link (review M-b): its managers only; the old one and its sessions end.
+  api.post('/links/:linkId/address', (r) => data.links.reissue(r, r.params.linkId));
 }

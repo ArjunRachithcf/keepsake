@@ -92,6 +92,14 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   the link's id, which the guest page keeps in its address after the exchange). So the godmother with links to two
   people's wishes goes back and forth in one browser; another device still gets the 409. A first exchange ends any
   session the link had (none should remain), and a household sign-in ends the device's sessions.
+- **A new address for the same link** (M-b): whoever manages a link (as for revoking) can give it a new address: a new
+  token on the same row, opened by no device yet, its sessions ended, audited as `link_reissued`, shown once. A draw
+  guest keeps their place in the draw, their pair and their claims: no re-draw, no second participant. This is the
+  way back from a lockout (a messenger's in-app browser, a private window, cleared cookies, a new phone, a lost
+  answer), and the 409's text ("ask whoever sent it for a new address") and the hosts' screens say so. It keeps N2's
+  point: a host who reissues to peek ends the guest's session, the guest finds the link no longer opens, and the list
+  and audit show the reissue.
 - **Idle sessions** (L-2): a guest session ends after 30 days without use, on top of the link's own end (and the 400
   days); a household sign-in in the browser clears `keepsake_guest` and ends its sessions.
-- **Forget this link on this device** ends its session and leaves no device holding the link: it opens nowhere any more.
+- **Forget this link on this device** ends its session and leaves no device holding the link: it opens nowhere until
+  its managers give it a new address.

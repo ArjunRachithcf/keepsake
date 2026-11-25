@@ -826,6 +826,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/links/{linkId}/address": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkId: components["parameters"]["linkId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited */
+        post: operations["reissueLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/people/{personId}/links": {
         parameters: {
             query?: never;
@@ -3242,6 +3261,31 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    reissueLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkId: components["parameters"]["linkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new address */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestLinkMade"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];

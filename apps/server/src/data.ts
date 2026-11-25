@@ -36,7 +36,7 @@ import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from '
 import { answerQuestion, answerWithWish, ask, declineQuestion, removeQuestion } from './questions/questions';
 import { addIdea, removeIdea } from './ideas/ideas';
 import {
-  checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endDeviceSessions, forgetLink, getLink, GUEST_COOKIE, GUEST_DAYS, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
+  checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endDeviceSessions, forgetLink, getLink, GUEST_COOKIE, GUEST_DAYS, reissueLink, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
   startGuestSession, type GuestLink,
 } from './guests/guests';
 import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
@@ -244,6 +244,11 @@ export function dataFor(cfg: Config, db: Db) {
         return viewOf(r).linkMade(out.id!, linkUrl(cfg, out.token!));
       },
       revoke: (r: Req, id: string) => { revokeLink(db, me(r), id, (linkId) => guestLeaves(db, linkId)); settled(0); },
+      /** A new address for a link (review M-b): the same guest, a new token shown once. */
+      reissue: (r: Req, id: string) => {
+        const made = reissueLink(db, me(r), id);
+        return viewOf(r).linkMade(made.id, linkUrl(cfg, made.token));
+      },
     },
     /** The sheet import (import/import.ts): admins only, checked there too. */
     imports: {
