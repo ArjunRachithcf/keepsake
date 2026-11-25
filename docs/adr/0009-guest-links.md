@@ -92,7 +92,9 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   the link's id, which the guest page keeps in its address after the exchange). So the godmother with links to two
   people's wishes goes back and forth in one browser; another device still gets the 409. A first exchange ends any
   session the link had (none should remain), and a household sign-in ends the device's sessions.
-- **A new address for the same link** (M-b): whoever manages a link (as for revoking) can give it a new address: a new
+- **A new address for the same link** (M-b): whoever may make that link now can give it a new address (fourth review,
+  R-1: a share link, the creation rule; a draw link, whoever runs the draw, so its host, an admin only when it has no
+  host; revoking stays with whoever lists it, admins included). It is a new
   token on the same row, opened by no device yet, its sessions ended, audited as `link_reissued`, shown once. A draw
   guest keeps their place in the draw, their pair and their claims: no re-draw, no second participant. This is the
   way back from a lockout (a messenger's in-app browser, a private window, cleared cookies, a new phone, a lost

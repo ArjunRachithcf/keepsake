@@ -169,12 +169,22 @@ export function revokeLink(db: Db, me: Person, id: string, leave: (linkId: strin
 }
 
 /**
- * A new address for a link (review M-b), by whoever manages it: a new token on the same row, opened by nobody yet, its
- * sessions ended. A draw guest keeps their place in the draw, their pair and their claims; whoever held the old
- * address is out. Audited; the token is shown once, as at creation.
+ * A new address for a link (review M-b): a new token on the same row, opened by nobody yet, its sessions ended. A draw
+ * guest keeps their place in the draw, their pair and their claims; whoever held the old address is out. Audited; the
+ * token is shown once, as at creation. Only whoever may make that link now (fourth review, R-1): a share link, the
+ * creation rule (another grown-up; a kid's, the kid's parents); a draw link, whoever runs the draw (its host, an admin
+ * only when it has no host). Listing and revoking stay with managesLink: an admin in a draw may revoke, never reissue.
+ * The refusal is the one making the link would get.
  */
 export function reissueLink(db: Db, me: Person, id: string): { id: string; token: string } {
   const l = managed(db, me, id);
+  if (l.kind === 'share') {
+    const owner = mustGetPerson(db, l.personId!);
+    if (!sharesFor(db, me, owner)) throw new Refused(403, owner.role === 'kid' ? 'a kid\'s parent shares their wishes' : 'another grown-up shares someone\'s wishes, never they themselves');
+  } else {
+    const c = getCelebration(db, l.celebrationId!);
+    if (!c || !managesDraw(me, c, hostRoleOf(db, c))) throw new Refused(403, 'only the celebration\'s host runs its draw');
+  }
   const token = newToken();
   db.transaction((tx) => {
     tx.update(t.guestLink).set({ tokenHash: hashToken(token), openedAt: null, openedBy: null }).where(eq(t.guestLink.id, l.id)).run();

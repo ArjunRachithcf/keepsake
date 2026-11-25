@@ -531,6 +531,37 @@ describe('a new address for a link (review M-b)', () => {
     expect((await s.person('p_alex').send('POST', `/api/links/${made.link.id}/address`)).statusCode).toBe(404);
   });
 
+  it('only whoever may make the link now gives it a new address: an admin in the draw who is not its host gets the invite\'s 403 (review R-1)', async () => {
+    const db = withDraws(household());
+    db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    // Sam hosts Christmas; Alex (an admin) is in its draw; Quinn is an admin outside it.
+    db.update(t.celebration).set({ hostId: 'p_sam' }).where(eq(t.celebration.id, 'c_xmas')).run();
+    db.insert(t.person).values({ id: 'p_quinn', name: 'Quinn', role: 'admin', createdAt: '2026-11-01T10:00:00.000Z' }).run();
+    const s = await start(db);
+    const made = (await ok(s.person('p_sam').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' }))).json();
+    await ok(s.person('p_sam').send('POST', '/api/celebrations/c_xmas/draw/run'));
+    const g = s.guest(await s.exchange(made.url));
+    await ok(g.send('POST', '/api/guest/draw/open'));
+    for (const admin of ['p_alex', 'p_quinn']) {
+      const invite = await s.person(admin).send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ben' });
+      const reissue = await s.person(admin).send('POST', `/api/links/${made.link.id}/address`);
+      expect([admin, reissue.statusCode, reissue.body]).toEqual([admin, 403, invite.body]);
+      expect(invite.statusCode).toBe(403);
+      // Revoking stays theirs (the link is listed to admins).
+      expect((await s.person(admin).get('/api/links')).json().links.map((l: { id: string }) => l.id)).toContain(made.link.id);
+    }
+    // Nothing changed: the cousin's session goes on; the host may reissue.
+    expect((await g.get('/api/guest')).statusCode).toBe(200);
+    expect(db.select().from(t.audit).all().filter((a) => a.action === 'link_reissued')).toEqual([]);
+    expect((await s.person('p_sam').send('POST', `/api/links/${made.link.id}/address`)).statusCode).toBe(200);
+    // Share links: the creation rule. A kid's link (Sam is Mia's parent): an admin who is not her parent gets its 403.
+    const mia = (await ok(s.person('p_sam').send('POST', '/api/people/p_mia/links', { label: 'Granny' }))).json();
+    const make = await s.person('p_alex').send('POST', '/api/people/p_mia/links', { label: 'Granny' });
+    expect([(await s.person('p_alex').send('POST', `/api/links/${mia.link.id}/address`)).body]).toEqual([make.body]);
+    const robin = (await ok(s.person('p_sam').send('POST', '/api/people/p_robin/links', { label: 'Neighbours' }))).json();
+    expect((await s.person('p_alex').send('POST', `/api/links/${robin.link.id}/address`)).statusCode).toBe(200);
+  });
+
   it('a drawn draw keeps the guest\'s place, pair and claims: no re-draw and no second participant', async () => {
     const db = withDraws(household());
     db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
