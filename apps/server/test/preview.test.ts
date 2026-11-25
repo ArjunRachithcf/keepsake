@@ -121,7 +121,7 @@ describe('POST /api/link-preview', () => {
 
   it('with the real client: a host not on the list is never resolved or connected to', async () => {
     const { post } = await start({ ...SHOP }, createEgress({
-      resolve: async () => { throw new Error('must not resolve'); }, test: { plainPort: 1 },
+      resolve: async () => { throw new Error('must not resolve'); }, test: { httpsPort: 1 },
     }));
     expect((await post('https://169.254.169.254/latest/meta-data/')).statusCode).toBe(409);
     expect((await post('https://localhost/')).statusCode).toBe(409);

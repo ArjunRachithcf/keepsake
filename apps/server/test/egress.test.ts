@@ -1,19 +1,23 @@
-// The one HTTP client (ADR 0011) against hostile servers: local ones made by the test, reached as if they were the
-// listed hosts (the test resolves every name to 127.0.0.1 and counts that as public, and plain http stands in for
-// TLS: the tests have no certificate). Nothing in this file reaches the network.
+// The one HTTP client (ADR 0011) against hostile servers: local https ones made by the test, reached as if they were the
+// listed hosts (the test resolves every name to 127.0.0.1 and counts that as public). Their certificates are made at
+// test time (test/tls.ts; Philobiblos' harness, PR #12 review L3), the CA trusted only here. Nothing reaches the network.
 import { once } from 'node:events';
-import http from 'node:http';
+import type http from 'node:http';
+import https from 'node:https';
 import type { AddressInfo } from 'node:net';
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { EgressError, LIMITS, PUSH_HOSTS, USER_AGENT, allowed, createEgress, isPublicAddress, type Rules } from '../src/net/egress';
+import { testTls, type Pem } from './tls';
 
 type Handler = (req: http.IncomingMessage, res: http.ServerResponse) => void;
 let routes: Record<string, Handler> = {};
 let seen: { host: string; url: string; method: string; headers: http.IncomingHttpHeaders }[] = [];
-let server: http.Server;
+const TLS = testTls(['shop.test', 'www.shop.test', 'other-shop.test', 'push.test']);
+let server: https.Server;
 let port = 0;
 beforeAll(async () => {
-  server = http.createServer((req, res) => {
+  server = https.createServer({ key: TLS.good.key, cert: TLS.good.cert }, (req, res) => {
     seen.push({ host: String(req.headers.host), url: req.url ?? '', method: req.method ?? '', headers: req.headers });
     const h = routes[`${String(req.headers.host).split(':')[0]}${req.url}`];
     if (h) h(req, res); else { res.statusCode = 404; res.end(); }
@@ -27,7 +31,7 @@ const reset = (r: Record<string, Handler>) => { routes = r; seen = []; };
 const SHOPS: Rules = { name: 'shop', hosts: ['shop.test', 'www.shop.test', 'other-shop.test'] };
 const local = async () => [{ address: '127.0.0.1', family: 4 }];
 const client = (o: { resolve?: typeof local; timeoutMs?: number; enabled?: boolean } = {}) =>
-  createEgress({ resolve: o.resolve ?? local, timeoutMs: o.timeoutMs, enabled: o.enabled, test: { isPublic: () => true, plainPort: port } });
+  createEgress({ resolve: o.resolve ?? local, timeoutMs: o.timeoutMs, enabled: o.enabled, test: { isPublic: () => true, ca: TLS.ca, httpsPort: port } });
 const page = (body = '<title>A kite</title>', type = 'text/html; charset=utf-8'): Handler => (_q, r) => { r.setHeader('content-type', type); r.end(body); };
 const redirect = (to: string): Handler => (_q, r) => { r.statusCode = 302; r.setHeader('location', to); r.end(); };
 const fails = async (p: Promise<unknown>, reason: EgressError['reason']) => {
@@ -71,7 +75,7 @@ describe('what may be reached', () => {
 
   it('a host that resolves to a private address, or to a mix, is never connected to', async () => {
     reset({ 'shop.test/': page() });
-    const strict = (answers: { address: string; family: number }[]) => createEgress({ resolve: async () => answers, test: { plainPort: port } });
+    const strict = (answers: { address: string; family: number }[]) => createEgress({ resolve: async () => answers, test: { ca: TLS.ca, httpsPort: port } });
     await fails(strict([{ address: '127.0.0.1', family: 4 }]).request('https://shop.test/', SHOPS, 'html'), 'private-address');
     await fails(strict([{ address: '93.184.215.14', family: 4 }, { address: '10.0.0.1', family: 4 }]).request('https://shop.test/', SHOPS, 'html'), 'private-address');
     await fails(strict([{ address: '::ffff:192.168.1.1', family: 6 }]).request('https://shop.test/', SHOPS, 'html'), 'private-address');
@@ -112,7 +116,7 @@ describe('what comes back', () => {
     await fails(client().request('https://shop.test/1', SHOPS, 'html'), 'redirect');
     // A redirect that resolves to a private address is refused like the first hop.
     reset({ 'shop.test/a': redirect('https://other-shop.test/b'), 'other-shop.test/b': page() });
-    const c = createEgress({ resolve: async (h) => [{ address: h === 'other-shop.test' ? '10.0.0.5' : '127.0.0.1', family: 4 }], test: { plainPort: port, isPublic: (a) => a === '127.0.0.1' } });
+    const c = createEgress({ resolve: async (h) => [{ address: h === 'other-shop.test' ? '10.0.0.5' : '127.0.0.1', family: 4 }], test: { ca: TLS.ca, httpsPort: port, isPublic: (a) => a === '127.0.0.1' } });
     await fails(c.request('https://shop.test/a', SHOPS, 'html'), 'private-address');
   });
 
@@ -150,5 +154,44 @@ describe('what comes back', () => {
     reset({ 'push.test/send/2': redirect('https://push.test/elsewhere') });
     expect((await fails(client().request('https://push.test/send/2', push, 'push', { method: 'POST', body: Buffer.alloc(1) }), 'status')).status).toBe(302);
     expect(seen.length).toBe(1);
+  });
+
+  it('a push service\'s answer is its status only (PR #12 review, L4): a 410 with a body, an encoding or any type is a 410; a big 201 is a 201', async () => {
+    const push = { name: 'push', hosts: ['push.test'] };
+    reset({ 'push.test/gone': (_q, r) => { r.statusCode = 410; r.setHeader('content-encoding', 'gzip'); r.setHeader('content-type', 'application/x-evil'); r.end('x'.repeat(LIMITS.push * 4)); } });
+    expect((await fails(client().request('https://push.test/gone', push, 'push', { method: 'POST', body: Buffer.alloc(1) }), 'status')).status).toBe(410);
+    reset({ 'push.test/ok': (_q, r) => { r.statusCode = 201; r.setHeader('content-encoding', 'br'); r.end('y'.repeat(LIMITS.push * 4)); } });
+    expect(await client().request('https://push.test/ok', push, 'push', { method: 'POST', body: Buffer.alloc(1) })).toMatchObject({ status: 201, body: Buffer.alloc(0) });
+  });
+
+  it('a caller\'s headers never replace the client\'s own (PR #12 review, L5): no compression, the same User-Agent', async () => {
+    reset({ 'shop.test/h': page() });
+    await client().request('https://shop.test/h', SHOPS, 'html', { headers: { 'accept-encoding': 'gzip', 'user-agent': 'Mozilla/5.0', accept: '*/*', 'x-extra': '1' } });
+    expect(seen[0]!.headers).toMatchObject({ 'accept-encoding': 'identity', 'user-agent': USER_AGENT, accept: 'text/html', 'x-extra': '1' });
+  });
+});
+
+describe('TLS, as in production (PR #12 review, L3)', () => {
+  const serve = async (pem: Pem) => {
+    const s = https.createServer({ key: pem.key, cert: pem.cert }, (_q, r) => { r.setHeader('content-type', 'text/html'); r.end('<title>x</title>'); }).listen(0, '127.0.0.1');
+    await once(s, 'listening');
+    return s;
+  };
+  const via = (s: https.Server, ca: string | null = TLS.ca) => createEgress({ resolve: local, test: { isPublic: () => true, ...(ca ? { ca } : {}), httpsPort: (s.address() as AddressInfo).port } });
+
+  it('a certificate from a trusted CA for the name: the page; for another name, or from a CA nobody trusts: refused; nothing is sent in the clear', async () => {
+    const [good, wrong, untrusted] = [await serve(TLS.good), await serve(TLS.wrongName), await serve(TLS.untrusted)];
+    try {
+      expect((await via(good).request('https://shop.test/', SHOPS, 'html')).body.toString()).toBe('<title>x</title>');
+      await fails(via(wrong).request('https://shop.test/', SHOPS, 'html'), 'network');
+      await fails(via(untrusted).request('https://shop.test/', SHOPS, 'html'), 'network');
+      // Without the test CA (as in production) even the good one is not trusted.
+      await fails(via(good, null).request('https://shop.test/', SHOPS, 'html'), 'network');
+    } finally { for (const s of [good, wrong, untrusted]) { s.closeAllConnections(); s.close(); } }
+  });
+
+  it('the client has no switch to plain http any more', async () => {
+    const src = readFileSync(new URL('../src/net/egress.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/plainPort|\bhttp\.request|^import http from/m);
   });
 });

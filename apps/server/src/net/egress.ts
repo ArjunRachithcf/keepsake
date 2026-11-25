@@ -11,7 +11,7 @@
 //   exchange including the lookups and redirects, and the content type checked against what the caller expects.
 // - No cookies, no credentials, no Referer; a User-Agent that says what Keepsake is and nothing about the household.
 import { lookup as dnsLookup, type LookupAddress } from 'node:dns';
-import http from 'node:http';
+import type http from 'node:http';
 import https from 'node:https';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { VERSION } from '../version';
@@ -88,11 +88,11 @@ export interface EgressOptions {
   resolve?: Resolve;
   timeoutMs?: number;
   /**
-   * Tests only: who counts as public (their servers are on 127.0.0.1), and plain http to a local port in place of
-   * https on 443 (the tests have no certificate). Every rule above is the same; only the connection's scheme and port
-   * change.
+   * Tests only (Philobiblos' harness): a CA to trust besides the system's, the local port that stands in for 443, and
+   * who counts as public (their servers are on 127.0.0.1). The connection is TLS as always, the certificate checked
+   * against the name (PR #12 review, L3).
    */
-  test?: { isPublic?: (addr: string) => boolean; plainPort?: number };
+  test?: { isPublic?: (addr: string) => boolean; ca?: string; httpsPort?: number };
 }
 
 export function createEgress(o: EgressOptions = {}): Egress {
@@ -123,15 +123,16 @@ export function createEgress(o: EgressOptions = {}): Egress {
         if ((opts as { all?: boolean }).all) (cb as unknown as (e: null, a: LookupAddress[]) => void)(null, [addr]);
         else cb(null, addr.address, addr.family);
       };
-      const plain = o.test?.plainPort;
-      const target = plain ? Object.assign(new URL(u.href), { protocol: 'http:', port: String(plain) }) : u;
       const body = req.body ?? Buffer.alloc(0);
-      const r = (plain ? http : https).request(target, {
+      const r = https.request(u, {
+        ...(o.test?.httpsPort ? { port: o.test.httpsPort } : {}), ...(o.test?.ca ? { ca: o.test.ca } : {}),
         method: req.method ?? 'GET', lookup, signal, agent: false,
+        // The caller's headers first, the client's own last: no caller brings compression back or changes who we say
+        // we are (PR #12 review, L5).
         headers: {
+          ...req.headers,
           'user-agent': USER_AGENT, accept: want === 'html' ? 'text/html' : '*/*', 'accept-encoding': 'identity',
           ...(req.method === 'POST' ? { 'content-length': String(body.length) } : {}),
-          ...req.headers,
         },
       }, ok);
       r.on('error', (e) => fail(signal.aborted ? timeout(u.hostname) : new EgressError('network', `${u.hostname}: ${(e as NodeJS.ErrnoException).code ?? 'request failed'}`)));
@@ -151,6 +152,13 @@ export function createEgress(o: EgressOptions = {}): Egress {
         for (let hop = 0; ; hop++) {
           const res = await once(u, want, req, ctl.signal);
           const status = res.statusCode ?? 0;
+          // A push service's answer: its status only, the body never read (Philobiblos' push; PR #12 review, L4), so a
+          // 410 with a body or an encoding is still a 410.
+          if (want === 'push') {
+            res.destroy();
+            if (status < 200 || status >= 300) throw new EgressError('status', `${u.hostname} answered ${status}`, status);
+            return { status, type: '', body: Buffer.alloc(0), url: u.toString() };
+          }
           if (status >= 300 && status < 400 && res.headers.location && want === 'html') {
             // Never read a body nobody wants: the connection is closed, not drained.
             res.destroy();
