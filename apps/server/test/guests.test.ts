@@ -3,13 +3,15 @@
 // reaches one person (or one draw and their own person's list for it), claims, asks and names themselves, nothing else;
 // a draw link joins the draw under its rules and ends with the draw's day. The person never learns a guest's claim.
 import { eq } from 'drizzle-orm';
-import { afterEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { hashToken } from '../src/auth/tokens';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { ORIGIN, household, inDays, sessionCookie, standalone, withDraws } from './helpers';
-import { as, makeHome, ok, reads, tokenOf, type Home } from './m4';
+import { as, makeHome, ok, pin, reads, tokenOf, type Home } from './m4';
 
 const apps: BuiltApp[] = [];
 const homes: Home[] = [];
@@ -474,6 +476,60 @@ describe('a guest\'s claims once they cannot manage them (review M1)', () => {
     expect(guestClaims()).toHaveLength(1);
     expect((await s.person('p_alex').send('DELETE', '/api/celebrations/c_xmas')).statusCode).toBe(204);
     expect(db.select().from(t.claim).all().filter((c) => c.giverId === null && c.imported === 0)).toEqual([]);
+  });
+});
+
+describe('a wish moved out of a draw guest\'s reach (review L-a)', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('their only-made claim goes and a bought one stays unnamed; the person and kids learn nothing', async () => {
+    pin(new Date());
+    const db = withDraws(household());
+    db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    // Another celebration everyone in the draw is part of, to move a Christmas wish to.
+    db.insert(t.celebration).values({ id: 'c_summer', name: 'Summer party', date: inDays(60), poster: 'gold', recurrence: 'none', hostId: 'p_alex', createdAt: '2026-11-01T10:00:00.000Z' }).run();
+    for (const p of ['alex', 'sam', 'robin', 'mia']) {
+      db.insert(t.celebrationPerson).values({ celebrationId: 'c_summer', personId: `p_${p}` }).run();
+      for (const n of ['1', '2']) db.insert(t.wish).values({ id: `w_${p}_xmas${n}`, personId: `p_${p}`, celebrationId: 'c_xmas', name: `A puzzle ${n}`, state: 'listed', position: 8 + Number(n), addedBy: `p_${p}`, createdAt: '2026-11-01T10:00:00.000Z', updatedAt: '2026-11-01T10:00:00.000Z' }).run();
+    }
+    const s = await start(db);
+    const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
+    await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/draw/run'));
+    const g = s.guest(cookieOf(await s.exchange(made.url)));
+    const person = (await ok(g.send('POST', '/api/guest/draw/open'))).json().person.id as string;
+    const p = person.slice(2);
+    // Whoever keeps the person's list moves the wishes: a kid's parent for Mia.
+    const mover = person === 'p_mia' ? 'p_sam' : person;
+    // Who may not know: the person and kids (a kid's parent sees the kid's gifts, so their answers are not compared).
+    const viewers = [...new Set([person, 'p_mia', 'p_leo'])];
+    const cookies = Object.fromEntries([...new Set([...viewers, mover])].map((v) => [v, sessionCookie(db, v)]));
+    // The twin: the same household up to here, without the guest's claims.
+    const twinDb = drizzle(new Database(db.$client.serialize()), { schema: t }) as unknown as Db;
+    twinDb.$client.pragma('foreign_keys = ON');
+    const twin = await buildApp(standalone(), twinDb);
+    apps.push(twin);
+    await ok(g.send('PUT', `/api/guest/wishes/w_${p}_xmas1/claim`, { quantity: 1 }));
+    await ok(g.send('PUT', `/api/guest/wishes/w_${p}_xmas2/claim`, { quantity: 1 }));
+    await ok(g.send('PATCH', `/api/guest/wishes/w_${p}_xmas2/claim`, { state: 'bought' }));
+    const answers = async (inject: typeof s.inject) => {
+      const out: string[] = [];
+      for (const n of ['1', '2']) {
+        const r = await inject({ method: 'PATCH', url: `/api/wishes/w_${p}_xmas${n}`, payload: { celebrationId: 'c_summer' }, headers: { cookie: cookies[mover]!, origin: ORIGIN } });
+        if (mover === person) out.push(`${r.statusCode} ${r.body}`);
+        else expect(r.statusCode).toBe(200);
+      }
+      for (const v of viewers) for (const u of ['/api/home', `/api/people/${person}`, `/api/people/${person}?for=c_summer`, '/api/celebrations/c_summer']) {
+        const r = await inject({ url: u, headers: { cookie: cookies[v]! } });
+        out.push(`${v} ${u} ${r.statusCode} ${r.body} ${JSON.stringify(Object.entries(r.headers).filter(([k]) => k !== 'date').sort())}`);
+      }
+      return out;
+    };
+    const [x, y] = [await answers(s.inject), await answers(twin.app.inject.bind(twin.app))];
+    expect(x).toEqual(y);
+    // The only-made claim went: the household may claim it; the bought one stays, with nobody's name.
+    expect(db.select().from(t.claim).all().filter((c) => c.wishId.includes('_xmas')).map((c) => [c.wishId, c.state, c.guestId, c.giverId])).toEqual([[`w_${p}_xmas2`, 'bought', null, null]]);
+    const other = ['p_alex', 'p_sam', 'p_robin'].find((q) => q !== person && q !== mover)!;
+    expect((await s.person(other).send('PUT', `/api/wishes/w_${p}_xmas1/claim`, { quantity: 1 })).statusCode).toBe(200);
   });
 });
 

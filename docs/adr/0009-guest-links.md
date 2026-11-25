@@ -33,7 +33,8 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   count the guests. The link ends with the draw's day (household time). Revoking a guest before the draw takes them
   out; once drawn they stay in it and only the link stops. Removing the draw revokes its links.
 - **A guest's claims once they cannot manage them** (review M1): when their link is revoked, a re-draw gives a draw
-  guest someone else, or their celebration or draw goes, their claims only made go (the wish is free again) and bought
+  guest someone else, the wish moves to another celebration than a draw guest's (second review, L-a), or their
+  celebration or draw goes, their claims only made go (the wish is free again) and bought
   or given ones stay with nobody's name, as when a giver leaves (ADR 0003). The changing request does it, never a
   person's reading one.
 - **Under HomersLab** no guest link is made (409, and the screens say so) until HomersLab's edge lets guests through

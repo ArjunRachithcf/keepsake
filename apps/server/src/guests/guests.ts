@@ -244,37 +244,42 @@ export function guestGiving(db: Db, l: GuestLink, ring: Keyring, wishId: string)
 
 /**
  * A guest's claims once they can no longer manage them (review M1), as when a giver leaves (ADR 0003): their link
- * revoked (or going: `going`, links about to be deleted with their celebration), or a re-draw gave a draw guest
- * someone else. A claim only made goes; a bought or given one stays, with nobody's name. Run by the changing request
- * (never a person's reading one), after the change or, for `going`, before it.
+ * revoked (or going: `going`, links about to be deleted with their celebration), a re-draw gave a draw guest someone
+ * else, or the wish moved out of what their link reaches (to another celebration than a draw guest's, review L-a). A
+ * claim only made goes; a bought or given one stays, with nobody's name. Run by the changing request (never a
+ * person's reading one), after the change or, for `going`, before it. A wish waiting for a parent stays within reach:
+ * it comes back as it was.
  */
 export function settleGuestClaims(db: Db, ring: Keyring, going: ReadonlySet<string> = new Set()): void {
   const claims = db.select().from(t.claim).where(isNotNull(t.claim.guestId)).all();
   if (!claims.length) return;
-  const links = new Map<string, GuestLink>();
-  const personOf = new Map<string, string | null | 'keep'>();
-  const reached = (linkId: string): string | null | 'keep' => {
-    if (personOf.has(linkId)) return personOf.get(linkId)!;
-    const l = links.get(linkId) ?? getLink(db, linkId);
-    let v: string | null | 'keep' = null;
+  type Reach = { personId: string; celebrationId: string | null } | null | 'keep';
+  const reachOfLink = new Map<string, Reach>();
+  const reached = (linkId: string): Reach => {
+    if (reachOfLink.has(linkId)) return reachOfLink.get(linkId)!;
+    const l = getLink(db, linkId);
+    let v: Reach = null;
     if (l && !l.revokedAt && !going.has(l.id)) {
-      if (l.kind === 'share') v = l.personId;
+      if (l.kind === 'share') v = l.personId ? { personId: l.personId, celebrationId: null } : null;
       else {
         const place = guestPlace(db, l.id);
         const own = place?.d.drawnAt ? drawnBy(db, ring, place.d, place.me) : null;
         // A row that does not open with the keys here: nothing is known, so nothing is undone.
         if (own === 'unreadable') v = 'keep';
-        else if (own && place) v = participantsOf(db, [place.d.id]).find((p) => p.id === own)?.personId ?? null;
+        else if (own && place) {
+          const personId = participantsOf(db, [place.d.id]).find((p) => p.id === own)?.personId;
+          v = personId ? { personId, celebrationId: place.c.id } : null;
+        }
       }
     }
-    personOf.set(linkId, v);
+    reachOfLink.set(linkId, v);
     return v;
   };
   for (const c of claims) {
-    const p = reached(c.guestId!);
-    if (p === 'keep') continue;
+    const r = reached(c.guestId!);
+    if (r === 'keep') continue;
     const w = getWish(db, c.wishId);
-    if (w && p === w.personId) continue;
+    if (w && r && w.personId === r.personId && (r.celebrationId === null || w.celebrationId === null || w.celebrationId === r.celebrationId)) continue;
     if (c.state === 'claimed') db.delete(t.claim).where(eq(t.claim.id, c.id)).run();
     else db.update(t.claim).set({ guestId: null, updatedAt: ts() }).where(eq(t.claim.id, c.id)).run();
   }

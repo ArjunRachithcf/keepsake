@@ -177,7 +177,8 @@ export function dataFor(cfg: Config, db: Db) {
     },
     wishes: {
       add: (r: Req, personId: string, i: WishInput) => changed(addWish(db, me(r), personId, i).id),
-      edit: (r: Req, id: string, patch: Partial<WishInput>) => { editWish(db, me(r), id, patch); changed(0); },
+      // A wish moved out of a draw guest's reach takes their only-made claim along (review L-a).
+      edit: (r: Req, id: string, patch: Partial<WishInput>) => { editWish(db, me(r), id, patch); settled(0); },
       remove: (r: Req, id: string) => changed(removeWish(db, me(r), id)),
       approve: (r: Req, id: string) => { approveWish(db, me(r), id); changed(0); },
       decline: (r: Req, id: string) => changed(declineWish(db, me(r), id)),
