@@ -21,19 +21,694 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Who is signed in, and whether the household still needs its first admin */
+        get: operations["authSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/enrol/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Starts making a passkey from a one-time link (the setup link names the first admin) */
+        post: operations["enrolOptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/enrol/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finishes making the passkey and signs in (spends the link) */
+        post: operations["enrolVerify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/sign-in/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Starts a passkey sign-in */
+        post: operations["signInOptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/sign-in/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finishes the sign-in (one answer for every failure) */
+        post: operations["signInVerify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/sign-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ends this browser's session */
+        post: operations["signOut"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/passkeys/invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A one-time link (24 hours) to add a passkey on another device; needs a sign-in of the last 10 minutes */
+        post: operations["inviteSelf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/household": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The household (everyone in it sees it) */
+        get: operations["getHousehold"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** The household's currency (admins) */
+        patch: operations["editHousehold"];
+        trace?: never;
+    };
+    "/people": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adds someone to the household (admins, standalone; 409 under HomersLab) */
+        post: operations["addPerson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{personId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        /** A person's page as the caller sees it (profile, celebrations, the wishes the caller may see) */
+        get: operations["getPerson"];
+        put?: never;
+        post?: never;
+        /** Removes someone and everything theirs (admins, standalone; 409 under HomersLab) */
+        delete: operations["removePerson"];
+        options?: never;
+        head?: never;
+        /** A person's name or role (admins, standalone; 409 under HomersLab) */
+        patch: operations["editPerson"];
+        trace?: never;
+    };
+    "/people/{personId}/managers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Who manages a kid (admins, both modes); none set means the admins */
+        put: operations["setManagers"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{personId}/invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A one-time link (7 days) for someone without a passkey (admins, standalone, a sign-in of the last 10 minutes) */
+        post: operations["invitePerson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{personId}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Sizes, likes and "please no" (the person, or a kid's manager); a part that changes gets today's date */
+        put: operations["setProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{personId}/wish-order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** The order of a person's wishes (the person, or a kid's manager) */
+        put: operations["setWishOrder"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** My wishes (the home screen) with the next celebration, the chips, suggestions and approvals waiting */
+        get: operations["getHome"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wishes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A wish for yourself, a kid you manage, or a suggestion for someone else */
+        post: operations["addWish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wishes/{wishId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes a wish (same people as changing it) */
+        delete: operations["removeWish"];
+        options?: never;
+        head?: never;
+        /** Changes a wish (its keeper; a suggestion's author while it waits) */
+        patch: operations["editWish"];
+        trace?: never;
+    };
+    "/wishes/{wishId}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Yes to a suggestion (the person or a kid's manager) or to a kid's wish (its manager) */
+        post: operations["approveWish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wishes/{wishId}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** No to a suggestion or a kid's wish (it is removed) */
+        post: operations["declineWish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/celebrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Coming up (by next date) and past ones */
+        get: operations["listCelebrations"];
+        put?: never;
+        /** A new celebration, hosted by the caller (grown-ups) */
+        post: operations["addCelebration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/celebrations/{celebrationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        /** A celebration's page with each person's list for it (their wishes for it and their any-time wishes) */
+        get: operations["getCelebration"];
+        put?: never;
+        post?: never;
+        /** Removes a celebration (its host or an admin); its wishes stay, for any time */
+        delete: operations["removeCelebration"];
+        options?: never;
+        head?: never;
+        /** Changes a celebration (its host or an admin); someone taken out keeps their wishes for any time */
+        patch: operations["editCelebration"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        Id: string;
+        /** Format: date-time */
+        DateTime: string;
+        /** @description YYYY-MM-DD */
+        Day: string;
+        /** @enum {unknown} */
+        Role: "admin" | "adult" | "kid";
+        /** @enum {unknown} */
+        Mode: "homerslab" | "standalone";
+        Error: {
+            error: string;
+        };
         Health: {
             ok: boolean;
             version: string;
-            /** @enum {unknown} */
-            mode: "homerslab" | "standalone";
+            mode: components["schemas"]["Mode"];
+        };
+        PersonRef: {
+            id: components["schemas"]["Id"];
+            name: string;
+        };
+        Person: {
+            id: components["schemas"]["Id"];
+            name: string;
+            role: components["schemas"]["Role"];
+            /** @description A kid's managers as set (empty for a grown-up, or when the admins manage the kid) */
+            managers: components["schemas"]["Id"][];
+            /** @description Standalone: whether they have a passkey; null under HomersLab */
+            signsIn: boolean | null;
+        };
+        AuthSession: {
+            mode: components["schemas"]["Mode"];
+            signedIn: boolean;
+            setupNeeded: boolean;
+            person?: components["schemas"]["Person"];
+        };
+        EnrolOptionsInput: {
+            token: string;
+            /** @description The first admin's name (setup link only) */
+            name?: string;
+        };
+        CredentialInput: {
+            challengeId: string;
+            /** @description The authenticator's answer (WebAuthn JSON) */
+            response: {
+                [key: string]: unknown;
+            };
+            /** @description A name for the new passkey (enrolment only) */
+            label?: string;
+        };
+        EnrolStart: {
+            challengeId: string;
+            options: {
+                [key: string]: unknown;
+            };
+            person: {
+                name: string;
+            };
+        };
+        SignInStart: {
+            challengeId: string;
+            options: {
+                [key: string]: unknown;
+            };
+        };
+        OneTimeLink: {
+            /** @description The token is in the #fragment */
+            url: string;
+            expiresAt: components["schemas"]["DateTime"];
+        };
+        Household: {
+            mode: components["schemas"]["Mode"];
+            me: components["schemas"]["Person"];
+            people: components["schemas"]["Person"][];
+            /** @description ISO 4217; null until an admin sets it (prices wait for it) */
+            currency: string | null;
+        };
+        HouseholdPatch: {
+            currency: string | null;
+        };
+        PersonInput: {
+            name: string;
+            role: components["schemas"]["Role"];
+        };
+        PersonPatch: {
+            name?: string;
+            role?: components["schemas"]["Role"];
+        };
+        ManagersInput: {
+            managerIds: components["schemas"]["Id"][];
+        };
+        Size: {
+            label: string;
+            value: string;
+        };
+        Profile: {
+            sizes: components["schemas"]["Size"][];
+            /** Format: date-time */
+            sizesUpdatedAt: string | null;
+            likes: string[];
+            /** Format: date-time */
+            likesUpdatedAt: string | null;
+            pleaseNo: string[];
+            /** Format: date-time */
+            pleaseNoUpdatedAt: string | null;
+        };
+        ProfileInput: {
+            sizes?: components["schemas"]["Size"][];
+            likes?: string[];
+            pleaseNo?: string[];
+        };
+        /**
+         * @description listed: the household sees it; awaiting_parent: a kid's, until a manager approves; suggested: someone else's idea, until the person approves
+         * @enum {unknown}
+         */
+        WishState: "listed" | "awaiting_parent" | "suggested";
+        Wish: {
+            id: components["schemas"]["Id"];
+            personId: components["schemas"]["Id"];
+            /** @description The celebration it is for; null for any time */
+            celebrationId: components["schemas"]["Id"] | null;
+            name: string;
+            /** @description As typed; Keepsake never fetches it */
+            link: string | null;
+            /** @description In minor units of the household currency */
+            priceMinor: number | null;
+            quantity: number;
+            note: string | null;
+            mostWanted: boolean;
+            position: number;
+            state: components["schemas"]["WishState"];
+            /** @description Who added it, when someone other than the person did (a suggestion, a parent) */
+            addedBy: components["schemas"]["PersonRef"] | null;
+            createdAt: components["schemas"]["DateTime"];
+            updatedAt: components["schemas"]["DateTime"];
+            canEdit: boolean;
+            canApprove: boolean;
+        };
+        WishInput: {
+            personId: components["schemas"]["Id"];
+            name: string;
+            /** @description http(s) only, without credentials; stored, never fetched */
+            link?: string | null;
+            /** @description Needs the household's currency */
+            priceMinor?: number | null;
+            /** @description Default 1 */
+            quantity?: number;
+            note?: string | null;
+            mostWanted?: boolean;
+            /** @description A celebration the person is part of, or null for any time */
+            celebrationId: components["schemas"]["Id"] | null;
+        };
+        WishPatch: {
+            name?: string;
+            link?: string | null;
+            priceMinor?: number | null;
+            quantity?: number;
+            note?: string | null;
+            mostWanted?: boolean;
+            celebrationId?: components["schemas"]["Id"] | null;
+        };
+        WishOrder: {
+            wishIds: components["schemas"]["Id"][];
+        };
+        /** @enum {unknown} */
+        Poster: "pine" | "berry" | "night" | "gold";
+        /** @enum {unknown} */
+        Recurrence: "none" | "yearly";
+        Celebration: {
+            id: components["schemas"]["Id"];
+            name: string;
+            date: components["schemas"]["Day"];
+            nextDate: components["schemas"]["Day"];
+            /** @description From today in the household's time zone to nextDate (negative: past) */
+            daysUntil: number;
+            upcoming: boolean;
+            place: string | null;
+            poster: components["schemas"]["Poster"];
+            recurrence: components["schemas"]["Recurrence"];
+            host: components["schemas"]["PersonRef"] | null;
+            people: components["schemas"]["Id"][];
+            /** @description Wishes for it waiting for the caller's yes */
+            toApprove: number;
+            canEdit: boolean;
+        };
+        CelebrationInput: {
+            name: string;
+            date: components["schemas"]["Day"];
+            place?: string | null;
+            poster: components["schemas"]["Poster"];
+            recurrence: components["schemas"]["Recurrence"];
+            people: components["schemas"]["Id"][];
+        };
+        CelebrationPatch: {
+            name?: string;
+            date?: components["schemas"]["Day"];
+            place?: string | null;
+            poster?: components["schemas"]["Poster"];
+            recurrence?: components["schemas"]["Recurrence"];
+            people?: components["schemas"]["Id"][];
+        };
+        Celebrations: {
+            upcoming: components["schemas"]["Celebration"][];
+            past: components["schemas"]["Celebration"][];
+        };
+        /** @description One person's list for a celebration */
+        PersonList: {
+            person: components["schemas"]["Person"];
+            wishes: components["schemas"]["Wish"][];
+        };
+        CelebrationPage: {
+            celebration: components["schemas"]["Celebration"];
+            lists: components["schemas"]["PersonList"][];
+        };
+        PersonPage: {
+            person: components["schemas"]["Person"];
+            profile: components["schemas"]["Profile"];
+            /** @description Coming up, with this person in them (the chips) */
+            celebrations: components["schemas"]["Celebration"][];
+            /** @description Theirs that the caller may see, filtered by `for` */
+            wishes: components["schemas"]["Wish"][];
+            /** @description Whether the caller keeps this person's list and profile */
+            keeps: boolean;
+        };
+        Home: {
+            /** @description The next celebration the caller is part of */
+            next: components["schemas"]["Celebration"] | null;
+            /** @description Coming up, with the caller in them (the chips) */
+            celebrations: components["schemas"]["Celebration"][];
+            /** @description The caller's listed and waiting wishes, filtered by `for` */
+            wishes: components["schemas"]["Wish"][];
+            /** @description Suggestions for the caller, waiting for their yes */
+            suggestions: components["schemas"]["Wish"][];
+            /** @description Kids' wishes and suggestions waiting for the caller as their manager */
+            toApprove: components["schemas"]["Wish"][];
+            /** @description The caller's suggestions for others, still waiting */
+            suggested: components["schemas"]["Wish"][];
         };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description The request is not valid */
+        BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Sign in first */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Not allowed (or a change without Keepsake's Origin) */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description No such thing, or not one the caller may see */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Not possible in this state */
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Too many tries; wait a minute */
+        TooMany: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+    };
+    parameters: {
+        personId: components["schemas"]["Id"];
+        wishId: components["schemas"]["Id"];
+        celebrationId: components["schemas"]["Id"];
+        /** @description A celebration's id (its wishes and the any-time ones: the list for it), or `any` (any-time wishes only); absent: all */
+        for: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -58,6 +733,737 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
+        };
+    };
+    authSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSession"];
+                };
+            };
+        };
+    };
+    enrolOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnrolOptionsInput"];
+            };
+        };
+        responses: {
+            /** @description The WebAuthn options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrolStart"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooMany"];
+        };
+    };
+    enrolVerify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialInput"];
+            };
+        };
+        responses: {
+            /** @description Signed in (Set-Cookie keepsake_session) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSession"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooMany"];
+        };
+    };
+    signInOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The WebAuthn options */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignInStart"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooMany"];
+        };
+    };
+    signInVerify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialInput"];
+            };
+        };
+        responses: {
+            /** @description Signed in (Set-Cookie keepsake_session) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSession"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooMany"];
+        };
+    };
+    signOut: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    inviteSelf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The link (shown once) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OneTimeLink"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getHousehold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Household"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    editHousehold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HouseholdPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Household"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addPerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonInput"];
+            };
+        };
+        responses: {
+            /** @description Added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getPerson: {
+        parameters: {
+            query?: {
+                /** @description A celebration's id (its wishes and the any-time ones: the list for it), or `any` (any-time wishes only); absent: all */
+                for?: components["parameters"]["for"];
+            };
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    removePerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    editPerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PersonPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    setManagers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagersInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Person"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    invitePerson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The link (shown once) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OneTimeLink"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    setProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setWishOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WishOrder"];
+            };
+        };
+        responses: {
+            /** @description Ordered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getHome: {
+        parameters: {
+            query?: {
+                /** @description A celebration's id (its wishes and the any-time ones: the list for it), or `any` (any-time wishes only); absent: all */
+                for?: components["parameters"]["for"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Home"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addWish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WishInput"];
+            };
+        };
+        responses: {
+            /** @description Added (its state says whether it waits) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Wish"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    removeWish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    editWish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WishPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Wish"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    approveWish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approved (a kid's yes to a suggestion still waits for a manager) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Wish"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    declineWish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Declined */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listCelebrations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Celebrations"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addCelebration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CelebrationInput"];
+            };
+        };
+        responses: {
+            /** @description Added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Celebration"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getCelebration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CelebrationPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    removeCelebration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    editCelebration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CelebrationPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Celebration"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
 }
