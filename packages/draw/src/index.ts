@@ -26,6 +26,11 @@ export const DRAW_RULES_VERSION = 1;
 
 /** A draw needs at least four people: with three, whoever opens theirs knows the whole draw. */
 export const MIN_PARTICIPANTS = 4;
+/**
+ * With "not last year's person" on, at least five (second review, H4): with four, whoever knows last year's pairs (a
+ * reveal, or the exchange itself) can work out this year's from their own. Decided from the settings alone.
+ */
+export const MIN_WITH_LAST_YEAR = 5;
 export const MAX_PARTICIPANTS = 100;
 /** Up to this many participants the draw counts its ways exactly (16! < 2^48, what `random` must cover). */
 export const EXACT_MAX = 16;
@@ -48,7 +53,7 @@ export interface Rules {
  * year's person" on, exclusions that leave someone fewer than ⌈n/2⌉+1 people to draw; rules that let someone work out
  * another's person; or (above EXACT_MAX only) rules that leave so few ways that random tries do not find one in time.
  */
-export type Blocker = 'too_few' | 'too_many' | 'exclusions' | 'last_year_margin' | 'guessable' | 'too_tight';
+export type Blocker = 'too_few' | 'too_few_last_year' | 'too_many' | 'exclusions' | 'last_year_margin' | 'guessable' | 'too_tight';
 export type Feasibility = { ok: true } | { ok: false; rule: Blocker };
 
 export class DrawError extends Error {
@@ -158,6 +163,7 @@ function guessable(ok: boolean[][]): boolean {
 export function feasible(ids: readonly ParticipantId[], rules: Rules = {}): Feasibility {
   if (ids.length < MIN_PARTICIPANTS) return { ok: false, rule: 'too_few' };
   if (ids.length > MAX_PARTICIPANTS) return { ok: false, rule: 'too_many' };
+  if (rules.notLastYear && ids.length < MIN_WITH_LAST_YEAR) return { ok: false, rule: 'too_few_last_year' };
   const ok = allowedMatrix(ids, rules, false);
   if (!hasMatching(ok)) return { ok: false, rule: 'exclusions' };
   const fewest = Math.min(...ok.map((row) => row.filter(Boolean).length));

@@ -62,6 +62,7 @@ function bruteGuessable(ids: string[], all: Map<string, string>[]): boolean {
 /** What feasible() must say, by brute force, from the exclusions alone. */
 function expected(ids: string[], exclusions: (readonly [string, string])[], notLastYear: boolean) {
   if (ids.length < MIN_PARTICIPANTS) return { ok: false, rule: 'too_few' };
+  if (notLastYear && ids.length < 5) return { ok: false, rule: 'too_few_last_year' };
   const all = valid(ids, { exclusions });
   if (!all.length) return { ok: false, rule: 'exclusions' };
   const fewest = Math.min(...ids.map((g) => ids.filter((r) => r !== g && !exclusions.some(([a, b]) => (a === g && b === r) || (a === r && b === g))).length));
@@ -81,6 +82,17 @@ describe('@keepsake/draw', () => {
   it('refuses a participant twice and an exclusion with a stranger (programming errors, not rules)', () => {
     expect(() => feasible(['a', 'b', 'c', 'a'])).toThrow(TypeError);
     expect(() => feasible(['a', 'b', 'c', 'd'], { exclusions: [['a', 'z']] })).toThrow(TypeError);
+  });
+
+  it('with not last year\'s person on, four are too few: knowing last year, one\'s own pair would tell the rest (second review H4)', () => {
+    const ids = people(4);
+    expect(feasible(ids, { notLastYear: true })).toEqual({ ok: false, rule: 'too_few_last_year' });
+    // brute force: after every possible last year, this year's draws are guessable to whoever knows last year
+    for (const last of valid(ids, {})) expect(bruteGuessable(ids, valid(ids, { notLastYear: true, lastYear: last }))).toBe(true);
+    // with five, after no last year are they
+    const five = people(5);
+    expect(feasible(five, { notLastYear: true })).toEqual({ ok: true });
+    for (const last of valid(five, {})) expect(bruteGuessable(five, valid(five, { notLastYear: true, lastYear: last })), key(last)).toBe(false);
   });
 
   describe('rules that let someone work out another\'s person (review H3)', () => {
@@ -211,7 +223,7 @@ describe('@keepsake/draw', () => {
         const next: Rules = { exclusions, notLastYear: true, lastYear: a };
         const g = feasible(ids, next);
         if (g.ok) expect(isValid(ids, next, draw(ids, next, random))).toBe(true);
-        else expect(g.rule).toBe('last_year_margin');
+        else expect(['last_year_margin', 'too_few_last_year']).toContain(g.rule);
       }
       expect(drawn).toBeGreaterThan(100);
     });
