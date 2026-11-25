@@ -284,6 +284,31 @@ describe('share links', () => {
     expect((await s.exchange(robin.url, undefined, victim)).statusCode).toBe(409);
   });
 
+  it('"Forget this link on this device" ends the session and leaves no device holding the link', async () => {
+    const db = household();
+    const s = await start(db);
+    const made = (await ok(s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' }))).json();
+    const first = await ok(s.exchange(made.url));
+    const device = cookieOf(first);
+    expect(db.select().from(t.guestLink).where(eq(t.guestLink.id, made.link.id)).get()!.openedBy).not.toBeNull();
+    expect((await s.guest(first).send('POST', '/api/guest/sign-out')).statusCode).toBe(204);
+    expect(db.select().from(t.guestLink).where(eq(t.guestLink.id, made.link.id)).get()!.openedBy).toBeNull();
+    expect(db.select().from(t.guestSession).all()).toEqual([]);
+    // Not even the device that had it reopens it: only a new address does.
+    expect((await s.exchange(made.url, undefined, device)).statusCode).toBe(409);
+  });
+
+  it('a first exchange ends any session the link still had', async () => {
+    const db = household();
+    const s = await start(db);
+    const made = (await ok(s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' }))).json();
+    const now = new Date().toISOString();
+    db.insert(t.guestSession).values({ id: 'stray', linkId: made.link.id, deviceHash: hashToken('s'.repeat(43)), createdAt: now, lastSeenAt: now, expiresAt: '2999-01-01T00:00:00.000Z' }).run();
+    await ok(s.exchange(made.url));
+    expect(db.select().from(t.guestSession).all().map((x) => x.id)).not.toContain('stray');
+    expect(db.select().from(t.guestSession).all()).toHaveLength(1);
+  });
+
   it('a guest session ends after 30 days unused, and goes on while used (review L-2)', async () => {
     const db = household();
     const s = await start(db);
