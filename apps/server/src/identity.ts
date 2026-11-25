@@ -1,7 +1,7 @@
 // The HomersLab forwarded identity (ADR 0001, docs/security.md "For M1: identity"). The headers count only when the
 // request comes straight from the configured proxy (the socket's own address, never X-Forwarded-For or req.ip); from
 // anywhere else they are ignored.
-import type { Config } from './config';
+import { canonicalIp, type Config } from './config';
 
 export const PERSON_HEADER = 'x-homerslab-person';
 export const NAME_HEADER = 'x-homerslab-name';
@@ -20,7 +20,8 @@ function one(headers: Headers, name: string): string | null {
   return t ? t : null;
 }
 
-export const normaliseIp = (ip: string): string => (ip.toLowerCase().startsWith('::ffff:') ? ip.slice(7) : ip);
+/** The socket's address in canonicalIp's spelling (what KEEPSAKE_TRUSTED_PROXY is compared with). */
+export const normaliseIp = (ip: string): string => canonicalIp(ip) ?? ip;
 
 /** Whether the request's socket is the trusted proxy (homerslab mode only). */
 export function fromTrustedProxy(cfg: Pick<Config, 'mode' | 'trustedProxy'>, remoteAddress: string | undefined): boolean {
@@ -49,4 +50,17 @@ export function resolveIdentity(cfg: Pick<Config, 'mode' | 'trustedProxy'>, remo
 export function dropUntrustedIdentity(cfg: Pick<Config, 'mode' | 'trustedProxy'>, remoteAddress: string | undefined, headers: Headers): void {
   if (fromTrustedProxy(cfg, remoteAddress)) return;
   for (const k of Object.keys(headers)) if (k.startsWith('x-homerslab-')) delete headers[k];
+}
+
+/**
+ * The sign-in rate limit's key: the socket's address, or, from the configured proxy, the last address it put in
+ * X-Forwarded-For (the client it saw). Used for nothing else.
+ */
+export function clientKey(cfg: Pick<Config, 'rateLimitProxy'>, remoteAddress: string | undefined, headers: Headers): string {
+  const socket = remoteAddress ? normaliseIp(remoteAddress) : 'unknown';
+  if (!cfg.rateLimitProxy || socket !== cfg.rateLimitProxy) return socket;
+  const xff = headers['x-forwarded-for'];
+  const last = (typeof xff === 'string' ? xff : '').split(',').map((x) => x.trim()).filter(Boolean).at(-1);
+  const ip = last ? canonicalIp(last) : null;
+  return ip ? `via-proxy:${ip}` : socket;
 }

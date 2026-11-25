@@ -27,10 +27,12 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
 
   // In spec order, as the household's admin (public operations without credentials). Under HomersLab, people and
   // passkeys are HomersLab's: those answer 409 or 404, which the spec declares.
-  const elsewhere = new Set(['addPerson', 'editPerson', 'removePerson', 'invitePerson', 'inviteSelf']);
+  const elsewhere = new Set(['addPerson', 'editPerson', 'removePerson', 'invitePerson', 'inviteSelf', 'listPasskeys', 'removePasskey', 'signOutEverywhere', 'endSessions']);
   it.each(ops.map((o) => [`${o.method} ${o.path} (${o.op.operationId})`, o] as const))('%s', async (_name, o) => {
     const req = request(o);
-    const res = await built.app.inject({ ...req, headers: { ...req.headers, ...(isPublic(o) ? {} : auth) } });
+    // Signing out everywhere would end the admin's sessions for the operations after it: someone else signs out.
+    const who = o.op.operationId === 'signOutEverywhere' && mode === 'standalone' ? { cookie: sessionCookie(db, 'p_robin') } : auth;
+    const res = await built.app.inject({ ...req, headers: { ...req.headers, ...(isPublic(o) ? {} : who) } });
     if (!isPublic(o)) {
       if (mode === 'homerslab' && elsewhere.has(o.op.operationId)) expect([404, 409], res.body).toContain(res.statusCode);
       else expect(res.statusCode, res.body).toBeLessThan(300);

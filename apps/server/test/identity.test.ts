@@ -19,7 +19,20 @@ describe('config', () => {
     expect(() => loadConfig({ ...base, KEEPSAKE_EDGE_IDENTITY: 'homerslab-v0' })).toThrow(/KEEPSAKE_EDGE_IDENTITY/);
     expect(() => loadConfig({ ...base, KEEPSAKE_TRUSTED_PROXY: '' })).toThrow(/KEEPSAKE_TRUSTED_PROXY/);
   });
-  it('standalone trusts no proxy, whatever the environment says', () => {
+  it('KEEPSAKE_TRUSTED_PROXY must be one IP address, refused loudly otherwise; IPv6 compared in one spelling', () => {
+    const base = { KEEPSAKE_MODE: 'homerslab', KEEPSAKE_ORIGIN: ORIGIN, KEEPSAKE_EDGE_IDENTITY: 'homerslab-v1' };
+    for (const bad of ['edge.internal', '10.0.0.0/8', '10.0.0.1:443', '10.0.0.1,10.0.0.2', '[fd00::2]']) {
+      expect(() => loadConfig({ ...base, KEEPSAKE_TRUSTED_PROXY: bad }), bad).toThrow(/one IP address/);
+    }
+    const v6 = loadConfig({ ...base, KEEPSAKE_TRUSTED_PROXY: 'FD00:0::0002' });
+    expect(v6.trustedProxy).toBe('fd00::2');
+    const h = hl('hl-sam', 'Sam', 'adult');
+    expect(resolveIdentity(v6, 'fd00::2', h)?.externalId).toBe('hl-sam');
+    expect(resolveIdentity(v6, 'fd00:0:0::2', h)?.externalId).toBe('hl-sam');
+    expect(resolveIdentity(v6, 'fd00::3', h)).toBeNull();
+    expect(loadConfig({ ...base, KEEPSAKE_TRUSTED_PROXY: '::ffff:10.0.0.2' }).trustedProxy).toBe('10.0.0.2');
+  });
+  it('standalone trusts no proxy for identity, whatever the environment says', () => {
     expect(loadConfig({ KEEPSAKE_TRUSTED_PROXY: '127.0.0.1' }).trustedProxy).toBeNull();
   });
 });

@@ -70,17 +70,28 @@ export function simpleWebAuthn(cfg: Pick<Config, 'origin' | 'rpId'>): WebAuthn {
   };
 }
 
-export interface Pending { challenge: string; kind: 'enrol' | 'sign-in'; inviteId?: string; name?: string; expires: number }
+export interface Pending { challenge: string; kind: 'enrol' | 'sign-in'; inviteId?: string; name?: string; newPersonId?: string; expires: number }
 
-/** One-time challenges, 5 minutes, at most 1000 waiting (the oldest go first). */
+/**
+ * One-time challenges, 5 minutes. Each client (its rate-limit key) holds at most 20 waiting, and all together at most
+ * 1000: a flood from one client pushes out only its own, never someone else's sign-in in progress.
+ */
 export class Challenges {
-  private readonly m = new Map<string, Pending>();
-  constructor(private readonly ttlMs = 5 * 60_000, private readonly max = 1000) {}
-  put(p: Omit<Pending, 'expires'>, now = Date.now()): string {
+  private readonly m = new Map<string, Pending & { key: string }>();
+  constructor(private readonly ttlMs = 5 * 60_000, private readonly max = 1000, private readonly perKey = 20) {}
+  put(p: Omit<Pending, 'expires'>, key = '', now = Date.now()): string {
     for (const [k, v] of this.m) if (v.expires <= now) this.m.delete(k);
-    while (this.m.size >= this.max) this.m.delete(this.m.keys().next().value!);
+    const mine = [...this.m].filter(([, v]) => v.key === key);
+    if (mine.length >= this.perKey) this.m.delete(mine[0]![0]);
+    if (this.m.size >= this.max) {
+      // the oldest of whoever holds the most
+      const counts = new Map<string, number>();
+      for (const v of this.m.values()) counts.set(v.key, (counts.get(v.key) ?? 0) + 1);
+      const top = [...counts].sort((a, b) => b[1] - a[1])[0]![0];
+      for (const [k, v] of this.m) if (v.key === top) { this.m.delete(k); break; }
+    }
     const id = randomBytes(18).toString('base64url');
-    this.m.set(id, { ...p, expires: now + this.ttlMs });
+    this.m.set(id, { ...p, key, expires: now + this.ttlMs });
     return id;
   }
   take(id: unknown, kind: Pending['kind'], now = Date.now()): Pending | null {

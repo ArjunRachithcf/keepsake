@@ -1,5 +1,6 @@
 // Settings from the environment (contracts/homerslab-app.yaml, docker-compose.yml). Secrets are read here and
 // nowhere else, and never logged. Security settings live here only, never in an editable database row (spec §10).
+import { isIP } from 'node:net';
 import { join, resolve } from 'node:path';
 
 export type Mode = 'homerslab' | 'standalone';
@@ -15,6 +16,12 @@ export interface Config {
   webDir: string | null;
   /** homerslab: the only address whose X-HomersLab-* headers are trusted (compared with the socket's address). */
   trustedProxy: string | null;
+  /**
+   * The proxy in front of Keepsake (homerslab: the edge; standalone: optional, e.g. an https reverse proxy), whose
+   * X-Forwarded-For is used for one thing only: the sign-in rate limit's key, so clients behind it are counted apart.
+   * Never for identity in standalone mode.
+   */
+  rateLimitProxy: string | null;
   /** The address people open (scheme, host, port): WebAuthn's origin, and the Origin every change must carry. */
   origin: string;
   rpId: string;
@@ -39,6 +46,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`homerslab mode needs an edge that strips and sets the X-HomersLab-* headers (HomersLab #236): KEEPSAKE_EDGE_IDENTITY=${EDGE_IDENTITY}`);
   }
   if (mode === 'homerslab' && !env.KEEPSAKE_TRUSTED_PROXY) throw new Error('KEEPSAKE_TRUSTED_PROXY must be set in homerslab mode');
+  const proxy = env.KEEPSAKE_TRUSTED_PROXY ? canonicalIp(env.KEEPSAKE_TRUSTED_PROXY) : null;
+  if (env.KEEPSAKE_TRUSTED_PROXY && !proxy) {
+    throw new Error(`KEEPSAKE_TRUSTED_PROXY must be one IP address (no host name, range or port), not ${env.KEEPSAKE_TRUSTED_PROXY}`);
+  }
   const timezone = env.KEEPSAKE_TZ ?? 'UTC';
   try { new Intl.DateTimeFormat('en', { timeZone: timezone }); } catch { throw new Error(`KEEPSAKE_TZ must be an IANA time zone, not ${timezone}`); }
   const dataDir = resolve(env.KEEPSAKE_DATA_DIR ?? './data');
@@ -53,10 +64,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port,
     timezone,
     webDir: env.KEEPSAKE_WEB_DIR ?? null,
-    trustedProxy: mode === 'homerslab' ? env.KEEPSAKE_TRUSTED_PROXY! : null,
+    trustedProxy: mode === 'homerslab' ? proxy : null,
+    rateLimitProxy: proxy,
     origin: origin.origin,
     rpId: origin.hostname,
   };
+}
+
+/** One spelling per address: IPv4-mapped IPv6 as IPv4, IPv6 compressed and lower case; null if it is not an IP. */
+export function canonicalIp(v: string): string | null {
+  let ip = v.trim();
+  if (/^::ffff:/i.test(ip) && isIP(ip.slice(7)) === 4) ip = ip.slice(7);
+  const kind = isIP(ip);
+  if (kind === 4) return ip;
+  if (kind !== 6) return null;
+  const host = new URL(`http://[${ip}]/`).hostname.slice(1, -1);
+  return /^::ffff:\d/.test(host) ? host.slice(7) : host.replace(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/, (_m, a: string, b: string) => {
+    const n = (parseInt(a, 16) << 16) + parseInt(b, 16);
+    return [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+  });
 }
 
 function parseOrigin(v: string): URL {

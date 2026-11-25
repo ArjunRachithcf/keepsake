@@ -1,7 +1,7 @@
 // The household (spec §2, ADR 0001): people, their roles, and who manages which kid. Standalone keeps them here; under
 // HomersLab they arrive with each request from the edge (identity.ts) and are kept in step. Kids' managers are
 // Keepsake's own in both modes (HomersLab's household API may give them later).
-import { and, count, eq, inArray, ne } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import { asDb } from '../db/open';
@@ -89,6 +89,11 @@ function applyPerson(db: Db, p: Person, name: string, role: Role): void {
     if (role !== 'kid') tx.delete(t.manager).where(eq(t.manager.kidId, id)).run();
     if (role === 'kid') tx.delete(t.manager).where(eq(t.manager.managerId, id)).run();
     if (role !== 'kid' && p.role === 'kid') settleKidWishes(asDb(tx), id);
+    // An admin who stops being one takes their unused invites along (Philobiblos ADR 0010): otherwise they could still
+    // put a passkey on someone else's account with one.
+    if (p.role === 'admin' && role !== 'admin') {
+      tx.delete(t.invite).where(and(eq(t.invite.createdBy, id), eq(t.invite.kind, 'admin'), isNull(t.invite.usedAt))).run();
+    }
   });
 }
 

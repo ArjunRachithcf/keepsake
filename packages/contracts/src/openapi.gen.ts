@@ -140,6 +140,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/passkeys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your passkeys, and who invited each (standalone) */
+        get: operations["listPasskeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/passkeys/{passkeyId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkeyId: components["parameters"]["passkeyId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Removes one of your passkeys and the sessions it signed in; your last one stays (standalone) */
+        delete: operations["removePasskey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/sessions/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ends every session of yours, this one too (standalone) */
+        post: operations["signOutEverywhere"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{personId}/sessions/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ends someone's sessions after a lost device (a kid's parent, or an admin; standalone) */
+        post: operations["endSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/household": {
         parameters: {
             query?: never;
@@ -298,7 +370,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A wish for yourself, a kid you manage, or a suggestion for someone else */
+        /** A wish for yourself, a kid you manage, or a suggestion for someone else (a list holds 300; 30 suggestions from one person wait for another) */
         post: operations["addWish"];
         delete?: never;
         options?: never;
@@ -476,6 +548,20 @@ export interface components {
             /** @description The token is in the #fragment */
             url: string;
             expiresAt: components["schemas"]["DateTime"];
+        };
+        Passkey: {
+            id: string;
+            label: string;
+            createdAt: components["schemas"]["DateTime"];
+            /** Format: date-time */
+            lastUsedAt: string | null;
+            /** @description Synced by its platform (it survives a lost device) */
+            backedUp: boolean;
+            /** @description The admin whose invite made it */
+            invitedBy: string | null;
+        };
+        Passkeys: {
+            passkeys: components["schemas"]["Passkey"][];
         };
         Household: {
             mode: components["schemas"]["Mode"];
@@ -706,6 +792,7 @@ export interface components {
         personId: components["schemas"]["Id"];
         wishId: components["schemas"]["Id"];
         celebrationId: components["schemas"]["Id"];
+        passkeyId: string;
         /** @description A celebration's id (its wishes and the any-time ones: the list for it), or `any` (any-time wishes only); absent: all */
         for: string;
     };
@@ -900,6 +987,97 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OneTimeLink"];
                 };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listPasskeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Passkeys"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    removePasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkeyId: components["parameters"]["passkeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    signOutEverywhere: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out everywhere */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    endSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out everywhere */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -1314,6 +1492,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     declineWish: {

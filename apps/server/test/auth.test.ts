@@ -201,12 +201,129 @@ describe('sessions, links and challenges expire', () => {
   });
   it('a challenge lasts 5 minutes and is used once', () => {
     const c = new Challenges();
-    const id = c.put({ challenge: 'a', kind: 'sign-in' }, 0);
+    const id = c.put({ challenge: 'a', kind: 'sign-in' }, 'k', 0);
     expect(c.take(id, 'enrol', 1)).toBeNull();
-    const id2 = c.put({ challenge: 'b', kind: 'sign-in' }, 0);
+    const id2 = c.put({ challenge: 'b', kind: 'sign-in' }, 'k', 0);
     expect(c.take(id2, 'sign-in', 5 * 60_000 + 1)).toBeNull();
-    const id3 = c.put({ challenge: 'c', kind: 'sign-in' }, 0);
+    const id3 = c.put({ challenge: 'c', kind: 'sign-in' }, 'k', 0);
     expect(c.take(id3, 'sign-in', 1)).toMatchObject({ challenge: 'c' });
     expect(c.take(id3, 'sign-in', 2)).toBeNull();
+  });
+});
+
+describe('one client cannot push out another\'s challenges', () => {
+  it('each client holds 20; when all are full, the biggest holder loses its oldest', () => {
+    const c = new Challenges(60_000, 30, 20);
+    const mine = c.put({ challenge: 'mine', kind: 'sign-in' }, 'me', 0);
+    for (let i = 0; i < 500; i++) c.put({ challenge: `flood${i}`, kind: 'sign-in' }, 'flooder', 1);
+    expect(c.take(mine, 'sign-in', 2)).toMatchObject({ challenge: 'mine' });
+    const others = Array.from({ length: 15 }, (_, i) => c.put({ challenge: `o${i}`, kind: 'sign-in' }, `client${i}`, 3));
+    for (const id of others) expect(c.take(id, 'sign-in', 4)).not.toBeNull();
+  });
+});
+
+describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
+  let hh: Db;
+  let a: BuiltApp['app'];
+  beforeEach(async () => {
+    hh = household(); // Alex has pk1 and pk2
+    a = (await buildApp(cfg, hh, { webauthn: fakeWebAuthn() })).app;
+  });
+  afterEach(() => a.close());
+  const call = (method: 'GET' | 'POST' | 'DELETE', url: string, cookie: string, payload?: object) => a.inject({ method, url, payload, headers: { ...H, cookie } });
+  const pkSession = (personId: string, passkeyId: string) => `keepsake_session=${createSession(hh, personId, passkeyId).token}`;
+
+  it('you list your passkeys; removing one ends the sessions it signed in; the last one stays', async () => {
+    const via1 = pkSession('p_alex', 'pk1');
+    const via2 = pkSession('p_alex', 'pk2');
+    expect((await call('GET', '/api/me/passkeys', via1)).json().passkeys.map((k: { id: string }) => k.id).sort()).toEqual(['pk1', 'pk2']);
+    expect((await call('DELETE', '/api/me/passkeys/pk2', via1)).statusCode).toBe(204);
+    expect((await call('GET', '/api/household', via2)).statusCode).toBe(401);
+    expect((await call('GET', '/api/household', via1)).statusCode).toBe(200);
+    expect((await call('DELETE', '/api/me/passkeys/pk1', via1)).statusCode).toBe(409);
+    expect((await call('DELETE', '/api/me/passkeys/nope', via1)).statusCode).toBe(404);
+    // someone else's passkey is a 404 too
+    hh.insert(t.passkey).values({ id: 'pk-sam', personId: 'p_sam', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
+    expect((await call('DELETE', '/api/me/passkeys/pk-sam', via1)).statusCode).toBe(404);
+  });
+
+  it('sign out everywhere ends every session of yours', async () => {
+    const one = sessionCookie(hh, 'p_sam');
+    const two = sessionCookie(hh, 'p_sam');
+    const r = await call('POST', '/api/me/sessions/end', one);
+    expect(r.statusCode).toBe(204);
+    for (const c of [one, two]) expect((await call('GET', '/api/household', c)).statusCode).toBe(401);
+  });
+
+  it('a kid\'s parent or an admin ends someone\'s sessions; nobody else', async () => {
+    const mia = sessionCookie(hh, 'p_mia');
+    expect((await call('POST', '/api/people/p_mia/sessions/end', sessionCookie(hh, 'p_robin'))).statusCode).toBe(403);
+    expect((await call('POST', '/api/people/p_sam/sessions/end', sessionCookie(hh, 'p_mia'))).statusCode).toBe(403);
+    expect((await call('POST', '/api/people/p_mia/sessions/end', sessionCookie(hh, 'p_sam'))).statusCode).toBe(204);
+    expect((await call('GET', '/api/household', mia)).statusCode).toBe(401);
+    const robin = sessionCookie(hh, 'p_robin');
+    expect((await call('POST', '/api/people/p_robin/sessions/end', sessionCookie(hh, 'p_alex'))).statusCode).toBe(204);
+    expect((await call('GET', '/api/household', robin)).statusCode).toBe(401);
+  });
+
+  it('recovery replaces the admin\'s passkeys and ends their sessions', async () => {
+    const old = pkSession('p_alex', 'pk1');
+    const file = createRecoveryLink(hh, cfg, 'p_alex');
+    const token = readFileSync(file, 'utf8').trim().split('#')[1]!;
+    const o = (await call('POST', '/api/auth/enrol/options', '', { token })).json();
+    const v = await call('POST', '/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: 'cred-new', challenge: o.options.challenge } });
+    expect(v.statusCode, v.body).toBe(200);
+    expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_alex')).all().map((k) => k.id)).toEqual(['cred-new']);
+    expect((await call('GET', '/api/household', old)).statusCode).toBe(401);
+  });
+
+  it('an admin who stops being one takes their unused invites along', async () => {
+    hh.insert(t.passkey).values({ id: 'pk-robin', personId: 'p_robin', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
+    hh.update(t.person).set({ role: 'admin' }).where(eq(t.person.id, 'p_robin')).run();
+    const inv = await call('POST', '/api/people/p_sam/invites', sessionCookie(hh, 'p_robin'));
+    expect(inv.statusCode).toBe(201);
+    expect((await call('POST', '/api/people/p_robin', sessionCookie(hh, 'p_alex'))).statusCode).toBe(404); // not a route: PATCH is
+    const demote = await a.inject({ method: 'PATCH', url: '/api/people/p_robin', payload: { role: 'adult' }, headers: { ...H, cookie: sessionCookie(hh, 'p_alex') } });
+    expect(demote.statusCode).toBe(200);
+    expect((await call('POST', '/api/auth/enrol/options', '', { token: inv.json().url.split('#')[1] })).statusCode).toBe(401);
+  });
+
+  it('a link that expires between the two enrolment steps no longer works', async () => {
+    const inv = await call('POST', '/api/people/p_sam/invites', sessionCookie(hh, 'p_alex'));
+    const token = inv.json().url.split('#')[1];
+    const o = (await call('POST', '/api/auth/enrol/options', '', { token })).json();
+    hh.update(t.invite).set({ expiresAt: new Date(Date.now() - 1000).toISOString() }).run();
+    const v = await call('POST', '/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: 'cred-sam', challenge: o.options.challenge } });
+    expect(v.statusCode).toBe(401);
+    expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toEqual([]);
+  });
+});
+
+describe('the first admin\'s passkey carries their person id', () => {
+  it('the user handle given to the authenticator is the id the admin gets', async () => {
+    ensureSetupLink(db, cfg);
+    const o = (await post('/api/auth/enrol/options', { token: setupToken(), name: 'Alex' })).json();
+    const v = await post('/api/auth/enrol/verify', { challengeId: o.challengeId, response: { id: 'cred-a', challenge: o.options.challenge } });
+    expect(o.options.user.id).toBe(v.json().person.id);
+  });
+});
+
+describe('sign-in rate limits', () => {
+  it('count each client apart behind a configured proxy, and everyone together', async () => {
+    const pcfg = loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_TRUSTED_PROXY: '10.0.0.5', KEEPSAKE_DATA_DIR: cfg.dataDir });
+    const b = (await buildApp(pcfg, openDb(':memory:'), { webauthn: fakeWebAuthn() })).app;
+    const from = (xff: string) => b.inject({ method: 'POST', url: '/api/auth/sign-in/options', headers: { ...H, 'x-forwarded-for': xff }, remoteAddress: '10.0.0.5' });
+    for (let i = 0; i < 20; i++) expect((await from('192.0.2.1')).statusCode).toBe(200);
+    expect((await from('192.0.2.1')).statusCode).toBe(429);
+    expect((await from('192.0.2.2')).statusCode).toBe(200); // someone else behind the same proxy still signs in
+    // a forged X-Forwarded-For from anywhere but the proxy counts as the socket's address
+    const direct = (xff: string) => b.inject({ method: 'POST', url: '/api/auth/sign-in/options', headers: { ...H, 'x-forwarded-for': xff }, remoteAddress: '198.51.100.7' });
+    for (let i = 0; i < 20; i++) await direct(`203.0.113.${i}`);
+    expect((await direct('203.0.113.99')).statusCode).toBe(429);
+    // everyone together: 300 a minute
+    let last = 0;
+    for (let i = 0; i < 300; i++) last = (await from(`192.0.2.${100 + (i % 100)}`)).statusCode;
+    expect(last).toBe(429);
+    await b.close();
   });
 });

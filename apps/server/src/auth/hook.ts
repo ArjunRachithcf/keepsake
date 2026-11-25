@@ -15,7 +15,7 @@ export type AuthMode = 'public' | 'person';
 export interface Caller { person: Person; via: 'homerslab' | 'session'; session?: Session }
 
 declare module 'fastify' {
-  interface FastifyContextConfig { auth?: AuthMode }
+  interface FastifyContextConfig { auth?: AuthMode; signIn?: boolean }
   interface FastifyRequest { caller?: Caller }
 }
 

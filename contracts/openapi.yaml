@@ -153,6 +153,59 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /me/passkeys:
+    get:
+      tags: [sign-in]
+      operationId: listPasskeys
+      summary: Your passkeys, and who invited each (standalone)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Passkeys' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/passkeys/{passkeyId}:
+    parameters:
+      - { $ref: '#/components/parameters/passkeyId' }
+    delete:
+      tags: [sign-in]
+      operationId: removePasskey
+      summary: Removes one of your passkeys and the sessions it signed in; your last one stays (standalone)
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /me/sessions/end:
+    post:
+      tags: [sign-in]
+      operationId: signOutEverywhere
+      summary: Ends every session of yours, this one too (standalone)
+      responses:
+        '204': { description: Signed out everywhere }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /people/{personId}/sessions/end:
+    parameters:
+      - { $ref: '#/components/parameters/personId' }
+    post:
+      tags: [sign-in]
+      operationId: endSessions
+      summary: Ends someone's sessions after a lost device (a kid's parent, or an admin; standalone)
+      responses:
+        '204': { description: Signed out everywhere }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /household:
     get:
       tags: [household]
@@ -361,7 +414,7 @@ paths:
     post:
       tags: [wishes]
       operationId: addWish
-      summary: A wish for yourself, a kid you manage, or a suggestion for someone else
+      summary: A wish for yourself, a kid you manage, or a suggestion for someone else (a list holds 300; 30 suggestions from one person wait for another)
       requestBody:
         required: true
         content:
@@ -428,6 +481,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /wishes/{wishId}/decline:
     parameters:
@@ -548,6 +602,11 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/Id' }
+    passkeyId:
+      name: passkeyId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,1400}$' }
     for:
       name: for
       in: query
@@ -678,6 +737,25 @@ components:
       properties:
         url: { type: string, description: 'The token is in the #fragment' }
         expiresAt: { $ref: '#/components/schemas/DateTime' }
+
+    Passkey:
+      type: object
+      additionalProperties: false
+      required: [id, label, createdAt, lastUsedAt, backedUp, invitedBy]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        createdAt: { $ref: '#/components/schemas/DateTime' }
+        lastUsedAt: { type: [string, 'null'], format: date-time }
+        backedUp: { type: boolean, description: 'Synced by its platform (it survives a lost device)' }
+        invitedBy: { type: [string, 'null'], description: 'The admin whose invite made it' }
+
+    Passkeys:
+      type: object
+      additionalProperties: false
+      required: [passkeys]
+      properties:
+        passkeys: { type: array, items: { $ref: '#/components/schemas/Passkey' } }
 
     Household:
       type: object
@@ -814,7 +892,7 @@ components:
       additionalProperties: false
       required: [wishIds]
       properties:
-        wishIds: { type: array, maxItems: 500, items: { $ref: '#/components/schemas/Id' } }
+        wishIds: { type: array, maxItems: 300, items: { $ref: '#/components/schemas/Id' } }
 
     Poster: { enum: [pine, berry, night, gold] }
     Recurrence: { enum: [none, yearly] }

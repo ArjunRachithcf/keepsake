@@ -45,6 +45,11 @@ export function endSession(db: Db, token: string | undefined): void {
   if (looksLikeToken(token)) db.delete(t.session).where(eq(t.session.id, hashToken(token))).run();
 }
 
+/** "Sign out everywhere": every session of the person ends. */
+export function endAllSessions(db: Db, personId: string): void {
+  db.delete(t.session).where(eq(t.session.personId, personId)).run();
+}
+
 export function pruneSessions(db: Db, now = new Date()): void {
   const idle = new Date(now.getTime() - IDLE_DAYS * DAY).toISOString();
   db.delete(t.session).where(or(lt(t.session.expiresAt, now.toISOString()), lt(t.session.lastSeenAt, idle))).run();

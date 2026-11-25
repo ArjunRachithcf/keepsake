@@ -66,6 +66,7 @@ const PARAMS: Record<string, Record<string, string>> = {
   setWishOrder: { personId: 'p_alex' },
   editWish: { wishId: 'w_alex_tent' }, removeWish: { wishId: 'w_alex_old' },
   approveWish: { wishId: 'w_leo_kite' }, declineWish: { wishId: 'w_sug_for_alex' },
+  removePasskey: { passkeyId: 'pk2' }, endSessions: { personId: 'p_mia' },
   getCelebration: { celebrationId: 'c_xmas' }, editCelebration: { celebrationId: 'c_xmas' }, removeCelebration: { celebrationId: 'c_old' },
 };
 
@@ -117,7 +118,7 @@ export function expectValid(o: SpecOp, status: number, body: unknown) {
 const NOW = '2026-11-01T10:00:00.000Z';
 
 /**
- * Alex (admin, a passkey), Sam and Robin (adults), Mia (kid; Sam manages her), Leo (kid; nobody set, so the admins),
+ * Alex (admin, two passkeys), Sam and Robin (adults), Mia (kid; Sam manages her), Leo (kid; nobody set, so the admins),
  * Pat (to be removed). Celebrations: Christmas (yearly; everyone), Mia's birthday (yearly; Mia), an old one-off.
  * Wishes in every state. All invented.
  */
@@ -132,7 +133,7 @@ export function household(): Db {
     { id: 'p_gone', name: 'Pat', role: 'adult', createdAt: NOW },
   ]).run();
   db.insert(t.manager).values({ kidId: 'p_mia', managerId: 'p_sam' }).run();
-  db.insert(t.passkey).values({ id: 'pk1', personId: 'p_alex', publicKey: Buffer.from([1]), label: 'Laptop', createdAt: NOW }).run();
+  for (const [id, label] of [['pk1', 'Laptop'], ['pk2', 'Phone']] as const) db.insert(t.passkey).values({ id, personId: 'p_alex', publicKey: Buffer.from([1]), label, createdAt: NOW }).run();
   db.insert(t.celebration).values([
     { id: 'c_xmas', name: 'Christmas', date: '2026-12-24', poster: 'pine', recurrence: 'yearly', hostId: 'p_alex', createdAt: NOW },
     { id: 'c_mia', name: 'Mia\'s birthday', date: '2019-03-14', poster: 'berry', recurrence: 'yearly', hostId: 'p_sam', createdAt: NOW },
@@ -169,7 +170,7 @@ export const hl = (id: string, name: string, role: string) => ({ 'x-homerslab-pe
 export function fakeWebAuthn(): WebAuthn {
   const challenge = () => randomBytes(16).toString('base64url');
   return {
-    async registrationOptions({ userName }) { const c = challenge(); return { challenge: c, options: { challenge: c, user: { name: userName } } }; },
+    async registrationOptions({ userId, userName }) { const c = challenge(); return { challenge: c, options: { challenge: c, user: { id: userId, name: userName } } }; },
     async verifyRegistration({ response, challenge: c }) {
       const r = response as { id?: string; challenge?: string } | undefined;
       return r?.challenge === c && r.id ? { id: r.id, publicKey: new Uint8Array([9]), counter: 0, transports: ['internal'], backedUp: true } : null;
