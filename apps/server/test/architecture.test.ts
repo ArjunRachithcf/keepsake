@@ -131,7 +131,7 @@ describe('the seam at run time', () => {
         return hit as never;
       });
       // The facade checks the role itself, whatever the route forgot.
-      r.post('/forgot-admin', (q) => { data.people.add(q, { name: 'Jordan', role: 'admin' }); });
+      r.post('/forgot-admin', (q) => { data.people.add(q, { name: 'Jordan', role: 'admin' }, false); });
       r.post('/forgot-admin-reset', (q) => { data.auth.resetPasskeys(q, 'p_sam'); });
       r.get('/viewed', (q) => data.view(q).household());
       r.get('/string', () => JSON.stringify(db.select().from(t.wish).all()) as never);

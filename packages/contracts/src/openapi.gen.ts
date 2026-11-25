@@ -479,6 +479,25 @@ export interface paths {
         patch: operations["editClaim"];
         trace?: never;
     };
+    "/wishes/{wishId}/imported-claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** An admin releases the wish's imported reservation (refused first, like any giving, to its person and kids) */
+        delete: operations["releaseImportedClaim"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/wishes/{wishId}/named": {
         parameters: {
             query?: never;
@@ -638,6 +657,389 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/people/{personId}/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Asks the person one anonymous question about their wishes (grown-ups; not the person, not a kid's own parent). It reaches them at 08:00 household time the next day; until then only the asker sees it */
+        post: operations["askQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/questions/{questionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["questionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Its asker takes it back before it reaches its person; an admin removes one they can see (audited without the asker) */
+        delete: operations["removeQuestion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/questions/{questionId}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["questionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The person (a kid's parent for a kid) answers, once; everyone giving to them sees the answer */
+        post: operations["answerQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/questions/{questionId}/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["questionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The person (a kid's parent for a kid) would rather not say; only the asker is told */
+        post: operations["declineQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/questions/{questionId}/wish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["questionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** "Add a wish instead": a new wish on their list answers the question */
+        post: operations["answerWithWish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{personId}/ideas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A gift idea for the person, shared with the other grown-ups (never the person, never a kid) */
+        post: operations["addIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ideas/{ideaId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ideaId: components["parameters"]["ideaId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Its author (or an admin) removes it */
+        delete: operations["removeIdea"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The guest links the caller manages, revoked ones too, never their address: the share links they made (admins: every one, but never a link for themselves), their celebrations' draw links (admins: all). Kids: none */
+        get: operations["listLinks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/links/{linkId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkId: components["parameters"]["linkId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revokes it: its sessions end at once. A draw guest leaves a draw not drawn yet; once drawn they stay in it */
+        delete: operations["revokeLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/links/{linkId}/address": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkId: components["parameters"]["linkId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited */
+        post: operations["reissueLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{personId}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A share link to the person's wishes, made by another grown-up (for a kid, a parent), never by the person: the address is shown to its maker this once. Refused in homerslab mode until HomersLab lets guests in (Homeward #317) */
+        post: operations["shareLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/celebrations/{celebrationId}/guests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A personal draw link for one named guest (the host; refused in homerslab mode until HomersLab lets guests in): they join the celebration's draw (once drawn, a re-draw under its rules) and the link ends with the draw's day. Shown once */
+        post: operations["inviteGuest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/import/dry-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** What importing the sheet (CSV) would do: names matched or to map, occasions, claims, skipped rows. Nothing is written or kept */
+        post: operations["importDryRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made */
+        post: operations["importSheet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guest/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A guest's link token (from the link's #fragment) for a session cookie (__Host-keepsake_guest) on one device: the first exchange spends the token, and the session lasts as long as the link (at most 400 days); the browser holding it may exchange again, any other gets 409. One 401 for every other failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in */
+        post: operations["startGuest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What the guest's link reaches: one person's wishes (a share link) or their draw and their person's list for the celebration (a draw link), as a giver sees them */
+        get: operations["getGuestPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guest/name": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** The guest's own name (claims wait for it) */
+        put: operations["setGuestName"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guest/draw/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A draw guest opens theirs (from the draw-together time on) */
+        post: operations["openGuestDraw"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guest/wishes/{wishId}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** "I'll get this", as the guest (on what their link reaches; once they gave their name) */
+        put: operations["guestClaim"];
+        post?: never;
+        /** The guest takes their claim back */
+        delete: operations["guestUnclaim"];
+        options?: never;
+        head?: never;
+        /** Bought, given, or back to claimed, as the guest */
+        patch: operations["guestEditClaim"];
+        trace?: never;
+    };
+    "/guest/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The guest asks their link's person (a draw guest: their own person, once opened) one anonymous question */
+        post: operations["guestAsk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/guest/sign-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ends this browser's guest session */
+        post: operations["endGuest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -739,10 +1141,14 @@ export interface components {
         PersonInput: {
             name: string;
             role: components["schemas"]["Role"];
+            /** @description true: the name is like a guest's by link (409 without it), and that is meant */
+            confirmName?: boolean;
         };
         PersonPatch: {
             name?: string;
             role?: components["schemas"]["Role"];
+            /** @description true: the new name is like a guest's by link (409 without it), and that is meant */
+            confirmName?: boolean;
         };
         ManagersInput: {
             managerIds: components["schemas"]["Id"][];
@@ -814,9 +1220,19 @@ export interface components {
         };
         Claim: {
             giver: components["schemas"]["PersonRef"] | null;
+            /** @description A guest's claim: the guest, marked as one (null like `giver` while a draw keeps givers unnamed, and always to a guest) */
+            guest: components["schemas"]["GuestRef"] | null;
+            /** @description An imported reservation: a Reserved row of the sheet whose buyer is nobody here (nobody's claim; an admin releases it) */
+            imported: boolean;
             quantity: number;
             state: components["schemas"]["ClaimState"];
             mine: boolean;
+        };
+        GuestRef: {
+            /** @description The name the guest gave (never a household member's) */
+            name: string;
+            /** @description Who the link is for, as its maker wrote it */
+            label: string;
         };
         GroupGift: {
             organizer: components["schemas"]["PersonRef"] | null;
@@ -906,6 +1322,208 @@ export interface components {
         WishOrder: {
             wishIds: components["schemas"]["Id"][];
         };
+        QuestionInput: {
+            text: string;
+        };
+        AnswerInput: {
+            text: string;
+        };
+        /** @description A wish for the question's person, as in WishInput (without personId) */
+        AnswerWishInput: {
+            name: string;
+            link?: string | null;
+            priceMinor?: number | null;
+            quantity?: number;
+            note?: string | null;
+            mostWanted?: boolean;
+            celebrationId: components["schemas"]["Id"] | null;
+        };
+        WishRef: {
+            id: components["schemas"]["Id"];
+            name: string;
+        };
+        /** @description A question as a giver sees it: never who asked; `mine` for the caller's own */
+        AskedQuestion: {
+            id: components["schemas"]["Id"];
+            text: string;
+            /** @description The morning it reaches (or reached) its person */
+            on: components["schemas"]["Day"];
+            /**
+             * @description waiting: not delivered yet (only its asker sees it); declined: only its asker sees it
+             * @enum {unknown}
+             */
+            state: "waiting" | "open" | "answered" | "declined";
+            answer: string | null;
+            /** @description Answered with a wish ("Add a wish instead") */
+            wish: components["schemas"]["WishRef"] | null;
+            mine: boolean;
+            /** @description For the caller's own, until it is delivered: when (08:00 household time) */
+            arrivesAt: components["schemas"]["DateTime"] | null;
+        };
+        QuestionToAnswer: {
+            id: components["schemas"]["Id"];
+            text: string;
+            on: components["schemas"]["Day"];
+            /** @description Whose wishes it is about: the caller, or a kid of theirs */
+            for: components["schemas"]["PersonRef"];
+        };
+        IdeaInput: {
+            text: string;
+        };
+        Idea: {
+            id: components["schemas"]["Id"];
+            text: string;
+            /** @description Who keeps it (null while a draw keeps its people unnamed to each other, or once they left) */
+            by: components["schemas"]["PersonRef"] | null;
+            mine: boolean;
+            /** @description The day it was written (household time): never the moment */
+            on: components["schemas"]["Day"];
+        };
+        GuestLink: {
+            id: components["schemas"]["Id"];
+            /** @enum {unknown} */
+            kind: "share" | "draw";
+            /** @description Who it is for, as its maker wrote it */
+            label: string;
+            /** @description The name the guest gave */
+            guestName: string | null;
+            /** @description A share link: whose wishes */
+            person: components["schemas"]["PersonRef"] | null;
+            /** @description A draw link: whose draw */
+            celebration: components["schemas"]["CelebrationRef"] | null;
+            /** @description A draw link: the last day it works (the draw's day, household time) */
+            lastDay: components["schemas"]["Day"] | null;
+            createdAt: components["schemas"]["DateTime"];
+            /** @description When it was opened, on its one device (null: not yet) */
+            openedAt: components["schemas"]["DateTime"] | null;
+            revokedAt: components["schemas"]["DateTime"] | null;
+            /** @description When it last got a new address (null: never) */
+            reissuedAt: components["schemas"]["DateTime"] | null;
+            /** @description How many new addresses it got */
+            reissueCount: number;
+        };
+        GuestLinks: {
+            links: components["schemas"]["GuestLink"][];
+        };
+        GuestLinkMade: {
+            link: components["schemas"]["GuestLink"];
+            /** @description Shown this once: the token is in the #fragment and only its hash is kept */
+            url: string;
+        };
+        ShareLinkInput: {
+            /** @description Who it is for (Godmother, the neighbours) */
+            label: string;
+        };
+        DrawLinkInput: {
+            /** @description The guest's name */
+            name: string;
+        };
+        GuestTokenInput: {
+            token: string;
+        };
+        GuestNameInput: {
+            name: string;
+        };
+        GuestPage: {
+            /** @description The link's id: the guest page names it in X-Keepsake-Link */
+            link: components["schemas"]["Id"];
+            /** @enum {unknown} */
+            kind: "share" | "draw";
+            /** @description The guest's own name (claims wait for it) */
+            name: string | null;
+            currency: string | null;
+            /** @description Whose wishes the guest sees: the share link's person, or a draw guest's own person once opened (null before, or when it is another guest) */
+            person: components["schemas"]["PersonRef"] | null;
+            /** @description That person's sizes, likes and "please no", read-only (null while there is no person) */
+            profile: components["schemas"]["Profile"] | null;
+            /** @description A draw link's celebration */
+            celebration: {
+                id: components["schemas"]["Id"];
+                name: string;
+                /** @description The draw's day */
+                date: components["schemas"]["Day"];
+                place: string | null;
+                poster: components["schemas"]["Poster"];
+            } | null;
+            draw: {
+                drawn: boolean;
+                opened: boolean;
+                canOpen: boolean;
+                total: number;
+                openedCount: number;
+                budgetMinor: number | null;
+                drawTogetherAt: components["schemas"]["DateTime"] | null;
+                /** @description Their person, when it is another guest (by name; no list) */
+                receiverGuest: string | null;
+            } | null;
+            /** @description As a giver sees them, without anyone's name on a gift (the guest's own marked mine) */
+            wishes: components["schemas"]["Wish"][];
+            questions: components["schemas"]["AskedQuestion"][];
+            /** @description A draw link: the last day it works */
+            lastDay: components["schemas"]["Day"] | null;
+            /** @description The link got a new address (on, household day) and when its earlier address was last used (null: never opened); null when it never got one */
+            reissued: {
+                on: components["schemas"]["Day"];
+                /** @description How many new addresses the link has had (the guest knows how often she asked) */
+                count: number;
+                earlierLastUsedOn: components["schemas"]["Day"] | null;
+            } | null;
+        };
+        ImportInput: {
+            /** @description The sheet's "Gift List" tab as CSV: Person, Item, Link, Priority, Status, Bought by, Price, Occasion, Notes (at most 2000 rows) */
+            csv: string;
+            /** @description A name in the file → someone of the household, or null to skip their rows */
+            people?: {
+                [key: string]: components["schemas"]["Id"] | null;
+            };
+            /** @description An occasion in the file → a celebration, or null for any time */
+            occasions?: {
+                [key: string]: components["schemas"]["Id"] | null;
+            };
+        };
+        ImportPlan: {
+            rows: number;
+            people: {
+                name: string;
+                personId: components["schemas"]["Id"] | null;
+                /** @enum {unknown} */
+                status: "matched" | "mapped" | "skipped" | "unmapped";
+                rows: number;
+            }[];
+            occasions: {
+                name: string;
+                celebrationId: components["schemas"]["Id"] | null;
+                /** @enum {unknown} */
+                status: "matched" | "mapped" | "any" | "unmatched";
+                rows: number;
+            }[];
+            /** @description "Bought by" names on Reserved rows: someone of the household (matched or mapped like the people) or null */
+            buyers: {
+                name: string;
+                personId: components["schemas"]["Id"] | null;
+                rows: number;
+            }[];
+            wishes: number;
+            claims: number;
+            skipped: {
+                /** @description The row in the sheet (its header is row 1) */
+                row: number;
+                /** @enum {unknown} */
+                reason: "no_person" | "no_item" | "bought" | "person_skipped" | "person_unmapped" | "item_too_long" | "list_full";
+            }[];
+            warnings: {
+                row: number;
+                /** @enum {unknown} */
+                kind: "link_dropped" | "price_dropped" | "buyer_unknown" | "not_in_celebration" | "note_cut";
+            }[];
+            /** @description Every name is matched, mapped or skipped */
+            ready: boolean;
+        };
+        ImportDone: {
+            wishes: number;
+            claims: number;
+            skipped: number;
+        };
         /** @enum {unknown} */
         Poster: "pine" | "berry" | "night" | "gold";
         /** @enum {unknown} */
@@ -955,8 +1573,10 @@ export interface components {
             drawTogetherAt: components["schemas"]["DateTime"] | null;
             /** @description From this day on (always after the celebration) the participants see every pair; null: never */
             revealOn: components["schemas"]["Day"] | null;
-            /** @description Who draws (guests by link join in M4) */
+            /** @description Who of the household draws */
             people: components["schemas"]["PersonRef"][];
+            /** @description The guests who joined by a personal draw link (their names) */
+            guests: string[];
             /** @description Who shouldn't draw whom (both ways): for its host only, null for everyone else */
             exclusions: components["schemas"]["PersonRef"][][] | null;
             drawn: boolean;
@@ -976,6 +1596,8 @@ export interface components {
                 opened: boolean;
                 canOpen: boolean;
                 receiver: components["schemas"]["PersonRef"] | null;
+                /** @description Their person is a guest (no list in Keepsake) */
+                receiverGuest: boolean;
                 /** @description Their row does not open with the keys on the server (a lost key): the host draws again */
                 unreadable: boolean;
             } | null;
@@ -1039,6 +1661,10 @@ export interface components {
             lists: components["schemas"]["PersonList"][];
         };
         PersonPage: {
+            /** @description Only for someone giving to them (a grown-up who is not the person): their questions once delivered, without askers; the caller's own from the moment they asked, marked mine. Absent for the person and kids */
+            questions?: components["schemas"]["AskedQuestion"][];
+            /** @description Gift ideas for them: only for a grown-up who is not the person; absent, not empty, for the person and kids */
+            ideas?: components["schemas"]["Idea"][];
             person: components["schemas"]["Person"];
             profile: components["schemas"]["Profile"];
             /** @description Coming up, with this person in them (the chips) */
@@ -1049,6 +1675,8 @@ export interface components {
             keeps: boolean;
         };
         Home: {
+            /** @description Questions for the caller (and, for a kid's parent, the kid's) delivered and waiting for an answer; never who asked. Always empty for kids */
+            questions: components["schemas"]["QuestionToAnswer"][];
             /** @description The next celebration the caller is part of */
             next: components["schemas"]["Celebration"] | null;
             /** @description Coming up, with the caller in them (the chips) */
@@ -1131,6 +1759,42 @@ export interface components {
                 "application/json": components["schemas"]["Draw"];
             };
         };
+        /** @description The question as its asker sees it */
+        AskedAnswer: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AskedQuestion"];
+            };
+        };
+        /** @description The link, and its address (shown this once) */
+        LinkMade: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["GuestLinkMade"];
+            };
+        };
+        /** @description What the guest's link reaches now */
+        GuestAnswer: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["GuestPage"];
+            };
+        };
+        /** @description The wish as the guest sees it now */
+        GuestWish: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Wish"];
+            };
+        };
         /** @description Too many tries; wait a minute */
         TooMany: {
             headers: {
@@ -1142,9 +1806,14 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+        guestLink: components["schemas"]["Id"];
         personId: components["schemas"]["Id"];
         wishId: components["schemas"]["Id"];
         celebrationId: components["schemas"]["Id"];
+        questionId: components["schemas"]["Id"];
+        ideaId: components["schemas"]["Id"];
+        linkId: components["schemas"]["Id"];
         passkeyId: string;
         /** @description A celebration's id (its wishes and the any-time ones: the list for it), or `any` (any-time wishes only); absent: all */
         for: string;
@@ -1965,6 +2634,29 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    releaseImportedClaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Released */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     nameOnGift: {
         parameters: {
             query?: never;
@@ -2354,6 +3046,567 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    askQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuestionInput"];
+            };
+        };
+        responses: {
+            201: components["responses"]["AskedAnswer"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    removeQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["questionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    answerQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["questionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerInput"];
+            };
+        };
+        responses: {
+            /** @description Answered */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    declineQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["questionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Declined */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    answerWithWish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                questionId: components["parameters"]["questionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerWishInput"];
+            };
+        };
+        responses: {
+            /** @description The new wish */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Wish"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    addIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdeaInput"];
+            };
+        };
+        responses: {
+            /** @description The idea */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Idea"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    removeIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ideaId: components["parameters"]["ideaId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestLinks"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    revokeLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkId: components["parameters"]["linkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    reissueLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkId: components["parameters"]["linkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new address */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestLinkMade"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    shareLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShareLinkInput"];
+            };
+        };
+        responses: {
+            201: components["responses"]["LinkMade"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    inviteGuest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrawLinkInput"];
+            };
+        };
+        responses: {
+            201: components["responses"]["LinkMade"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    importDryRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportInput"];
+            };
+        };
+        responses: {
+            /** @description The plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportPlan"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    importSheet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportInput"];
+            };
+        };
+        responses: {
+            /** @description What it made */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportDone"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    startGuest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuestTokenInput"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GuestAnswer"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["TooMany"];
+        };
+    };
+    getGuestPage: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["GuestAnswer"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setGuestName: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuestNameInput"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GuestAnswer"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    openGuestDraw: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["GuestAnswer"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    guestClaim: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimInput"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GuestWish"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    guestUnclaim: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Taken back */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    guestEditClaim: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimPatch"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GuestWish"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    guestAsk: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuestionInput"];
+            };
+        };
+        responses: {
+            201: components["responses"]["AskedAnswer"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    endGuest: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ended */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
 }

@@ -1,24 +1,9 @@
 // Wishes (ADR 0007): the home screen, adding (your own, a kid's, or a suggestion), changing, approving, ordering.
 // Who may do what is wishes/wishes.ts's; what comes back is the view layer's.
-import { MAX_WISHES, type Data, type WishInput } from '../data';
+import { MAX_WISHES, type Data } from '../data';
 import { Refused } from '../errors';
 import type { Router } from '../router';
-import { bool, id, ids, int, link, nullableId, nullableInt, nullableText, object, text, type Body } from '../validate';
-
-const FIELDS = ['name', 'link', 'priceMinor', 'quantity', 'note', 'mostWanted', 'celebrationId'] as const;
-
-function fields(b: Body, required: boolean): Partial<WishInput> {
-  const out: Partial<WishInput> = {
-    name: text(b, 'name', 120, { required }),
-    link: link(b, 'link'),
-    priceMinor: nullableInt(b, 'priceMinor', 0, 100_000_000),
-    quantity: int(b, 'quantity', 1, 99),
-    note: nullableText(b, 'note', 500),
-    mostWanted: bool(b, 'mostWanted'),
-    celebrationId: nullableId(b, 'celebrationId', { required }),
-  };
-  return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined));
-}
+import { id, ids, object, WISH_FIELDS as FIELDS, wishFields as fields } from '../validate';
 
 export function wishRoutes(api: Router, data: Data) {
   api.get('/home', (r) => data.view(r).home(data.listFor(r.query)));

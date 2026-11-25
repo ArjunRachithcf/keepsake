@@ -37,3 +37,24 @@ export function nextDate(date: string, recurrence: 'none' | 'yearly', from: stri
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY);
 }
+
+/** The day `n` days after `day` (YYYY-MM-DD). */
+export const addDays = (day: string, n: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
+
+/** The wall-clock time in a zone as if it were UTC (for the offset). */
+function wallClock(timeZone: string, at: number): number {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(at)).map((p) => [p.type, p.value]));
+  return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+}
+
+/** The instant a day's `hour`:00 falls on in a time zone (the morning batch, ADR 0008). */
+export function atHour(day: string, hour: number, timeZone: string): Date {
+  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
+  const want = Date.UTC(y, m - 1, d, hour);
+  let at = want - (wallClock(timeZone, want) - want);
+  // Once more across a change of offset (summer time) between the guess and the answer.
+  at = want - (wallClock(timeZone, at) - at);
+  return new Date(at);
+}

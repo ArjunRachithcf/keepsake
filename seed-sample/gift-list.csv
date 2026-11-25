@@ -1,0 +1,12 @@
+﻿Person,Item,Link,Priority,Status,Bought by,Price,Occasion,Notes
+Alex,A two-person tent,https://shop.example/tent,High,,,CHF 249.00,Christmas,Green if possible
+Alex,"Hiking socks, wool",,,Reserved,Sam,"24,50",,
+Sam,A cookbook,https://shop.example/cook,,Bought,Robin,35,Christmas,already wrapped
+Sam,=HYPERLINK("http://evil.example";"click"),,,,,,,
+Mia,A red bike,javascript:alert(1),Most wanted,Reserved,Mia,120,Mia's birthday,"Size 20"", with a bell
+and a basket"
+Mia,Glitter slime,,,,,not a price,Easter,
+Grandpa Joe,A pipe stand,,,,,,Christmas,
+Robin,,,,,,,,an empty row's note
+,An orphan item,,,,,,,
+Robin,A wool scarf,,,Reserved,Nobody Here,30,Any time,@SUM(A1:A9)

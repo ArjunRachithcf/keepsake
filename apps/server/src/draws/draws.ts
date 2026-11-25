@@ -122,6 +122,15 @@ export function openOwn(db: Db, ring: Keyring, d: Draw, me: Participant): string
 }
 
 /**
+ * Whom a participant drew, opened or not (a participant id; null without a row, 'unreadable' when it does not open):
+ * only for what the server does on its own (a guest's claims after a re-draw, guests/guests.ts), never in an answer.
+ */
+export function drawnBy(db: Db, ring: Keyring, d: Draw, me: Participant): string | 'unreadable' | null {
+  const row = db.select().from(t.drawAssignment).where(and(eq(t.drawAssignment.drawId, d.id), eq(t.drawAssignment.giverId, me.id))).get();
+  return row ? openRow(ring, d.id, row) ?? 'unreadable' : null;
+}
+
+/**
  * Every giver → receiver (participant ids; null for a row that does not open). Only after the reveal (the view layer)
  * or inside a new draw (last year's pairs).
  */
@@ -176,7 +185,7 @@ function writeRules(db: Db, drawId: string, i: DrawInput): void {
     if (!byPerson.has(id)) {
       const row = { id: ulid(), drawId, kind: 'person' as const, personId: id, createdAt: now };
       db.insert(t.drawParticipant).values(row).run();
-      byPerson.set(id, { ...row, openedAt: null });
+      byPerson.set(id, { ...row, guestId: null, openedAt: null });
     }
   }
   db.delete(t.drawExclusion).where(eq(t.drawExclusion.drawId, drawId)).run();
@@ -232,14 +241,18 @@ function inputOf(db: Db, d: Draw): DrawInput {
  * out: whether someone bought them something is not theirs to learn (ADR 0003).
  */
 function giftBought(db: Db, c: Celebration, d: Draw, caller: string): boolean {
-  const persons = participantsOf(db, [d.id]).filter((p) => p.kind === 'person').map((p) => p.personId!);
+  const ps = participantsOf(db, [d.id]);
+  const persons = ps.filter((p) => p.kind === 'person').map((p) => p.personId!);
+  // Guests in the draw (M4) give too; they have no wishes of their own.
+  const guests = ps.filter((p) => p.kind === 'guest').map((p) => p.guestId!);
   const others = persons.filter((p) => p !== caller);
   if (!others.length) return false;
   const wishes = db.select({ id: t.wish.id }).from(t.wish).where(and(inArray(t.wish.personId, others), eq(t.wish.state, 'listed'),
     or(eq(t.wish.celebrationId, c.id), isNull(t.wish.celebrationId)))).all().map((w) => w.id);
   if (!wishes.length) return false;
   const since = d.drawnAt!;
-  const claim = db.select({ id: t.claim.id }).from(t.claim).where(and(inArray(t.claim.wishId, wishes), inArray(t.claim.giverId, persons),
+  const byGiver = guests.length ? or(inArray(t.claim.giverId, persons), inArray(t.claim.guestId, guests)) : inArray(t.claim.giverId, persons);
+  const claim = db.select({ id: t.claim.id }).from(t.claim).where(and(inArray(t.claim.wishId, wishes), byGiver,
     inArray(t.claim.state, ['bought', 'given']), gte(t.claim.updatedAt, since))).get();
   if (claim) return true;
   const groups = db.select({ id: t.groupGift.wishId }).from(t.groupGift).where(and(inArray(t.groupGift.wishId, wishes),
@@ -280,9 +293,10 @@ function lastYearOf(db: Db, ring: Keyring, d: Draw, ps: Participant[]): Map<stri
   if (!d.notLastYear) return null;
   const last = db.select().from(t.draw).where(and(eq(t.draw.celebrationId, d.celebrationId), eq(t.draw.year, d.year - 1))).get();
   if (!last?.drawnAt) return null;
-  const lastPs = participantsOf(db, [last.id]);
+  const lastPs = participantsOf(db, [last.id]).filter((p) => p.kind === 'person');
   const personOf = new Map(lastPs.map((p) => [p.id, p.personId]));
-  const nowOf = new Map(ps.map((p) => [p.personId, p.id]));
+  // Only the household's people: a guest's link is for one year's draw.
+  const nowOf = new Map(ps.filter((p) => p.kind === 'person').map((p) => [p.personId, p.id]));
   const out = new Map<string, string>();
   for (const [g, r] of openAll(db, ring, last)) {
     if (!r) continue;
@@ -328,7 +342,8 @@ function cryptoRandom(): (n: number) => number {
 
 /** The new pairs under the rules as they are in the database now, or the rule that blocks them. */
 function prepare(db: Db, d: Draw, ring: Keyring): { pairs: Map<string, string> } | { blocked: Blocker } {
-  const ps = participantsOf(db, [d.id]).filter((p) => p.kind === 'person').sort((a, b) => a.id.localeCompare(b.id));
+  // Everyone in it: the household's people and the guests who joined by a personal link (M4), under the same rules.
+  const ps = participantsOf(db, [d.id]).sort((a, b) => a.id.localeCompare(b.id));
   const ids = ps.map((p) => p.id);
   const exclusions = exclusionsOf(db, d.id).map((e) => [e.a, e.b] as const);
   // Feasibility from the participants and the exclusions alone; last year's pairs only once it is decided.
@@ -436,8 +451,70 @@ export function removeDraw(db: Db, me: Person, celebrationId: string, today: str
   db.transaction((tx) => {
     veilGoing(asDb(tx), d, today);
     tx.delete(t.draw).where(eq(t.draw.id, d.id)).run();
+    // Its guests' links go with it (their participant rows cascade).
+    tx.update(t.guestLink).set({ revokedAt: ts() }).where(and(eq(t.guestLink.celebrationId, c.id), eq(t.guestLink.kind, 'draw'), isNull(t.guestLink.revokedAt))).run();
     audit(asDb(tx), me.id, 'draw_removed', d.id);
   });
+}
+
+// --- Guests (M4, ADR 0009) -----------------------------------------------------------------------------------------
+
+/** Guests one draw may hold (the participants all together stay within the draw's 100). */
+export const MAX_GUESTS = 50;
+
+/**
+ * The host invites a guest by a personal link: `makeLink` writes the link (in this transaction) and returns its id, and
+ * the guest joins the draw as a participant of kind guest. Once the names are drawn, that is a re-draw under the
+ * re-draw rules (in the same transaction: a refusal leaves no link and no participant). Returns the celebration's id.
+ */
+export function addGuest(db: Db, me: Person, celebrationId: string, makeLink: (tx: Db) => string, today: string, ring: Keyring): string {
+  const c = managing(db, me, celebrationId);
+  const d = latestDraw(db, c.id);
+  if (!d) throw new Refused(404, 'this celebration has no draw');
+  if (dayHasCome(c, d, today)) throw new Refused(409, 'its day has come: the draw stays as it is');
+  if (participantsOf(db, [d.id]).filter((p) => p.kind === 'guest').length >= MAX_GUESTS) throw new Refused(409, 'a draw holds at most 50 guests');
+  if (d.drawnAt) mayChangePairs(db, me, c, d, today);
+  const k = d.drawnAt ? needKey(ring) : null;
+  if (k) often(db, d);
+  try {
+    db.transaction((tx0) => {
+      const tx = asDb(tx0);
+      const linkId = makeLink(tx);
+      tx.insert(t.drawParticipant).values({ id: ulid(), drawId: d.id, kind: 'guest', guestId: linkId, createdAt: ts() }).run();
+      audit(tx, me.id, 'draw_changed', d.id);
+      if (!k) return;
+      const p = prepare(tx, d, ring);
+      if ('blocked' in p) throw new Blocked(p.blocked);
+      commit(tx, me, d, k, p.pairs);
+    });
+  } catch (e) {
+    if (e instanceof Blocked) refuse(db, me, d, e.rule);
+    throw e;
+  }
+  return c.id;
+}
+
+/** A guest's place in their celebration's draw (the latest one), if any. */
+export function guestPlace(db: Db, linkId: string): { c: Celebration; d: Draw; me: Participant } | null {
+  const me = db.select().from(t.drawParticipant).where(and(eq(t.drawParticipant.kind, 'guest'), eq(t.drawParticipant.guestId, linkId))).get();
+  const d = me ? db.select().from(t.draw).where(eq(t.draw.id, me.drawId)).get() : undefined;
+  return me && d ? { c: mustGetCelebration(db, d.celebrationId), d, me } : null;
+}
+
+/** A revoked guest leaves a draw whose names are not drawn yet; once drawn, they stay in it (their link just stops). */
+export function guestLeaves(db: Db, linkId: string): void {
+  const place = guestPlace(db, linkId);
+  if (place && !place.d.drawnAt) db.delete(t.drawParticipant).where(eq(t.drawParticipant.id, place.me.id)).run();
+}
+
+/** A guest opens theirs (after the draw-together time). */
+export function openDrawAsGuest(db: Db, linkId: string, now: Date, ring: Keyring): void {
+  const place = guestPlace(db, linkId);
+  if (!place) throw new Refused(404, 'this celebration has no draw');
+  if (!place.d.drawnAt) throw new Refused(409, 'the names are not drawn yet');
+  if (!opensNow(place.d, now)) throw new Refused(409, 'not yet: everyone opens together at the set time');
+  needKey(ring);
+  if (!place.me.openedAt) db.update(t.drawParticipant).set({ openedAt: now.toISOString() }).where(eq(t.drawParticipant.id, place.me.id)).run();
 }
 
 /** A giver opens theirs (after the draw-together time). Returns the celebration's id. */
@@ -539,10 +616,12 @@ export function beforePersonRemoved(db: Db, me: Person, personId: string, today:
  * pairs), so the gifts they made each other under it stay unnamed (second review M3, L6). Run in the change's
  * transaction.
  */
+/** A participant as unrevealedDraws keeps them: a person's id, or `g:<link id>` for a guest. */
+const participantKey = (p: Participant) => p.personId ?? `g:${p.guestId}`;
 export function veil(db: Db, d: Draw, today: string): void {
   const c = mustGetCelebration(db, d.celebrationId);
   if (!d.drawnAt || isRevealed(c, d, today)) return;
-  const people = participantsOf(db, [d.id]).filter((p) => p.personId).map((p) => p.personId!).sort();
+  const people = participantsOf(db, [d.id]).map(participantKey).sort();
   db.insert(t.drawVeil).values({ id: ulid(), drawId: d.id, peopleJson: JSON.stringify(people), on: occasionOf(c, d), revealOn: d.revealOn, createdAt: ts() }).run();
 }
 /**
@@ -576,8 +655,9 @@ export function unrevealedDraws(db: Db, today: string): { people: Set<string>; o
     if (d) { const c = cs.get(d.celebrationId)!; return isRevealed(c, d, today) ? [] : [{ v, on: occasionOf(c, d) }]; }
     return v.revealOn !== null && today >= v.revealOn && today > v.on ? [] : [{ v, on: v.on }];
   });
+  // A guest counts as `g:<link id>` (gifts/gifts.ts giverKey), in a veil too.
   return [
-    ...drawn.map((d) => ({ people: new Set(ps.filter((p) => p.drawId === d.id && p.personId).map((p) => p.personId!)), on: occasionOf(cs.get(d.celebrationId)!, d) })),
+    ...drawn.map((d) => ({ people: new Set(ps.filter((p) => p.drawId === d.id).map(participantKey)), on: occasionOf(cs.get(d.celebrationId)!, d) })),
     ...veils.map(({ v, on }) => ({ people: new Set(JSON.parse(v.peopleJson) as string[]), on })),
   ];
 }

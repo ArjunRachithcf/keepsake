@@ -70,6 +70,7 @@ done
 [ "$(stat -c %a "$work/data")" = 700 ] || { echo "data/ is not 0700" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port/api/household")" = 401 ] || { echo "standalone lets someone in without a passkey" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port/api/household" "$FORGED")" = 401 ] || { echo "standalone believes a HomersLab header" >&2; exit 1; }
+[ "$(status "http://127.0.0.1:$port/api/guest")" = 401 ] || { echo "standalone lets a guest in without a link" >&2; exit 1; }
 dc logs keepsake 2>&1 | grep -q '/setup#' && { echo "the setup link reached the log" >&2; exit 1; }
 # the draws' key: made once in keys/ for Keepsake's user only, 32 bytes, not in data/, not in the log
 [ "$(stat -c %a "$work/keys/sealing.key")" = 600 ] || { echo "no private sealing key in keys/" >&2; exit 1; }
@@ -97,5 +98,6 @@ docker run -d --name "$hl" "${env_args[@]}" -e KEEPSAKE_EDGE_IDENTITY=homerslab-
 wait_health "http://127.0.0.1:$port2/api/health" homerslab
 docker logs "$hl" 2>&1 | grep -q 'no sealing key' || { echo "homerslab mode without a sealing key did not say draws are off" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/household" "$FORGED")" = 401 ] || { echo "homerslab believes a header from outside the proxy" >&2; exit 1; }
+[ "$(status "http://127.0.0.1:$port2/api/guest" "$FORGED")" = 401 ] || { echo "homerslab lets a guest in without a link" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/auth/sign-in/options" null POST)" = 403 ] || { echo "a change without Origin was not refused" >&2; exit 1; }
 echo "smoke: both modes healthy, nobody let in"

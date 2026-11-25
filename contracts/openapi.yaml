@@ -6,8 +6,9 @@ info:
     HTTP API of Keepsake. Same under HomersLab and standalone (ADR 0001). Deny by default: every operation needs a
     person unless it declares `security: []`. Every request that changes something carries Keepsake's own Origin
     (KEEPSAKE_ORIGIN), in both modes. Every answer about the household is built by one view layer (`viewFor(viewer)`,
-    ADR 0003): claims and group-gift shares (M2), ideas and the asker of a question (later milestones) are never sent to the
-    person a wish is for, nor to a kid. docs/security.md lists each route's actor and control.
+    ADR 0003): claims and group-gift shares (M2), ideas and the asker of a question (M4) are never sent to the
+    person a wish is for, nor to a kid (the asker to nobody but themselves). Guests (M4, ADR 0009) use their own short
+    session (`guestSession`), made from a link's token by `POST /guest/session`, and reach only `/guest/*`. docs/security.md lists each route's actor and control.
 servers: [{ url: /api }]
 security: [ { homerslabPerson: [] }, { session: [] } ]
 tags:
@@ -18,6 +19,11 @@ tags:
   - { name: gifts, description: 'Claims and group gifts: givers only (not the wish''s person, not a kid; ADR 0003)' }
   - { name: celebrations }
   - { name: draws, description: 'Draw names (ADR 0004): each giver learns only their own person, every pair only after the host''s reveal date' }
+  - { name: questions, description: 'Anonymous questions (ADR 0008): delivered at 08:00 household time the next day; the asker is sent to nobody but themselves' }
+  - { name: ideas, description: 'Gift ideas for a person: for the other grown-ups only, never the person or a kid' }
+  - { name: links, description: 'Guest links (ADR 0009): share links and personal draw links, made, listed and revoked by the household' }
+  - { name: guest, description: 'What a guest with a link may do: see, name themselves, claim, open their draw, ask (ADR 0009)' }
+  - { name: import, description: 'The one-time sheet import (ADR 0005): admins only, a dry run first, nothing of the file kept' }
 
 paths:
   /health:
@@ -562,6 +568,19 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /wishes/{wishId}/imported-claim:
+    parameters:
+      - { $ref: '#/components/parameters/wishId' }
+    delete:
+      tags: [gifts]
+      operationId: releaseImportedClaim
+      summary: 'An admin releases the wish''s imported reservation (refused first, like any giving, to its person and kids)'
+      responses:
+        '204': { description: Released }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /wishes/{wishId}/named:
     parameters:
       - { $ref: '#/components/parameters/wishId' }
@@ -819,6 +838,395 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /people/{personId}/questions:
+    parameters:
+      - { $ref: '#/components/parameters/personId' }
+    post:
+      tags: [questions]
+      operationId: askQuestion
+      summary: 'Asks the person one anonymous question about their wishes (grown-ups; not the person, not a kid''s own parent). It reaches them at 08:00 household time the next day; until then only the asker sees it'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuestionInput' }
+      responses:
+        '201': { $ref: '#/components/responses/AskedAnswer' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /questions/{questionId}:
+    parameters:
+      - { $ref: '#/components/parameters/questionId' }
+    delete:
+      tags: [questions]
+      operationId: removeQuestion
+      summary: 'Its asker takes it back before it reaches its person; an admin removes one they can see (audited without the asker)'
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /questions/{questionId}/answer:
+    parameters:
+      - { $ref: '#/components/parameters/questionId' }
+    post:
+      tags: [questions]
+      operationId: answerQuestion
+      summary: 'The person (a kid''s parent for a kid) answers, once; everyone giving to them sees the answer'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnswerInput' }
+      responses:
+        '204': { description: Answered }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /questions/{questionId}/decline:
+    parameters:
+      - { $ref: '#/components/parameters/questionId' }
+    post:
+      tags: [questions]
+      operationId: declineQuestion
+      summary: 'The person (a kid''s parent for a kid) would rather not say; only the asker is told'
+      responses:
+        '204': { description: Declined }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /questions/{questionId}/wish:
+    parameters:
+      - { $ref: '#/components/parameters/questionId' }
+    post:
+      tags: [questions]
+      operationId: answerWithWish
+      summary: '"Add a wish instead": a new wish on their list answers the question'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnswerWishInput' }
+      responses:
+        '201':
+          description: The new wish
+          content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /people/{personId}/ideas:
+    parameters:
+      - { $ref: '#/components/parameters/personId' }
+    post:
+      tags: [ideas]
+      operationId: addIdea
+      summary: 'A gift idea for the person, shared with the other grown-ups (never the person, never a kid)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdeaInput' }
+      responses:
+        '201':
+          description: The idea
+          content: { application/json: { schema: { $ref: '#/components/schemas/Idea' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /ideas/{ideaId}:
+    parameters:
+      - { $ref: '#/components/parameters/ideaId' }
+    delete:
+      tags: [ideas]
+      operationId: removeIdea
+      summary: 'Its author (or an admin) removes it'
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /links:
+    get:
+      tags: [links]
+      operationId: listLinks
+      summary: 'The guest links the caller manages, revoked ones too, never their address: the share links they made (admins: every one, but never a link for themselves), their celebrations'' draw links (admins: all). Kids: none'
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/GuestLinks' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /links/{linkId}:
+    parameters:
+      - { $ref: '#/components/parameters/linkId' }
+    delete:
+      tags: [links]
+      operationId: revokeLink
+      summary: 'Revokes it: its sessions end at once. A draw guest leaves a draw not drawn yet; once drawn they stay in it'
+      responses:
+        '204': { description: Revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /links/{linkId}/address:
+    parameters:
+      - { $ref: '#/components/parameters/linkId' }
+    post:
+      tags: [links]
+      operationId: reissueLink
+      summary: 'A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited'
+      responses:
+        '200':
+          description: The new address
+          content: { application/json: { schema: { $ref: '#/components/schemas/GuestLinkMade' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /people/{personId}/links:
+    parameters:
+      - { $ref: '#/components/parameters/personId' }
+    post:
+      tags: [links]
+      operationId: shareLink
+      summary: 'A share link to the person''s wishes, made by another grown-up (for a kid, a parent), never by the person: the address is shown to its maker this once. Refused in homerslab mode until HomersLab lets guests in (Homeward #317)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ShareLinkInput' }
+      responses:
+        '201': { $ref: '#/components/responses/LinkMade' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /celebrations/{celebrationId}/guests:
+    parameters:
+      - { $ref: '#/components/parameters/celebrationId' }
+    post:
+      tags: [links]
+      operationId: inviteGuest
+      summary: 'A personal draw link for one named guest (the host; refused in homerslab mode until HomersLab lets guests in): they join the celebration''s draw (once drawn, a re-draw under its rules) and the link ends with the draw''s day. Shown once'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DrawLinkInput' }
+      responses:
+        '201': { $ref: '#/components/responses/LinkMade' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /import/dry-run:
+    post:
+      tags: [import]
+      operationId: importDryRun
+      summary: 'What importing the sheet (CSV) would do: names matched or to map, occasions, claims, skipped rows. Nothing is written or kept'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportInput' }
+      responses:
+        '200':
+          description: The plan
+          content: { application/json: { schema: { $ref: '#/components/schemas/ImportPlan' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /import:
+    post:
+      tags: [import]
+      operationId: importSheet
+      summary: 'Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportInput' }
+      responses:
+        '200':
+          description: What it made
+          content: { application/json: { schema: { $ref: '#/components/schemas/ImportDone' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /guest/session:
+    post:
+      tags: [guest]
+      operationId: startGuest
+      summary: 'A guest''s link token (from the link''s #fragment) for a session cookie (__Host-keepsake_guest) on one device: the first exchange spends the token, and the session lasts as long as the link (at most 400 days); the browser holding it may exchange again, any other gets 409. One 401 for every other failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GuestTokenInput' }
+      responses:
+        '200': { $ref: '#/components/responses/GuestAnswer' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooMany' }
+
+  /guest:
+    get:
+      tags: [guest]
+      operationId: getGuestPage
+      summary: 'What the guest''s link reaches: one person''s wishes (a share link) or their draw and their person''s list for the celebration (a draw link), as a giver sees them'
+      security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
+      responses:
+        '200': { $ref: '#/components/responses/GuestAnswer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /guest/name:
+    put:
+      tags: [guest]
+      operationId: setGuestName
+      summary: 'The guest''s own name (claims wait for it)'
+      security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GuestNameInput' }
+      responses:
+        '200': { $ref: '#/components/responses/GuestAnswer' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /guest/draw/open:
+    post:
+      tags: [guest]
+      operationId: openGuestDraw
+      summary: 'A draw guest opens theirs (from the draw-together time on)'
+      security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
+      responses:
+        '200': { $ref: '#/components/responses/GuestAnswer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /guest/wishes/{wishId}/claim:
+    parameters:
+      - { $ref: '#/components/parameters/wishId' }
+    put:
+      tags: [guest]
+      operationId: guestClaim
+      summary: '"I''ll get this", as the guest (on what their link reaches; once they gave their name)'
+      security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimInput' }
+      responses:
+        '200': { $ref: '#/components/responses/GuestWish' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [guest]
+      operationId: guestEditClaim
+      summary: 'Bought, given, or back to claimed, as the guest'
+      security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimPatch' }
+      responses:
+        '200': { $ref: '#/components/responses/GuestWish' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [guest]
+      operationId: guestUnclaim
+      summary: 'The guest takes their claim back'
+      security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
+      responses:
+        '204': { description: Taken back }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /guest/questions:
+    post:
+      tags: [guest]
+      operationId: guestAsk
+      summary: 'The guest asks their link''s person (a draw guest: their own person, once opened) one anonymous question'
+      security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuestionInput' }
+      responses:
+        '201': { $ref: '#/components/responses/AskedAnswer' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /guest/sign-out:
+    post:
+      tags: [guest]
+      operationId: endGuest
+      summary: 'Ends this browser''s guest session'
+      security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
+      responses:
+        '204': { description: Ended }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
 components:
   securitySchemes:
     homerslabPerson:
@@ -831,8 +1239,19 @@ components:
       in: cookie
       name: keepsake_session
       description: 'standalone: a passkey session (HttpOnly; Secure; SameSite=Strict; 30 days, 7 idle)'
+    guestSession:
+      type: apiKey
+      in: cookie
+      name: __Host-keepsake_guest
+      description: 'A guest''s device (ADR 0009), from POST /guest/session: 256 random bits, HttpOnly; Secure; SameSite=Strict; 400 days. It holds the sessions of every link it opened; each /guest/* request names its link in the X-Keepsake-Link header. A session lasts as long as its link (at most 400 days), ends after 30 days unused and at a household sign-in in that browser'
 
   parameters:
+    guestLink:
+      name: X-Keepsake-Link
+      in: header
+      required: true
+      description: 'The link a guest request is for (its id, from the guest page): the device''s session of that link counts'
+      schema: { $ref: '#/components/schemas/Id' }
     personId:
       name: personId
       in: path
@@ -845,6 +1264,21 @@ components:
       schema: { $ref: '#/components/schemas/Id' }
     celebrationId:
       name: celebrationId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    questionId:
+      name: questionId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    ideaId:
+      name: ideaId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    linkId:
+      name: linkId
       in: path
       required: true
       schema: { $ref: '#/components/schemas/Id' }
@@ -882,6 +1316,18 @@ components:
     DrawAnswer:
       description: The draw as the caller may see it now
       content: { application/json: { schema: { $ref: '#/components/schemas/Draw' } } }
+    AskedAnswer:
+      description: The question as its asker sees it
+      content: { application/json: { schema: { $ref: '#/components/schemas/AskedQuestion' } } }
+    LinkMade:
+      description: The link, and its address (shown this once)
+      content: { application/json: { schema: { $ref: '#/components/schemas/GuestLinkMade' } } }
+    GuestAnswer:
+      description: What the guest's link reaches now
+      content: { application/json: { schema: { $ref: '#/components/schemas/GuestPage' } } }
+    GuestWish:
+      description: The wish as the guest sees it now
+      content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } }
     TooMany:
       description: Too many tries; wait a minute
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -1037,6 +1483,7 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 60 }
         role: { $ref: '#/components/schemas/Role' }
+        confirmName: { type: boolean, description: 'true: the name is like a guest''s by link (409 without it), and that is meant' }
 
     PersonPatch:
       type: object
@@ -1044,6 +1491,7 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 60 }
         role: { $ref: '#/components/schemas/Role' }
+        confirmName: { type: boolean, description: 'true: the new name is like a guest''s by link (409 without it), and that is meant' }
 
     ManagersInput:
       type: object
@@ -1134,12 +1582,22 @@ components:
     Claim:
       type: object
       additionalProperties: false
-      required: [giver, quantity, state, mine]
+      required: [giver, guest, imported, quantity, state, mine]
       properties:
         giver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        guest: { description: 'A guest''s claim: the guest, marked as one (null like `giver` while a draw keeps givers unnamed, and always to a guest)', anyOf: [{ $ref: '#/components/schemas/GuestRef' }, { type: 'null' }] }
+        imported: { type: boolean, description: 'An imported reservation: a Reserved row of the sheet whose buyer is nobody here (nobody''s claim; an admin releases it)' }
         quantity: { type: integer, minimum: 1 }
         state: { $ref: '#/components/schemas/ClaimState' }
         mine: { type: boolean }
+
+    GuestRef:
+      type: object
+      additionalProperties: false
+      required: [name, label]
+      properties:
+        name: { type: string, description: 'The name the guest gave (never a household member''s)' }
+        label: { type: string, description: 'Who the link is for, as its maker wrote it' }
 
     GroupGift:
       type: object
@@ -1283,6 +1741,288 @@ components:
       properties:
         wishIds: { type: array, maxItems: 300, items: { $ref: '#/components/schemas/Id' } }
 
+    QuestionInput:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 200 }
+
+    AnswerInput:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 500 }
+
+    AnswerWishInput:
+      description: 'A wish for the question''s person, as in WishInput (without personId)'
+      type: object
+      additionalProperties: false
+      required: [name, celebrationId]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        link: { type: [string, 'null'], maxLength: 2000 }
+        priceMinor: { type: [integer, 'null'], minimum: 0, maximum: 100000000 }
+        quantity: { type: integer, minimum: 1, maximum: 99 }
+        note: { type: [string, 'null'], maxLength: 500 }
+        mostWanted: { type: boolean }
+        celebrationId:
+          anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }]
+
+    WishRef:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+
+    AskedQuestion:
+      description: 'A question as a giver sees it: never who asked; `mine` for the caller''s own'
+      type: object
+      additionalProperties: false
+      required: [id, text, on, state, answer, wish, mine, arrivesAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        text: { type: string }
+        on: { $ref: '#/components/schemas/Day', description: 'The morning it reaches (or reached) its person' }
+        state: { enum: [waiting, open, answered, declined], description: 'waiting: not delivered yet (only its asker sees it); declined: only its asker sees it' }
+        answer: { type: [string, 'null'] }
+        wish: { description: 'Answered with a wish ("Add a wish instead")', anyOf: [{ $ref: '#/components/schemas/WishRef' }, { type: 'null' }] }
+        mine: { type: boolean }
+        arrivesAt: { description: 'For the caller''s own, until it is delivered: when (08:00 household time)', anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+
+    QuestionToAnswer:
+      type: object
+      additionalProperties: false
+      required: [id, text, on, for]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        text: { type: string }
+        on: { $ref: '#/components/schemas/Day' }
+        for: { $ref: '#/components/schemas/PersonRef', description: 'Whose wishes it is about: the caller, or a kid of theirs' }
+
+    IdeaInput:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 200 }
+
+    Idea:
+      type: object
+      additionalProperties: false
+      required: [id, text, by, mine, on]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        text: { type: string }
+        by: { description: 'Who keeps it (null while a draw keeps its people unnamed to each other, or once they left)', anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        mine: { type: boolean }
+        on: { $ref: '#/components/schemas/Day', description: 'The day it was written (household time): never the moment' }
+
+    GuestLink:
+      type: object
+      additionalProperties: false
+      required: [id, kind, label, guestName, person, celebration, lastDay, createdAt, openedAt, revokedAt, reissuedAt, reissueCount]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        kind: { enum: [share, draw] }
+        label: { type: string, description: 'Who it is for, as its maker wrote it' }
+        guestName: { type: [string, 'null'], description: 'The name the guest gave' }
+        person: { description: 'A share link: whose wishes', anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        celebration: { description: 'A draw link: whose draw', anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
+        lastDay: { description: 'A draw link: the last day it works (the draw''s day, household time)', anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+        createdAt: { $ref: '#/components/schemas/DateTime' }
+        openedAt: { description: 'When it was opened, on its one device (null: not yet)', anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        revokedAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        reissuedAt: { description: 'When it last got a new address (null: never)', anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        reissueCount: { type: integer, minimum: 0, description: 'How many new addresses it got' }
+
+    GuestLinks:
+      type: object
+      additionalProperties: false
+      required: [links]
+      properties:
+        links: { type: array, items: { $ref: '#/components/schemas/GuestLink' } }
+
+    GuestLinkMade:
+      type: object
+      additionalProperties: false
+      required: [link, url]
+      properties:
+        link: { $ref: '#/components/schemas/GuestLink' }
+        url: { type: string, description: 'Shown this once: the token is in the #fragment and only its hash is kept' }
+
+    ShareLinkInput:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 60, description: 'Who it is for (Godmother, the neighbours)' }
+
+    DrawLinkInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60, description: 'The guest''s name' }
+
+    GuestTokenInput:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+
+    GuestNameInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
+
+    GuestPage:
+      type: object
+      additionalProperties: false
+      required: [link, kind, name, currency, person, profile, celebration, draw, wishes, questions, lastDay, reissued]
+      properties:
+        link: { $ref: '#/components/schemas/Id', description: 'The link''s id: the guest page names it in X-Keepsake-Link' }
+        kind: { enum: [share, draw] }
+        name: { type: [string, 'null'], description: 'The guest''s own name (claims wait for it)' }
+        currency: { type: [string, 'null'] }
+        person: { description: 'Whose wishes the guest sees: the share link''s person, or a draw guest''s own person once opened (null before, or when it is another guest)', anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        profile: { description: 'That person''s sizes, likes and "please no", read-only (null while there is no person)', anyOf: [{ $ref: '#/components/schemas/Profile' }, { type: 'null' }] }
+        celebration:
+          description: A draw link's celebration
+          anyOf:
+            - type: object
+              additionalProperties: false
+              required: [id, name, date, place, poster]
+              properties:
+                id: { $ref: '#/components/schemas/Id' }
+                name: { type: string }
+                date: { $ref: '#/components/schemas/Day', description: 'The draw''s day' }
+                place: { type: [string, 'null'] }
+                poster: { $ref: '#/components/schemas/Poster' }
+            - { type: 'null' }
+        draw:
+          anyOf:
+            - type: object
+              additionalProperties: false
+              required: [drawn, opened, canOpen, total, openedCount, budgetMinor, drawTogetherAt, receiverGuest]
+              properties:
+                drawn: { type: boolean }
+                opened: { type: boolean }
+                canOpen: { type: boolean }
+                total: { type: integer }
+                openedCount: { type: integer }
+                budgetMinor: { type: [integer, 'null'] }
+                drawTogetherAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+                receiverGuest: { type: [string, 'null'], description: 'Their person, when it is another guest (by name; no list)' }
+            - { type: 'null' }
+        wishes: { type: array, description: 'As a giver sees them, without anyone''s name on a gift (the guest''s own marked mine)', items: { $ref: '#/components/schemas/Wish' } }
+        questions: { type: array, items: { $ref: '#/components/schemas/AskedQuestion' } }
+        lastDay: { description: 'A draw link: the last day it works', anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+        reissued:
+          description: 'The link got a new address (on, household day) and when its earlier address was last used (null: never opened); null when it never got one'
+          anyOf:
+            - type: object
+              additionalProperties: false
+              required: [on, count, earlierLastUsedOn]
+              properties:
+                on: { $ref: '#/components/schemas/Day' }
+                count: { type: integer, minimum: 1, description: 'How many new addresses the link has had (the guest knows how often she asked)' }
+                earlierLastUsedOn: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+            - { type: 'null' }
+
+    ImportInput:
+      type: object
+      additionalProperties: false
+      required: [csv]
+      properties:
+        csv: { type: string, minLength: 1, maxLength: 524288, description: 'The sheet''s "Gift List" tab as CSV: Person, Item, Link, Priority, Status, Bought by, Price, Occasion, Notes (at most 2000 rows)' }
+        people:
+          description: 'A name in the file → someone of the household, or null to skip their rows'
+          type: object
+          maxProperties: 200
+          additionalProperties: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+        occasions:
+          description: 'An occasion in the file → a celebration, or null for any time'
+          type: object
+          maxProperties: 200
+          additionalProperties: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+
+    ImportPlan:
+      type: object
+      additionalProperties: false
+      required: [rows, people, occasions, buyers, wishes, claims, skipped, warnings, ready]
+      properties:
+        rows: { type: integer }
+        people:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, personId, status, rows]
+            properties:
+              name: { type: string }
+              personId: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+              status: { enum: [matched, mapped, skipped, unmapped] }
+              rows: { type: integer }
+        occasions:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, celebrationId, status, rows]
+            properties:
+              name: { type: string }
+              celebrationId: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+              status: { enum: [matched, mapped, any, unmatched] }
+              rows: { type: integer }
+        buyers:
+          type: array
+          description: '"Bought by" names on Reserved rows: someone of the household (matched or mapped like the people) or null'
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, personId, rows]
+            properties:
+              name: { type: string }
+              personId: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+              rows: { type: integer }
+        wishes: { type: integer }
+        claims: { type: integer }
+        skipped:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [row, reason]
+            properties:
+              row: { type: integer, description: 'The row in the sheet (its header is row 1)' }
+              reason: { enum: [no_person, no_item, bought, person_skipped, person_unmapped, item_too_long, list_full] }
+        warnings:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [row, kind]
+            properties:
+              row: { type: integer }
+              kind: { enum: [link_dropped, price_dropped, buyer_unknown, not_in_celebration, note_cut] }
+        ready: { type: boolean, description: 'Every name is matched, mapped or skipped' }
+
+    ImportDone:
+      type: object
+      additionalProperties: false
+      required: [wishes, claims, skipped]
+      properties:
+        wishes: { type: integer }
+        claims: { type: integer }
+        skipped: { type: integer }
+
     Poster: { enum: [pine, berry, night, gold] }
     Recurrence: { enum: [none, yearly] }
 
@@ -1324,7 +2064,7 @@ components:
     Draw:
       type: object
       additionalProperties: false
-      required: [celebrationId, year, on, budgetMinor, kidsDraw, notLastYear, drawTogetherAt, revealOn, people, exclusions, drawn, redrawnAt, opened, total, over, revealed, canManage, canRedraw, mine, pairs]
+      required: [celebrationId, year, on, budgetMinor, kidsDraw, notLastYear, drawTogetherAt, revealOn, people, guests, exclusions, drawn, redrawnAt, opened, total, over, revealed, canManage, canRedraw, mine, pairs]
       properties:
         celebrationId: { $ref: '#/components/schemas/Id' }
         year: { type: integer }
@@ -1334,7 +2074,8 @@ components:
         notLastYear: { type: boolean }
         drawTogetherAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }], description: 'Nobody opens theirs before it' }
         revealOn: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }], description: 'From this day on (always after the celebration) the participants see every pair; null: never' }
-        people: { type: array, description: 'Who draws (guests by link join in M4)', items: { $ref: '#/components/schemas/PersonRef' } }
+        people: { type: array, description: 'Who of the household draws', items: { $ref: '#/components/schemas/PersonRef' } }
+        guests: { type: array, description: 'The guests who joined by a personal draw link (their names)', items: { type: string } }
         exclusions:
           description: 'Who shouldn''t draw whom (both ways): for its host only, null for everyone else'
           anyOf:
@@ -1353,11 +2094,12 @@ components:
           anyOf:
             - type: object
               additionalProperties: false
-              required: [opened, canOpen, receiver, unreadable]
+              required: [opened, canOpen, receiver, receiverGuest, unreadable]
               properties:
                 opened: { type: boolean }
                 canOpen: { type: boolean }
                 receiver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+                receiverGuest: { type: boolean, description: 'Their person is a guest (no list in Keepsake)' }
                 unreadable: { type: boolean, description: 'Their row does not open with the keys on the server (a lost key): the host draws again' }
             - { type: 'null' }
         pairs:
@@ -1457,6 +2199,14 @@ components:
       additionalProperties: false
       required: [person, profile, celebrations, wishes, keeps]
       properties:
+        questions:
+          description: 'Only for someone giving to them (a grown-up who is not the person): their questions once delivered, without askers; the caller''s own from the moment they asked, marked mine. Absent for the person and kids'
+          type: array
+          items: { $ref: '#/components/schemas/AskedQuestion' }
+        ideas:
+          description: 'Gift ideas for them: only for a grown-up who is not the person; absent, not empty, for the person and kids'
+          type: array
+          items: { $ref: '#/components/schemas/Idea' }
         person: { $ref: '#/components/schemas/Person' }
         profile: { $ref: '#/components/schemas/Profile' }
         celebrations: { type: array, description: 'Coming up, with this person in them (the chips)', items: { $ref: '#/components/schemas/Celebration' } }
@@ -1466,8 +2216,9 @@ components:
     Home:
       type: object
       additionalProperties: false
-      required: [next, celebrations, wishes, suggestions, toApprove, suggested, thanks, gave]
+      required: [next, celebrations, wishes, suggestions, toApprove, suggested, thanks, gave, questions]
       properties:
+        questions: { type: array, description: 'Questions for the caller (and, for a kid''s parent, the kid''s) delivered and waiting for an answer; never who asked. Always empty for kids', items: { $ref: '#/components/schemas/QuestionToAnswer' } }
         next:
           description: The next celebration the caller is part of
           anyOf: [{ $ref: '#/components/schemas/Celebration' }, { type: 'null' }]

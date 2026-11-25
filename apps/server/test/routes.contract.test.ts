@@ -7,15 +7,20 @@ import { buildApp, type BuiltApp } from '../src/app';
 import { EDGE_IDENTITY } from '../src/config';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
-import { ORIGIN, expectValid, fakeWebAuthn, hl, homerslab, household, withDraws, isPublic, ops, request, sessionCookie, spec, standalone } from './helpers';
+import { startGuestSession } from '../src/guests/guests';
+import { today } from '../src/celebrations/dates';
+import { GUEST_TOKEN, ORIGIN, expectValid, fakeWebAuthn, hl, homerslab, household, withDraws, withM4, isPublic, ops, request, security, sessionCookie, spec, standalone } from './helpers';
 
 describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)', (mode) => {
   let built: BuiltApp;
   let db: Db;
   let auth: Record<string, string>;
+  /** Sam's share-link guest (withM4): the /guest/* operations take this session, and only it. */
+  let guest: Record<string, string>;
   beforeAll(async () => {
-    db = withDraws(household());
+    db = withM4(withDraws(household()));
     auth = mode === 'standalone' ? { cookie: sessionCookie(db, 'p_alex') } : hl('hl-alex', 'Alex', 'admin');
+    guest = { cookie: `__Host-keepsake_guest=${startGuestSession(db, GUEST_TOKEN, today('UTC')).device}`, 'x-keepsake-link': 'l_sam' };
     built = await buildApp(mode === 'standalone' ? standalone() : homerslab(), db, { webauthn: fakeWebAuthn() });
     await built.app.ready();
   });
@@ -32,10 +37,15 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
   it.each(ops.map((o) => [`${o.method} ${o.path} (${o.op.operationId})`, o] as const))('%s', async (_name, o) => {
     const req = request(o);
     // Signing out everywhere would end the admin's sessions for the operations after it: someone else signs out.
-    const who = o.op.operationId === 'signOutEverywhere' && mode === 'standalone' ? { cookie: sessionCookie(db, 'p_robin') } : auth;
+    const forGuest = security(o).some((s) => 'guestSession' in s);
+    const who = forGuest ? guest : o.op.operationId === 'signOutEverywhere' && mode === 'standalone' ? { cookie: sessionCookie(db, 'p_robin') } : auth;
     const res = await built.app.inject({ ...req, headers: { ...req.headers, ...(isPublic(o) ? {} : who) } });
     if (!isPublic(o)) {
       if (mode === 'homerslab' && elsewhere.has(o.op.operationId)) expect([404, 409], res.body).toContain(res.statusCode);
+      // A share-link guest has no draw to open: the spec's 404.
+      else if (o.op.operationId === 'openGuestDraw') expect(res.statusCode, res.body).toBe(404);
+      // Guest links wait for HomersLab's edge (Homeward #317): refused there.
+      else if (mode === 'homerslab' && ['shareLink', 'inviteGuest'].includes(o.op.operationId)) expect(res.statusCode, res.body).toBe(409);
       else expect(res.statusCode, res.body).toBeLessThan(300);
     }
     expectValid(o, res.statusCode, res.body ? res.json() : undefined);
@@ -48,7 +58,7 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
     const isAnonymous = (sec: unknown) => !Array.isArray(sec) || sec.length === 0 || sec.some((r) => Object.keys(r as object).length === 0);
     expect(isAnonymous(spec.security), 'top-level security').toBe(false);
     const open = ops.filter((o) => isAnonymous(o.op.security ?? spec.security)).map((o) => o.op.operationId).sort();
-    expect(open).toEqual(['authSession', 'enrolOptions', 'enrolVerify', 'health', 'signInOptions', 'signInVerify', 'signOut']);
+    expect(open).toEqual(['authSession', 'enrolOptions', 'enrolVerify', 'health', 'signInOptions', 'signInVerify', 'signOut', 'startGuest']);
     for (const o of ops.filter((x) => !isPublic(x))) expect(Object.keys(o.op.responses), o.op.operationId).toEqual(expect.arrayContaining(['401', '403']));
   });
 
@@ -91,7 +101,7 @@ describe('answers', () => {
 });
 
 describe('admins only, refused to anyone else (standalone)', () => {
-  const ADMIN_ONLY = ['editHousehold', 'addPerson', 'editPerson', 'removePerson', 'setManagers', 'invitePerson', 'resetPasskeys'];
+  const ADMIN_ONLY = ['editHousehold', 'addPerson', 'editPerson', 'removePerson', 'setManagers', 'invitePerson', 'resetPasskeys', 'importDryRun', 'importSheet'];
   it.each(ADMIN_ONLY)('%s as a grown-up who is not an admin: 403, nothing changed', async (id) => {
     const db = household();
     const { app } = await buildApp(standalone(), db, { webauthn: fakeWebAuthn() });

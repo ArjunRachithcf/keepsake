@@ -311,3 +311,16 @@ legend { padding: 0; margin-bottom: 6px; }
 .pair-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .pair-pick .input { flex: 1 1 8em; width: auto; }
 @media (prefers-reduced-motion: reduce) { .draw-card-reveal { animation: none; } }
+
+/* M4: questions, ideas, guest links, the guest page, the import */
+.promises { margin: 0; padding: 0 0 0 18px; display: grid; gap: 6px; font-size: 15px; color: inherit; }
+.promises strong { color: inherit; font-weight: 600; }
+.section-tight { margin: 0; }
+.sent-title { font-size: 22px; font-weight: 700; margin: 0; }
+.quote { margin: 0; padding: 10px 14px; border-left: 3px solid currentColor; border-radius: 4px; background: var(--fill); font-size: var(--fs-body); }
+.inline-form { display: flex; gap: 8px; align-items: center; width: 100%; }
+.inline-form .input { flex: 1; min-width: 0; }
+.link-url { font-family: ui-monospace, monospace; font-size: 13px; }
+.guest-name { display: grid; gap: 8px; }
+.import-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.import-table th, .import-table td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--separator); }

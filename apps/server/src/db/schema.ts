@@ -2,7 +2,7 @@
 // (test/migrations.contract.test.ts checks they agree). Routes never import this file: they go through the domain
 // modules, and every answer is built by the view layer (src/view, ADR 0003).
 import { sql } from 'drizzle-orm';
-import { blob, check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { blob, check, index, integer, primaryKey, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 
 /** The household's people (spec §2). Under HomersLab, external_id is the edge's stable person id. */
 export const person = sqliteTable('person', {
@@ -138,7 +138,12 @@ export const profile = sqliteTable('profile', {
  * who created, changed, drew, re-drew, removed it or set its reveal, and refused tries; never the pairs). Kept when a
  * person or the draw is removed.
  */
-export const AUDIT_ACTIONS = ['passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared'] as const;
+export const AUDIT_ACTIONS = [
+  'passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared',
+  // M4: an admin removed a question (never who asked it); guest links made, opened (on their one device) and revoked;
+  // a sheet imported; an admin released an imported reservation.
+  'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued',
+] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
   at: text('at').notNull(),
@@ -175,8 +180,16 @@ export const claim = sqliteTable('claim', {
   named: integer('named').notNull().default(0),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+  /**
+   * A guest's claim (ADR 0009): the link they came with; giver_id is then null (gifts/gifts.ts never sets both). Added
+   * by ALTER TABLE in 0003 (a rebuild inside the migration's transaction would cascade), hence last and without a CHECK.
+   */
+  guestId: text('guest_id').references((): AnySQLiteColumn => guestLink.id, { onDelete: 'set null' }),
+  /** A Reserved row of the sheet import whose buyer is nobody here (review L1): nobody's claim, an admin releases it. */
+  imported: integer('imported').notNull().default(0),
 }, (t) => [
   uniqueIndex('claim_wish_giver').on(t.wishId, t.giverId),
+  uniqueIndex('claim_wish_guest').on(t.wishId, t.guestId),
   index('claim_giver').on(t.giverId),
   check('claim_state', sql`${t.state} IN ('claimed', 'bought', 'given')`),
   check('claim_quantity', sql`${t.quantity} BETWEEN 1 AND 99`),
@@ -257,8 +270,8 @@ export const draw = sqliteTable('draw', {
 ]);
 
 /**
- * Who is in a draw. kind 'person': someone of the household; 'guest' is M4's (a personal draw link, ADR 0009) and has
- * no rows yet. opened_at: when they first opened theirs (counted for "4 of 6 opened", never shown per person).
+ * Who is in a draw. kind 'person': someone of the household; 'guest': someone with a personal draw link (ADR 0009, M4).
+ * opened_at: when they first opened theirs (counted for "4 of 6 opened", never shown per person).
  */
 export const drawParticipant = sqliteTable('draw_participant', {
   id: text('id').primaryKey(),
@@ -267,8 +280,14 @@ export const drawParticipant = sqliteTable('draw_participant', {
   personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
   openedAt: text('opened_at'),
   createdAt: text('created_at').notNull(),
+  /**
+   * kind 'guest': their link (draws/draws.ts sets it, and never a person_id, for a guest). Added by ALTER TABLE in 0003:
+   * rebuilding this table inside the migration's transaction would cascade into the sealed rows.
+   */
+  guestId: text('guest_id').references((): AnySQLiteColumn => guestLink.id, { onDelete: 'cascade' }),
 }, (t) => [
   uniqueIndex('draw_participant_person').on(t.drawId, t.personId),
+  uniqueIndex('draw_participant_guest').on(t.drawId, t.guestId),
   check('draw_participant_kind', sql`${t.kind} IN ('person', 'guest')`),
   check('draw_participant_has_person', sql`${t.kind} <> 'person' OR ${t.personId} IS NOT NULL`),
 ]);
@@ -319,3 +338,90 @@ export const drawAssignment = sqliteTable('draw_assignment', {
   sealed: blob('sealed', { mode: 'buffer' }).notNull(),
   keyId: text('key_id').notNull(),
 }, (t) => [primaryKey({ columns: [t.drawId, t.giverId] })]);
+
+// M4 (spec §2, ADR 0008, 0009): guests by link, anonymous questions, ideas.
+
+/**
+ * A guest's link (ADR 0009), which is also the guest: nobody outside the household gets an account. kind 'share': one
+ * person's wishes (person_id), made by another grown-up (a kid's: a parent), never the person. kind 'draw': a personal
+ * link for one named guest to one celebration's draw (celebration_id), made by its host; it expires at the end of the
+ * draw's day, household time (computed when read). The token (256 bits) travels in the link's #fragment and is kept
+ * here as its SHA-256 only. A link opens on one device: opened_at and opened_by (the device's hash) are set by the
+ * first exchange, which spends the token (review N2, M-a); a new address (review M-b) puts a new token on the same row. label: who it is for, from its maker; guest_name: the name the guest gives (claims wait for it).
+ * approved_at: set when it is made.
+ */
+export const guestLink = sqliteTable('guest_link', {
+  id: text('id').primaryKey(),
+  kind: text('kind', { enum: ['share', 'draw'] }).notNull(),
+  personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
+  celebrationId: text('celebration_id').references(() => celebration.id, { onDelete: 'cascade' }),
+  label: text('label').notNull(),
+  guestName: text('guest_name'),
+  tokenHash: text('token_hash').notNull(),
+  createdBy: text('created_by').references(() => person.id, { onDelete: 'set null' }),
+  approvedAt: text('approved_at'),
+  createdAt: text('created_at').notNull(),
+  revokedAt: text('revoked_at'),
+  openedAt: text('opened_at'),
+  openedBy: text('opened_by'),
+  // A new address (review M-b, R-1): when it last got one, how often, and when its earlier address was last used.
+  reissuedAt: text('reissued_at'),
+  reissueCount: integer('reissue_count').notNull().default(0),
+  earlierLastUsedAt: text('earlier_last_used_at'),
+}, (t) => [
+  uniqueIndex('guest_link_token').on(t.tokenHash),
+  index('guest_link_person').on(t.personId),
+  index('guest_link_celebration').on(t.celebrationId),
+  check('guest_link_kind', sql`${t.kind} IN ('share', 'draw')`),
+  check('guest_link_target', sql`(${t.kind} = 'share' AND ${t.personId} IS NOT NULL AND ${t.celebrationId} IS NULL) OR (${t.kind} = 'draw' AND ${t.celebrationId} IS NOT NULL AND ${t.personId} IS NULL)`),
+]);
+
+/**
+ * A guest's session of one link on one device (review M-a): the device is the cookie __Host-keepsake_guest (256 random bits,
+ * SHA-256 here as device_hash), which holds the sessions of every link it opened; a session is found by link and
+ * device. Made from a link's token by a POST; it ends with the link (expires_at: at most 400 days) or after 30 days
+ * without use (last_seen_at).
+ */
+export const guestSession = sqliteTable('guest_session', {
+  id: text('id').primaryKey(),
+  linkId: text('link_id').notNull().references(() => guestLink.id, { onDelete: 'cascade' }),
+  deviceHash: text('device_hash').notNull(),
+  createdAt: text('created_at').notNull(),
+  lastSeenAt: text('last_seen_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+}, (t) => [index('guest_session_link').on(t.linkId), uniqueIndex('guest_session_device').on(t.deviceHash, t.linkId)]);
+
+/**
+ * One anonymous question to a person about their wishes (ADR 0008): one answer, no chat. The asker (a person or a
+ * guest) is kept so they find theirs and so limits hold; only questions/questions.ts compares it with the caller, and
+ * nothing ever returns it. deliver_at: 08:00 household time on the day after it was asked; before then only its asker
+ * sees it. Ids are random (no time in them). state: open → answered (in words, or with a wish: answer_wish_id) or
+ * declined.
+ */
+export const question = sqliteTable('question', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  askerId: text('asker_id').references(() => person.id, { onDelete: 'set null' }),
+  askerGuestId: text('asker_guest_id').references(() => guestLink.id, { onDelete: 'set null' }),
+  text: text('text').notNull(),
+  askedAt: text('asked_at').notNull(),
+  deliverAt: text('deliver_at').notNull(),
+  state: text('state', { enum: ['open', 'answered', 'declined'] }).notNull(),
+  answer: text('answer'),
+  answerWishId: text('answer_wish_id').references(() => wish.id, { onDelete: 'set null' }),
+  answeredAt: text('answered_at'),
+}, (t) => [
+  index('question_person').on(t.personId, t.deliverAt),
+  index('question_asker').on(t.askerId),
+  check('question_state', sql`${t.state} IN ('open', 'answered', 'declined')`),
+  check('question_one_asker', sql`${t.askerId} IS NULL OR ${t.askerGuestId} IS NULL`),
+]);
+
+/** A gift idea a grown-up keeps for a person (spec §3): shared with the other givers, never shown to that person or a kid. */
+export const idea = sqliteTable('idea', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  authorId: text('author_id').references(() => person.id, { onDelete: 'set null' }),
+  text: text('text').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (t) => [index('idea_person').on(t.personId)]);

@@ -1,5 +1,5 @@
 // My wishes (spec §4, home): the next celebration, celebration chips filtering my list, "Add a wish for …" rows,
-// suggestions for me, and kids' wishes waiting for me; after a celebration, my thank-yous (the givers who chose to be
+// questions waiting for my answer (Answer, Add a wish instead), suggestions for me, and kids' wishes waiting for me; after a celebration, my thank-yous (the givers who chose to be
 // named) and the gifts I gave, where I choose to put my name on each (off by default).
 import { useCallback, useEffect, useState } from 'react';
 import { api, message, type Home, type Wish } from '../api';
@@ -7,6 +7,7 @@ import { celebrationLine, day, inDays } from '../format';
 import { useHousehold } from '../household';
 import { Chips, Group, Link, Loading, Notice, PageHead, Poster, Sheet, Switch } from '../ui';
 import { WishForm, WishRow } from '../wish';
+import { HomeQuestions } from '../questions';
 
 export function MyWishes() {
   const { me, name } = useHousehold();
@@ -51,6 +52,8 @@ export function MyWishes() {
           </Poster>
         </Link>
       )}
+
+      <HomeQuestions questions={home.questions} meId={me.id} celebrations={home.celebrations} onChanged={load} />
 
       {home.suggestions.length > 0 && (
         <Group title="Suggested for you" footer="Someone thought you might like these. Say yes and they join your list.">

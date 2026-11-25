@@ -1,12 +1,12 @@
 // A small router over the History API: /, /family, /family/:id, /celebrations, /celebrations/:id, and the one-time
-// links /setup and /enrol. The server answers every one of them with the page (apps/server/src/paths.ts).
+// links /setup and /enrol, and the guest page /guest (ADR 0009). The server answers every one of them with the page (apps/server/src/paths.ts).
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 export type Route =
   | { tab: 'wishes' }
   | { tab: 'family'; person?: string }
   | { tab: 'celebrations'; celebration?: string }
-  | { tab: 'setup' | 'enrol' };
+  | { tab: 'setup' | 'enrol' | 'guest' };
 
 const ID = /^[0-9A-Za-z_-]{1,40}$/;
 
@@ -14,7 +14,7 @@ export function parse(path: string): Route {
   const [, a, b] = path.replace(/\/+$/, '').split('/');
   if (a === 'family') return b && ID.test(b) ? { tab: 'family', person: b } : { tab: 'family' };
   if (a === 'celebrations') return b && ID.test(b) ? { tab: 'celebrations', celebration: b } : { tab: 'celebrations' };
-  if (a === 'setup' || a === 'enrol') return { tab: a };
+  if (a === 'setup' || a === 'enrol' || a === 'guest') return { tab: a };
   return { tab: 'wishes' };
 }
 

@@ -3,7 +3,8 @@
 .git
 seed
 private
-data
-keys
+# a data folder or a sealing key from a local run, at the root or in a package (apps/server/keys)
+**/data
+**/keys
 *.sqlite
 .env

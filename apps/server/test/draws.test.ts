@@ -174,7 +174,7 @@ describe('drawing the names', () => {
     const as = await start(db);
     await as('alex').send('PATCH', DRAW, { drawTogetherAt: new Date(Date.now() + 3_600_000).toISOString() });
     await as('alex').send('POST', `${DRAW}/run`);
-    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: false, canOpen: false, receiver: null, unreadable: false });
+    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: false, canOpen: false, receiver: null, receiverGuest: false, unreadable: false });
     expect((await as('sam').get('/api/home')).json().celebrations.find((c: { id: string }) => c.id === 'c_xmas').draw.mine).toBe('waiting');
     expect((await as('sam').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'not yet: everyone opens together at the set time' });
     await as('alex').send('PATCH', DRAW, { drawTogetherAt: new Date(Date.now() - 1000).toISOString() });
@@ -570,7 +570,7 @@ describe('the database alone says nothing about who drew whom', () => {
     db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, 'dp_sam')).run();
     const as = await start(db);
     // only Sam's own answer says so; the draw still answers, for Sam and for everyone else
-    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: true, canOpen: false, receiver: null, unreadable: true });
+    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: true, canOpen: false, receiver: null, receiverGuest: false, unreadable: true });
     expect((await as('robin').get(DRAW)).statusCode).toBe(200);
     // a row cut short (a tag under 16 bytes) does not open either
     expect(() => openReceiver(KEY, 'd_xmas', 'dp_robin', Buffer.concat([robin.sealed.subarray(0, 24), robin.sealed.subarray(28)]))).toThrow();
@@ -614,10 +614,10 @@ describe('gifts between the people of a draw (review H1)', () => {
     const wish = add.json().id as string;
     expect((await as('quinn').send('PUT', `/api/wishes/${wish}/claim`, { quantity: 1 })).statusCode).toBe(200);
     const seen = async (who: Who) => (await as(who).get('/api/people/p_robin')).json().wishes.find((x: { id: string }) => x.id === wish).gift;
-    expect((await seen('quinn')).claims).toEqual([{ giver: { id: 'p_quinn', name: 'Quinn' }, quantity: 1, state: 'claimed', mine: true }]);
+    expect((await seen('quinn')).claims).toEqual([{ giver: { id: 'p_quinn', name: 'Quinn' }, guest: null, imported: false, quantity: 1, state: 'claimed', mine: true }]);
     for (const who of ['alex', 'sam', 'uma'] as const) {
       const g = await seen(who);
-      expect(g.claims, who).toEqual([{ giver: null, quantity: 1, state: 'claimed', mine: false }]);
+      expect(g.claims, who).toEqual([{ giver: null, guest: null, imported: false, quantity: 1, state: 'claimed', mine: false }]);
       expect(g.left, who).toBe(0);
     }
     // a giver outside the draw is named as ever
@@ -719,7 +719,7 @@ describe('someone in a draw leaving the household (review M2)', () => {
     const as = await start(db);
     expect((await as('alex').send('DELETE', '/api/people/p_quinn')).statusCode).toBe(204);
     // IN: alex → sam → robin → quinn → mia → alex: Robin drew Quinn
-    expect((await as('robin').get(DRAW)).json().mine).toMatchObject({ opened: true, receiver: null, unreadable: false });
+    expect((await as('robin').get(DRAW)).json().mine).toMatchObject({ opened: true, receiver: null, receiverGuest: false, unreadable: false });
     expect((await as('sam').get(DRAW)).json().mine.receiver).toEqual({ id: 'p_robin', name: 'Robin' });
   });
 });
