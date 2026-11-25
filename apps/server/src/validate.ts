@@ -184,3 +184,29 @@ export function importInput(body: unknown, max: number): { csv: string; people: 
   const out = { csv: b.csv, people: nameMap(b, 'people'), occasions: nameMap(b, 'occasions') };
   return out;
 }
+
+/** A device's push subscription as PushSubscription.toJSON() gives it: { endpoint, keys: { p256dh, auth } } (ADR 0010). */
+export function pushSubscription(body: unknown): { endpoint: string; p256dh: string; auth: string } {
+  const b = object(body, ['endpoint', 'keys', 'expirationTime']);
+  if (typeof b.endpoint !== 'string' || !b.endpoint || b.endpoint.length > 1000) throw Refused.field('endpoint', 'a web address (http or https) of up to # characters', 1000);
+  const k = b.keys;
+  if (!k || typeof k !== 'object' || Array.isArray(k)) throw new Refused(400, 'keys: the subscription\'s p256dh and auth');
+  const keys = object(k, ['p256dh', 'auth']);
+  if (typeof keys.p256dh !== 'string' || typeof keys.auth !== 'string') throw new Refused(400, 'keys: the subscription\'s p256dh and auth');
+  return { endpoint: b.endpoint, p256dh: keys.p256dh, auth: keys.auth };
+}
+
+/** An endpoint to unsubscribe (any string of up to 1000 characters: only the caller's own match). */
+export function endpoint(body: unknown): string {
+  const b = object(body, ['endpoint']);
+  if (typeof b.endpoint !== 'string' || !b.endpoint || b.endpoint.length > 1000) throw Refused.field('endpoint', 'a web address (http or https) of up to # characters', 1000);
+  return b.endpoint;
+}
+
+/** A shop link to read (ADR 0011): an https address of up to 2000 characters, without a user name or password. */
+export function shopLink(body: unknown): string {
+  const v = link(object(body, ['url']), 'url');
+  if (!v) throw Refused.field('url', 'required');
+  if (!v.startsWith('https:')) throw new Refused(409, 'Keepsake reads pages only from the shops on its list: type the wish instead');
+  return v;
+}

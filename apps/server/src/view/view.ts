@@ -34,6 +34,11 @@ import { getIdea, ideasFor, seesIdeas } from '../ideas/ideas';
 import { getLink, lastDayOf, linksFor, managesLink, reachOf, reaches, type GuestLink } from '../guests/guests';
 import { guestPlace } from '../draws/draws';
 import type { Plan } from '../import/import';
+import { and, eq } from 'drizzle-orm';
+import { noticesOf, type Notice } from '../notices/notices';
+import { usableVapid } from '../push/keys';
+import { getThankYou, thankedBy, thankYouFor } from '../thanks/thanks';
+import type { Preview } from '../wishes/preview';
 
 /** Each answer with the request it was built for (the seam lets it out on that request only). */
 const VIEWED = new WeakMap<object, object>();
@@ -152,7 +157,7 @@ const byMorning = (a: Question, b: Question) => b.deliverAt.localeCompare(a.deli
 /** A one-time link, from what createInvite returned (data.ts hands it over; routes never get one to pass). */
 export const linkAnswer = (owner: object, i: { url: string; expiresAt: Date }): Viewed<api.OneTimeLink> => mark(owner, { url: str(i.url), expiresAt: i.expiresAt.toISOString() });
 
-export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealingKey' | 'sealingKeyPrevious'>, viewer: Person, owner: object) {
+export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealingKey' | 'sealingKeyPrevious'> & Partial<Pick<Config, 'vapidKey' | 'egress'>>, viewer: Person, owner: object) {
   const answer = marker(owner);
   const instant = new Date();
   const now = today(cfg.timezone, instant);
@@ -311,6 +316,66 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
     return l;
   };
 
+  // Thank-yous (ADR 0010): the viewer's received gifts (and a kid's, for their parents), with the thank-you written for
+  // each, if any; and the thank-yous for gifts the viewer gave. The writer never learns who the givers are.
+  const thanksList = (): api.Thanks[] => {
+    const xs = thanksFor(db, viewer, now);
+    const sent = thankYouFor(db, xs.map((x) => x.wishId));
+    return xs.flatMap((x) => {
+      const row = getWish(db, x.wishId);
+      const [s] = row ? seen([row]) : [];
+      if (!s) return [];
+      const ty = sent.get(x.wishId);
+      // A kid's parent sees the kid's wish with its gifts; a thank-you carries the wish as its person sees it.
+      return [{
+        wish: wishOf(s.w), celebration: celebrationRef(x.celebrationId), on: x.on, from: x.from.map(ref).filter((r): r is api.PersonRef => r !== null),
+        sent: ty ? { text: ty.text, on: ty.day, by: ref(ty.writtenBy) } : null,
+      }];
+    });
+  };
+  const thankedList = (): api.ThankedYou[] => (viewer.role === 'kid' ? [] : thankedBy(db, viewer.id, now).flatMap((x) => {
+    const w = getWish(db, x.wishId);
+    if (!w || !canSee(db, viewer, w)) return [];
+    return [{ id: x.id, wish: { id: w.id, name: w.name }, from: ref(x.personId), by: x.writtenBy && x.writtenBy !== x.personId ? ref(x.writtenBy) : null, text: x.text, on: x.day }];
+  }));
+  /**
+   * A notice as the viewer may see it now (ADR 0010), or nothing: a pointer to a celebration, a question or a
+   * thank-you, checked again by the same rules as every other answer (a question they no longer answer, a celebration
+   * gone, a thank-you for a gift no longer theirs: dropped).
+   */
+  const noticeOf = (n: Notice): api.Notice[] => {
+    const base = { id: n.id, kind: n.kind, on: n.day, read: n.readAt !== null, celebration: null, person: null, question: null };
+    switch (n.kind) {
+      case 'question': {
+        const q = getQuestion(db, n.subjectId);
+        const p = q ? people().get(q.personId) : undefined;
+        if (!q || !p || !answersFor(db, viewer, p) || !isDelivered(q, instant)) return [];
+        return [{ ...base, person: ref(p.id), question: q.id }];
+      }
+      case 'answered': {
+        const q = getQuestion(db, n.subjectId);
+        if (!q || !isAsker(q, { personId: viewer.id }) || q.state === 'open') return [];
+        return [{ ...base, person: ref(q.personId), question: q.id }];
+      }
+      case 'draw': case 'reveal': {
+        const c = celebrationRef(n.subjectId);
+        return c ? [{ ...base, celebration: c }] : [];
+      }
+      case 'remind': {
+        const c = celebrationRef(n.subjectId);
+        return c ? [{ ...base, celebration: c, person: n.aboutId ? ref(n.aboutId) : null }] : [];
+      }
+      case 'say_thanks': return [{ ...base, celebration: n.subjectId === 'any' ? null : celebrationRef(n.subjectId) }];
+      case 'thanked': {
+        const ty = getThankYou(db, n.subjectId);
+        const mine = ty ? thankedList().find((x) => x.id === ty.id) : undefined;
+        return mine ? [{ ...base, person: mine.from }] : [];
+      }
+    }
+  };
+  const reminderFor = (personId: string): number | null => (personId === viewer.id ? null
+    : db.select({ days: t.reminder.days }).from(t.reminder).where(and(eq(t.reminder.personId, viewer.id), eq(t.reminder.aboutId, personId))).get()?.days ?? null);
+
   // Every helper builds its own answer from ids, for this viewer: none takes a person, a row or a ready object.
   return {
     signedIn: (): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),
@@ -333,13 +398,8 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         suggested: wishes(wishesAddedBy(db, viewer.id, 'suggested')).filter((w) => w.personId !== viewer.id),
         // After the celebration: thank-yous (named givers only) for the viewer's gifts and, for a kid's parent, the
         // kid's; and the gifts the viewer gave, to put their name on.
-        thanks: thanksFor(db, viewer, now).flatMap((x) => {
-          const row = getWish(db, x.wishId);
-          const [s] = row ? seen([row]) : [];
-          if (!s) return [];
-          // A kid's parent sees the kid's wish with its gifts; a thank-you carries the wish as its person sees it.
-          return [{ wish: wishOf(s.w), celebration: celebrationRef(x.celebrationId), on: x.on, from: x.from.map(ref).filter((r): r is api.PersonRef => r !== null) }];
-        }),
+        thanks: thanksList(),
+        thanked: thankedList(),
         gave: viewer.role === 'kid' ? [] : gaveBy(db, viewer.id, now).flatMap((x) => {
           const row = getWish(db, x.wishId);
           return (row ? seen([row]) : []).filter((s) => s.gift)
@@ -362,6 +422,8 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         celebrations: upcoming(celebrationsOf(p.id)),
         wishes: listOf(p.id, f),
         keeps: keeps(db, viewer, p),
+        // The viewer's own "Remind me" about them (never anyone else's; null on one's own page).
+        reminder: reminderFor(p.id),
         // Only for someone giving to them: absent (never read) for the person and for kids.
         ...(givesTo(viewer, p.id) ? { questions: questionsOf(p.id) } : {}),
         ...(seesIdeas(viewer, p.id) ? { ideas: ideasOf(p.id) } : {}),
@@ -449,6 +511,27 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       buyers: p.buyers.map((x) => ({ name: x.name, personId: x.personId, rows: x.rows })),
       skipped: p.skipped.map((x) => ({ row: x.row, reason: x.reason })),
       warnings: p.warnings.map((x) => ({ row: x.row, kind: x.kind })),
+    }),
+    /** The viewer's notices (ADR 0010), newest first. */
+    notices: (): Viewed<api.Notices> => {
+      const ns = noticesOf(db, viewer.id).flatMap(noticeOf);
+      return answer({ notices: ns, unread: ns.filter((n) => !n.read).length });
+    },
+    /** Whether this server sends pushes, and its public key for the browser's subscription. */
+    push: (): Viewed<api.PushInfo> => {
+      const v = cfg.egress === false ? null : usableVapid({ vapidKey: cfg.vapidKey ?? null });
+      return answer({ available: v !== null, publicKey: v ? v.publicKey.toString('base64url') : null });
+    },
+    /** One received gift's thank-you entry (after writing it): the same as in `home`. */
+    thanks: (wishId: string): Viewed<api.Thanks> => {
+      const x = thanksList().find((y) => y.wish.id === wishId);
+      if (!x) throw new Refused(404, 'no such wish');
+      return answer(x);
+    },
+    /** A shop page's proposal for a wish (ADR 0011): nothing stored, the person's to change and save. */
+    preview: (p: Preview): Viewed<api.LinkPreview> => answer({
+      link: str(p.link), name: p.name === null ? null : str(p.name), priceMinor: p.priceMinor,
+      pagePrice: p.pagePrice ? { currency: str(p.pagePrice.currency), amountMinor: p.pagePrice.amountMinor } : null,
     }),
     importDone: (d: { wishes: number; claims: number; skipped: number }): Viewed<api.ImportDone> => answer({ wishes: d.wishes, claims: d.claims, skipped: d.skipped }),
     celebrationPage: (id: string): Viewed<api.CelebrationPage> => {

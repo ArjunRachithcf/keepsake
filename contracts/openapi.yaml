@@ -24,6 +24,8 @@ tags:
   - { name: links, description: 'Guest links (ADR 0009): share links and personal draw links, made, listed and revoked by the household' }
   - { name: guest, description: 'What a guest with a link may do: see, name themselves, claim, open their draw, ask (ADR 0009)' }
   - { name: import, description: 'The one-time sheet import (ADR 0005): admins only, a dry run first, nothing of the file kept' }
+  - { name: notices, description: 'What is new for the caller, Web Push, "Remind me" and thank-yous (ADR 0010): a push says only "Something new in Keepsake"; nothing that is hidden from the caller ever makes a notice' }
+  - { name: add-from-a-link, description: 'A shop page read for a wish''s name and price (ADR 0011): only the shops on the server''s list, through its one egress client; nothing stored' }
 
 paths:
   /health:
@@ -1227,6 +1229,133 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /notices:
+    get:
+      tags: [notices]
+      operationId: listNotices
+      summary: 'What is new for the caller, newest first (pointers to celebrations, questions and thank-yous, as the caller may see them now)'
+      responses:
+        '200':
+          description: The notices
+          content: { application/json: { schema: { $ref: '#/components/schemas/Notices' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /notices/read:
+    post:
+      tags: [notices]
+      operationId: readNotices
+      summary: The caller has seen their notices
+      responses:
+        '204': { description: Marked read }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /push:
+    get:
+      tags: [notices]
+      operationId: pushInfo
+      summary: 'Whether this server sends Web Push, and its public (VAPID) key for a browser''s subscription'
+      responses:
+        '200':
+          description: OK
+          content: { application/json: { schema: { $ref: '#/components/schemas/PushInfo' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /push/subscription:
+    put:
+      tags: [notices]
+      operationId: subscribePush
+      summary: 'This device''s push subscription for the caller (standalone: it ends with this session). Endpoints only on a known push service'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushSubscriptionInput' }
+      responses:
+        '204': { description: Subscribed }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /push/unsubscribe:
+    post:
+      tags: [notices]
+      operationId: unsubscribePush
+      summary: 'Ends a device''s subscription (the caller''s own only; another''s endpoint changes nothing)'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EndpointInput' }
+      responses:
+        '204': { description: Unsubscribed }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /people/{personId}/reminder:
+    parameters:
+      - { $ref: '#/components/parameters/personId' }
+    put:
+      tags: [notices]
+      operationId: setReminder
+      summary: '"Remind me": a notice at the morning batch `days` before each of their celebrations (null: no more). Only the caller sees it'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReminderInput' }
+      responses:
+        '204': { description: Set }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /wishes/{wishId}/thanks:
+    parameters:
+      - { $ref: '#/components/parameters/wishId' }
+    put:
+      tags: [notices]
+      operationId: writeThanks
+      summary: 'After the celebration, the person (or a kid''s parent) thanks the givers of a gift they received, named or not; who the givers are is never sent back. Once'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ThanksInput' }
+      responses:
+        '200':
+          description: The received gift with its thank-you
+          content: { application/json: { schema: { $ref: '#/components/schemas/Thanks' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /link-preview:
+    post:
+      tags: [add-from-a-link]
+      operationId: previewLink
+      summary: 'Reads a shop''s page (only the shops on the server''s list) for a wish''s name and price; nothing is stored'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkPreviewInput' }
+      responses:
+        '200':
+          description: 'What the page says: a proposal to change and save as any wish'
+          content: { application/json: { schema: { $ref: '#/components/schemas/LinkPreview' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
 components:
   securitySchemes:
     homerslabPerson:
@@ -1644,12 +1773,129 @@ components:
       description: A gift the caller (or a kid they are a parent of) received, after its celebration; `from` names only the givers who chose to
       type: object
       additionalProperties: false
-      required: [wish, celebration, on, from]
+      required: [wish, celebration, on, from, sent]
       properties:
         wish: { $ref: '#/components/schemas/Wish' }
         celebration: { anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
         on: { $ref: '#/components/schemas/Day' }
         from: { type: array, items: { $ref: '#/components/schemas/PersonRef' } }
+        sent:
+          description: 'The thank-you written for it (it went to every giver of it in the household, named or not; never who they are), or null'
+          anyOf:
+            - type: object
+              additionalProperties: false
+              required: [text, on, by]
+              properties:
+                text: { type: string }
+                on: { $ref: '#/components/schemas/Day' }
+                by: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+            - { type: 'null' }
+
+    ThankedYou:
+      description: A thank-you for a gift the caller gave
+      type: object
+      additionalProperties: false
+      required: [id, wish, from, by, text, on]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        wish: { $ref: '#/components/schemas/WishRef' }
+        from: { description: 'Whose gift it was', anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        by: { description: 'A kid''s parent who wrote it for the kid, else null', anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        text: { type: string }
+        on: { $ref: '#/components/schemas/Day' }
+
+    ThanksInput:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 500 }
+
+    Notice:
+      description: 'A pointer to something new (ADR 0010): question, its person''s question reached them (a kid''s: their parents); answered, the caller''s question was answered; draw, names drawn (or drawn again, or cleared); remind, a celebration coming (person: whose, for "Remind me"); reveal, a draw''s pairs show; say_thanks, gifts reached the caller; thanked, someone thanked the caller (person: whose gift)'
+      type: object
+      additionalProperties: false
+      required: [id, kind, on, read, celebration, person, question]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [question, answered, draw, remind, reveal, say_thanks, thanked] }
+        on: { $ref: '#/components/schemas/Day' }
+        read: { type: boolean }
+        celebration: { anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
+        person: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        question: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+
+    Notices:
+      type: object
+      additionalProperties: false
+      required: [notices, unread]
+      properties:
+        notices: { type: array, items: { $ref: '#/components/schemas/Notice' } }
+        unread: { type: integer, minimum: 0 }
+
+    PushInfo:
+      type: object
+      additionalProperties: false
+      required: [available, publicKey]
+      properties:
+        available: { type: boolean }
+        publicKey: { description: 'The applicationServerKey (base64url, P-256)', anyOf: [{ type: string }, { type: 'null' }] }
+
+    PushSubscriptionInput:
+      description: 'PushSubscription.toJSON(): the endpoint must be on a push service the server knows (Google, Mozilla, Apple, Microsoft), https'
+      type: object
+      additionalProperties: false
+      required: [endpoint, keys]
+      properties:
+        endpoint: { type: string, maxLength: 1000 }
+        expirationTime: { anyOf: [{ type: number }, { type: 'null' }] }
+        keys:
+          type: object
+          additionalProperties: false
+          required: [p256dh, auth]
+          properties:
+            p256dh: { type: string }
+            auth: { type: string }
+
+    EndpointInput:
+      type: object
+      additionalProperties: false
+      required: [endpoint]
+      properties:
+        endpoint: { type: string, maxLength: 1000 }
+
+    ReminderInput:
+      type: object
+      additionalProperties: false
+      required: [days]
+      properties:
+        days: { anyOf: [{ type: integer, minimum: 1, maximum: 60 }, { type: 'null' }] }
+
+    LinkPreviewInput:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url: { type: string, maxLength: 2000 }
+
+    LinkPreview:
+      type: object
+      additionalProperties: false
+      required: [link, name, priceMinor, pagePrice]
+      properties:
+        link: { type: string, description: 'The link as given (what a wish keeps)' }
+        name: { anyOf: [{ type: string, maxLength: 120 }, { type: 'null' }] }
+        priceMinor: { description: 'The page''s price, only when it is in the household''s currency', anyOf: [{ type: integer, minimum: 0 }, { type: 'null' }] }
+        pagePrice:
+          description: 'The price as the page states it, in its currency'
+          anyOf:
+            - type: object
+              additionalProperties: false
+              required: [currency, amountMinor]
+              properties:
+                currency: { type: string, pattern: '^[A-Z]{3}$' }
+                amountMinor: { type: integer, minimum: 0 }
+            - { type: 'null' }
 
     Gave:
       description: A gift the caller gave, after its celebration
@@ -2197,8 +2443,9 @@ components:
     PersonPage:
       type: object
       additionalProperties: false
-      required: [person, profile, celebrations, wishes, keeps]
+      required: [person, profile, celebrations, wishes, keeps, reminder]
       properties:
+        reminder: { description: 'The caller''s own "Remind me" about them (days before each of their celebrations), or null; always null on one''s own page', anyOf: [{ type: integer, minimum: 1, maximum: 60 }, { type: 'null' }] }
         questions:
           description: 'Only for someone giving to them (a grown-up who is not the person): their questions once delivered, without askers; the caller''s own from the moment they asked, marked mine. Absent for the person and kids'
           type: array
@@ -2216,8 +2463,9 @@ components:
     Home:
       type: object
       additionalProperties: false
-      required: [next, celebrations, wishes, suggestions, toApprove, suggested, thanks, gave, questions]
+      required: [next, celebrations, wishes, suggestions, toApprove, suggested, thanks, thanked, gave, questions]
       properties:
+        thanked: { type: array, description: 'Thank-yous for gifts the caller gave (always empty for kids)', items: { $ref: '#/components/schemas/ThankedYou' } }
         questions: { type: array, description: 'Questions for the caller (and, for a kid''s parent, the kid''s) delivered and waiting for an answer; never who asked. Always empty for kids', items: { $ref: '#/components/schemas/QuestionToAnswer' } }
         next:
           description: The next celebration the caller is part of

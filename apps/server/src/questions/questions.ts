@@ -98,27 +98,38 @@ function answerable(db: Db, me: Person, id: string, now: Date): Question {
   return q;
 }
 
-export function answerQuestion(db: Db, me: Person, id: string, text: string, now = new Date()): string {
+/**
+ * Who to tell that their question was answered (or declined), ADR 0010: the asker, if someone of the household. The
+ * id goes to `tell` (the asker's own notice) and nowhere else: no answer carries it.
+ */
+export type TellAsker = (askerId: string) => void;
+const tellAsker = (q: Question, tellIt?: TellAsker) => { if (q.askerId && tellIt) tellIt(q.askerId); };
+
+export function answerQuestion(db: Db, me: Person, id: string, text: string, now = new Date(), tellIt?: TellAsker): string {
   const q = answerable(db, me, id, now);
   db.update(t.question).set({ state: 'answered', answer: text.trim(), answeredAt: now.toISOString() }).where(eq(t.question.id, q.id)).run();
+  tellAsker(q, tellIt);
   return q.personId;
 }
 
-export function declineQuestion(db: Db, me: Person, id: string, now = new Date()): string {
+export function declineQuestion(db: Db, me: Person, id: string, now = new Date(), tellIt?: TellAsker): string {
   const q = answerable(db, me, id, now);
   db.update(t.question).set({ state: 'declined', answeredAt: now.toISOString() }).where(eq(t.question.id, q.id)).run();
+  tellAsker(q, tellIt);
   return q.personId;
 }
 
 /** "Add a wish instead": the wish joins their list (as the person or a kid's parent adds it) and answers the question. */
-export function answerWithWish(db: Db, me: Person, id: string, i: WishInput, now = new Date()): string {
+export function answerWithWish(db: Db, me: Person, id: string, i: WishInput, now = new Date(), tellIt?: TellAsker): string {
   const q = answerable(db, me, id, now);
-  return db.transaction((tx0) => {
+  const wishId = db.transaction((tx0) => {
     const tx = asDb(tx0);
     const w = addWish(tx, me, q.personId, i);
     tx.update(t.question).set({ state: 'answered', answerWishId: w.id, answeredAt: now.toISOString() }).where(eq(t.question.id, q.id)).run();
     return w.id;
   });
+  tellAsker(q, tellIt);
+  return wishId;
 }
 
 /**

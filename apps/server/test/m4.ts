@@ -18,9 +18,22 @@ export type Guest = keyof typeof GUESTS;
 const NOW = '2026-11-01T10:00:00.000Z';
 export const tokenOf = (g: string) => g.padEnd(43, 'x');
 
-export interface Home { db: Db; built: BuiltApp; cookies: Record<string, string> }
+export interface Home { db: Db; built: BuiltApp; cookies: Record<string, string>; pushes: Map<string, number> }
 
-export async function makeHome(): Promise<Home> {
+/**
+ * Every person has a device subscribed to Web Push, and pushes are counted by person instead of sent (ADR 0010): a
+ * push, or none, must not depend on what is hidden from whoever gets it either.
+ */
+export function withDevices(db: Db): Map<string, number> {
+  const pushes = new Map<string, number>();
+  for (const p of db.select({ id: t.person.id }).from(t.person).all()) {
+    db.insert(t.pushSubscription).values({ id: `ps_${p.id}`, personId: p.id, endpoint: `https://fcm.googleapis.com/fcm/send/${p.id}`, p256dh: 'x', auth: 'x', createdAt: NOW }).run();
+  }
+  return pushes;
+}
+export const countingTransport = (pushes: Map<string, number>) => async (s: { personId: string }) => { pushes.set(s.personId, (pushes.get(s.personId) ?? 0) + 1); return 201; };
+
+export async function makeHome(env: NodeJS.ProcessEnv = {}, opts: Parameters<typeof buildApp>[2] = {}): Promise<Home> {
   const db = household();
   db.insert(t.person).values([
     { id: 'p_quinn', name: 'Quinn', role: 'adult', createdAt: NOW },
@@ -34,8 +47,9 @@ export async function makeHome(): Promise<Home> {
   const cookies: Record<string, string> = Object.fromEntries(PEOPLE.map((p) => [p, sessionCookie(db, `p_${p}`)]));
   // Each guest on their own device (a browser of their own).
   for (const g of Object.keys(GUESTS)) cookies[g] = `__Host-keepsake_guest=${startGuestSession(db, tokenOf(g), today('UTC')).device}`;
-  const built = await buildApp(standalone(), db);
-  return { db, built, cookies };
+  const pushes = withDevices(db);
+  const built = await buildApp(standalone(env), db, { pushTransport: countingTransport(pushes), ...opts });
+  return { db, built, cookies, pushes };
 }
 
 /** A guest's requests name their link (X-Keepsake-Link), as the guest page does. */
@@ -46,13 +60,18 @@ export const as = (h: Home, who: Who | Guest) => ({
     h.built.app.inject({ method, url, payload, headers: { cookie: h.cookies[who]!, origin: ORIGIN, ...linkOf(who) } }),
 });
 
-export const READS = ['/api/home', '/api/home?for=c_xmas', '/api/celebrations', '/api/celebrations/c_xmas', '/api/celebrations/c_mia', '/api/auth/session',
+export const READS = ['/api/notices', '/api/push', '/api/home', '/api/home?for=c_xmas', '/api/celebrations', '/api/celebrations/c_xmas', '/api/celebrations/c_mia', '/api/auth/session',
   '/api/household', '/api/links', ...['alex', 'sam', 'robin', 'mia', 'leo', 'quinn', 'uma'].flatMap((p) => [`/api/people/p_${p}`, `/api/people/p_${p}?for=c_xmas`])];
 export type Snap = Record<string, string>;
 
-/** Every reading answer a viewer gets (a guest: their page), bodies and headers but `date`. */
+/**
+ * Every reading answer a viewer gets (a guest: their page), bodies and headers but `date`; after the morning batch for
+ * this moment has run (ADR 0010), with the pushes they were sent so far.
+ */
 export async function reads(h: Home, who: Who | Guest): Promise<Snap> {
-  const out: Snap = {};
+  h.built.morning(new Date());
+  await h.built.pusher.idle();
+  const out: Snap = { pushes: String(h.pushes.get(`p_${who}`) ?? 0) };
   for (const u of who.startsWith('g') ? ['/api/guest'] : READS) {
     const r = await as(h, who).get(u);
     expect(r.statusCode, `${who} ${u}: ${r.body}`).toBe(200);

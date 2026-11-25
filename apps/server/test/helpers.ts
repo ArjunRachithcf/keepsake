@@ -1,7 +1,7 @@
 // Shared by the API tests: contracts/openapi.yaml, a validator for it, sample requests, and a small invented
 // household (fictional names only).
 import { readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createECDH, randomBytes } from 'node:crypto';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { parse } from 'yaml';
@@ -20,10 +20,16 @@ export const GUEST_TOKEN = 'G'.repeat(43);
 
 /** The tests' sealing key (made up for them; never a real one). */
 export const TEST_KEY = Buffer.alloc(32, 7).toString('base64');
-export const standalone = (env: NodeJS.ProcessEnv = {}) => loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: '/nonexistent', KEEPSAKE_SEALING_KEY: TEST_KEY, ...env });
+/** A browser's subscription key in the tests (a P-256 public key, made from a made-up scalar). */
+export const TEST_P256DH = (() => { const e = createECDH('prime256v1'); e.setPrivateKey(Buffer.alloc(32, 5)); return e.getPublicKey().toString('base64url'); })();
+/** The tests' VAPID key (made up for them; never a real one): a P-256 scalar, base64url. */
+export const TEST_VAPID = Buffer.alloc(32, 9).toString('base64url');
+// Test isolation: nothing in the tests may leave the machine. Egress is off unless a test turns it on, and then
+// with its own egress client and push transport (test/notices.test.ts, test/egress.test.ts).
+export const standalone = (env: NodeJS.ProcessEnv = {}) => loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: '/nonexistent', KEEPSAKE_SEALING_KEY: TEST_KEY, KEEPSAKE_VAPID_KEY: TEST_VAPID, KEEPSAKE_EGRESS: 'off', ...env });
 export const homerslab = (proxy = '127.0.0.1', env: NodeJS.ProcessEnv = {}) => loadConfig({
   KEEPSAKE_MODE: 'homerslab', KEEPSAKE_EDGE_IDENTITY: 'homerslab-v1', KEEPSAKE_TRUSTED_PROXY: proxy, KEEPSAKE_ORIGIN: ORIGIN, KEEPSAKE_DATA_DIR: '/nonexistent',
-  KEEPSAKE_SEALING_KEY: TEST_KEY, ...env,
+  KEEPSAKE_SEALING_KEY: TEST_KEY, KEEPSAKE_VAPID_KEY: TEST_VAPID, KEEPSAKE_EGRESS: 'off', ...env,
 });
 
 export interface Schema { type?: string | string[]; enum?: unknown[]; pattern?: string; required?: string[]; properties?: Record<string, Schema>; items?: Schema; $ref?: string; allOf?: Schema[]; anyOf?: Schema[]; minItems?: number }
@@ -89,6 +95,7 @@ const PARAMS: Record<string, Record<string, string>> = {
   addIdea: { personId: 'p_sam' }, removeIdea: { ideaId: 'i_sam' },
   revokeLink: { linkId: 'l_robin' }, reissueLink: { linkId: 'l_leo' }, shareLink: { personId: 'p_sam' }, inviteGuest: { celebrationId: 'c_xmas' },
   releaseImportedClaim: { wishId: 'w_robin_lamp' },
+  setReminder: { personId: 'p_sam' }, writeThanks: { wishId: 'w_alex_mug' },
   guestClaim: { wishId: 'w_sam_book' }, guestEditClaim: { wishId: 'w_sam_book' }, guestUnclaim: { wishId: 'w_sam_book' },
 };
 
@@ -99,7 +106,7 @@ const BODIES: Record<string, unknown> = {
   setManagers: { managerIds: ['p_sam'] },
   addWish: { personId: 'p_alex', name: 'A rain jacket', celebrationId: 'c_xmas' },
   editWish: { note: 'Size M' },
-  setWishOrder: { wishIds: ['w_alex_old', 'w_alex_tent'] },
+  setWishOrder: { wishIds: ['w_alex_old', 'w_alex_tent', 'w_alex_mug'] },
   addCelebration: { name: 'Summer party', date: '2027-07-01', poster: 'gold', recurrence: 'none', people: ['p_alex'] },
   editCelebration: { place: 'The garden' },
   setProfile: { likes: ['Hiking'] },
@@ -124,6 +131,11 @@ const BODIES: Record<string, unknown> = {
   guestClaim: { quantity: 1 },
   guestEditClaim: { state: 'bought' },
   guestAsk: { text: 'Which colour?' },
+  subscribePush: { endpoint: 'https://fcm.googleapis.com/fcm/send/test-device', keys: { p256dh: TEST_P256DH, auth: Buffer.alloc(16, 3).toString('base64url') } },
+  unsubscribePush: { endpoint: 'https://fcm.googleapis.com/fcm/send/test-device' },
+  setReminder: { days: 7 },
+  writeThanks: { text: 'Thank you, the mug is lovely' },
+  previewLink: { url: 'https://shop.example/a-kite' },
 };
 
 export function request(o: SpecOp) {
@@ -235,6 +247,9 @@ export function withM4(db: Db): Db {
   db.insert(t.guestLink).values([link('l_robin', 'p_robin', 'p_sam', 'a'.repeat(43)), link('l_sam', 'p_sam', 'p_alex', GUEST_TOKEN, 'Ada'), link('l_leo', 'p_leo', 'p_alex', 'b'.repeat(43))]).run();
   db.insert(t.wish).values({ id: 'w_robin_lamp', personId: 'p_robin', name: 'A reading lamp', state: 'listed', position: 5, addedBy: 'p_robin', createdAt: NOW, updatedAt: NOW }).run();
   db.insert(t.claim).values({ id: 'cl_lamp', wishId: 'w_robin_lamp', giverId: null, imported: 1, quantity: 1, state: 'claimed', createdAt: NOW, updatedAt: NOW }).run();
+  // M5: a mug Sam gave Alex last Christmas (received: Alex writes its thank-you).
+  db.insert(t.wish).values({ id: 'w_alex_mug', personId: 'p_alex', name: 'A blue mug', state: 'listed', position: 6, addedBy: 'p_alex', createdAt: NOW, updatedAt: NOW }).run();
+  db.insert(t.claim).values({ id: 'cl_mug', wishId: 'w_alex_mug', giverId: 'p_sam', quantity: 1, state: 'given', givenOn: '2025-12-24', createdAt: NOW, updatedAt: NOW }).run();
   return db;
 }
 

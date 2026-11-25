@@ -21,7 +21,12 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
     db = withM4(withDraws(household()));
     auth = mode === 'standalone' ? { cookie: sessionCookie(db, 'p_alex') } : hl('hl-alex', 'Alex', 'admin');
     guest = { cookie: `__Host-keepsake_guest=${startGuestSession(db, GUEST_TOKEN, today('UTC')).device}`, 'x-keepsake-link': 'l_sam' };
-    built = await buildApp(mode === 'standalone' ? standalone() : homerslab(), db, { webauthn: fakeWebAuthn() });
+    // Egress on, with stand-ins: a shop that answers a page, and push services that accept every push (nothing leaves).
+    const on = { KEEPSAKE_EGRESS: 'on', KEEPSAKE_SHOP_HOSTS: 'shop.example' };
+    built = await buildApp(mode === 'standalone' ? standalone(on) : homerslab('127.0.0.1', on), db, {
+      webauthn: fakeWebAuthn(), pushTransport: async () => 201,
+      egress: { request: async (url) => ({ status: 200, type: 'text/html', body: Buffer.from('<title>A kite</title>'), url }) },
+    });
     await built.app.ready();
   });
   afterAll(() => built.app.close());

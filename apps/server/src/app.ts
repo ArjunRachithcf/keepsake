@@ -22,12 +22,30 @@ import { questionRoutes } from './routes/questions';
 import { linkRoutes } from './routes/links';
 import { guestRoutes } from './routes/guest';
 import { importRoutes } from './routes/import';
+import { noticeRoutes } from './routes/notices';
+import { createEgress, type Egress } from './net/egress';
+import { Pusher, webPushTransport, type Transport } from './push/push';
+import { usableVapid } from './push/keys';
 import { routerFor } from './router';
 import { installSeam } from './seam';
 import { SECURITY_HEADERS } from './security-headers';
 
-export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; url: string }[] }
-export interface AppOptions { logger?: boolean; webauthn?: WebAuthn }
+export interface BuiltApp {
+  app: FastifyInstance;
+  apiRoutes: { method: string; url: string }[];
+  /** The morning batch (jobs/morning.ts), for main.ts's scheduler and the tests. */
+  morning: (now: Date) => void;
+  /** The push queue (push/push.ts): `idle()` resolves once every push woken so far has gone. */
+  pusher: Pusher;
+}
+export interface AppOptions {
+  logger?: boolean;
+  webauthn?: WebAuthn;
+  /** Tests: what sends a push (default: Web Push through the egress client, when there is a VAPID key). */
+  pushTransport?: Transport;
+  /** Tests: the egress client (default: the real one, off with KEEPSAKE_EGRESS=off). */
+  egress?: Egress;
+}
 
 /** Headers the logger never writes (Fastify's request serializer logs none today; this holds if that changes). */
 export const REDACTED = ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]', 'req.headers["x-homerslab-role"]'];
@@ -53,7 +71,10 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   await app.register(fastifyRateLimit, { global: false });
   const webauthn = opts.webauthn ?? simpleWebAuthn(cfg);
   const challenges = new Challenges();
-  const data = dataFor(cfg, db);
+  // The one way out (ADR 0011): pushes and shop pages both go through it.
+  const egress = opts.egress ?? createEgress({ enabled: cfg.egress });
+  const pusher = new Pusher(db, opts.pushTransport ?? (cfg.egress ? webPushTransport(egress, () => usableVapid(cfg), cfg.vapidSubject) : null));
+  const data = dataFor(cfg, db, { pusher, egress });
   // The sign-in steps: 20 a minute per client (its socket address or the address a configured proxy saw; IPv6 by /64),
   // and 300 a minute for everyone together, counting only the tries a client's own limit let through: one client's
   // flood uses up its own budget and nobody else's (docs/security.md).
@@ -81,6 +102,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     linkRoutes(router, data);
     guestRoutes(router, data);
     importRoutes(router, data);
+    noticeRoutes(router, data);
   }, { prefix: '/api' });
   const notFound = { error: 'not found' };
   const webDir = cfg.webDir && existsSync(cfg.webDir) ? cfg.webDir : null;
@@ -90,5 +112,5 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     await app.register(fastifyStatic, { root: webDir, wildcard: false });
   }
   app.setNotFoundHandler((req, reply) => (webDir && servesPage(req.method, req.url) ? reply.sendFile('index.html') : reply.code(404).send(notFound)));
-  return { app, apiRoutes };
+  return { app, apiRoutes, morning: (now) => data.notices.morning(now), pusher };
 }

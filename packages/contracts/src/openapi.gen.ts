@@ -1040,6 +1040,146 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What is new for the caller, newest first (pointers to celebrations, questions and thank-yous, as the caller may see them now) */
+        get: operations["listNotices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notices/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The caller has seen their notices */
+        post: operations["readNotices"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether this server sends Web Push, and its public (VAPID) key for a browser's subscription */
+        get: operations["pushInfo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** This device's push subscription for the caller (standalone: it ends with this session). Endpoints only on a known push service */
+        put: operations["subscribePush"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/unsubscribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ends a device's subscription (the caller's own only; another's endpoint changes nothing) */
+        post: operations["unsubscribePush"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/people/{personId}/reminder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** "Remind me": a notice at the morning batch `days` before each of their celebrations (null: no more). Only the caller sees it */
+        put: operations["setReminder"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wishes/{wishId}/thanks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** After the celebration, the person (or a kid's parent) thanks the givers of a gift they received, named or not; who the givers are is never sent back. Once */
+        put: operations["writeThanks"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/link-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reads a shop's page (only the shops on the server's list) for a wish's name and price; nothing is stored */
+        post: operations["previewLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1269,6 +1409,76 @@ export interface components {
             celebration: components["schemas"]["CelebrationRef"] | null;
             on: components["schemas"]["Day"];
             from: components["schemas"]["PersonRef"][];
+            /** @description The thank-you written for it (it went to every giver of it in the household, named or not; never who they are), or null */
+            sent: {
+                text: string;
+                on: components["schemas"]["Day"];
+                by: components["schemas"]["PersonRef"] | null;
+            } | null;
+        };
+        /** @description A thank-you for a gift the caller gave */
+        ThankedYou: {
+            id: components["schemas"]["Id"];
+            wish: components["schemas"]["WishRef"];
+            /** @description Whose gift it was */
+            from: components["schemas"]["PersonRef"] | null;
+            /** @description A kid's parent who wrote it for the kid, else null */
+            by: components["schemas"]["PersonRef"] | null;
+            text: string;
+            on: components["schemas"]["Day"];
+        };
+        ThanksInput: {
+            text: string;
+        };
+        /** @description A pointer to something new (ADR 0010): question, its person's question reached them (a kid's: their parents); answered, the caller's question was answered; draw, names drawn (or drawn again, or cleared); remind, a celebration coming (person: whose, for "Remind me"); reveal, a draw's pairs show; say_thanks, gifts reached the caller; thanked, someone thanked the caller (person: whose gift) */
+        Notice: {
+            id: string;
+            /** @enum {string} */
+            kind: "question" | "answered" | "draw" | "remind" | "reveal" | "say_thanks" | "thanked";
+            on: components["schemas"]["Day"];
+            read: boolean;
+            celebration: components["schemas"]["CelebrationRef"] | null;
+            person: components["schemas"]["PersonRef"] | null;
+            question: components["schemas"]["Id"] | null;
+        };
+        Notices: {
+            notices: components["schemas"]["Notice"][];
+            unread: number;
+        };
+        PushInfo: {
+            available: boolean;
+            /** @description The applicationServerKey (base64url, P-256) */
+            publicKey: string | null;
+        };
+        /** @description PushSubscription.toJSON(): the endpoint must be on a push service the server knows (Google, Mozilla, Apple, Microsoft), https */
+        PushSubscriptionInput: {
+            endpoint: string;
+            expirationTime?: number | null;
+            keys: {
+                p256dh: string;
+                auth: string;
+            };
+        };
+        EndpointInput: {
+            endpoint: string;
+        };
+        ReminderInput: {
+            days: number | null;
+        };
+        LinkPreviewInput: {
+            url: string;
+        };
+        LinkPreview: {
+            /** @description The link as given (what a wish keeps) */
+            link: string;
+            name: string | null;
+            /** @description The page's price, only when it is in the household's currency */
+            priceMinor: number | null;
+            /** @description The price as the page states it, in its currency */
+            pagePrice: {
+                currency: string;
+                amountMinor: number;
+            } | null;
         };
         /** @description A gift the caller gave, after its celebration */
         Gave: {
@@ -1661,6 +1871,8 @@ export interface components {
             lists: components["schemas"]["PersonList"][];
         };
         PersonPage: {
+            /** @description The caller's own "Remind me" about them (days before each of their celebrations), or null; always null on one's own page */
+            reminder: number | null;
             /** @description Only for someone giving to them (a grown-up who is not the person): their questions once delivered, without askers; the caller's own from the moment they asked, marked mine. Absent for the person and kids */
             questions?: components["schemas"]["AskedQuestion"][];
             /** @description Gift ideas for them: only for a grown-up who is not the person; absent, not empty, for the person and kids */
@@ -1675,6 +1887,8 @@ export interface components {
             keeps: boolean;
         };
         Home: {
+            /** @description Thank-yous for gifts the caller gave (always empty for kids) */
+            thanked: components["schemas"]["ThankedYou"][];
             /** @description Questions for the caller (and, for a kid's parent, the kid's) delivered and waiting for an answer; never who asked. Always empty for kids */
             questions: components["schemas"]["QuestionToAnswer"][];
             /** @description The next celebration the caller is part of */
@@ -3607,6 +3821,208 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listNotices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notices"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    readNotices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Marked read */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    pushInfo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushInfo"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    subscribePush: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushSubscriptionInput"];
+            };
+        };
+        responses: {
+            /** @description Subscribed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    unsubscribePush: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndpointInput"];
+            };
+        };
+        responses: {
+            /** @description Unsubscribed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setReminder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReminderInput"];
+            };
+        };
+        responses: {
+            /** @description Set */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    writeThanks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThanksInput"];
+            };
+        };
+        responses: {
+            /** @description The received gift with its thank-you */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Thanks"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    previewLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkPreviewInput"];
+            };
+        };
+        responses: {
+            /** @description What the page says: a proposal to change and save as any wish */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkPreview"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
 }
