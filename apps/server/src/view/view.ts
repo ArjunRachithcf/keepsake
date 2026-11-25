@@ -23,7 +23,7 @@ import { getProfile, type ProfileRow } from '../household/profile';
 import { NO_GIFTS, calendarOf, fullyGiven, gaveBy, giftsOf, isOver, managesGroup, occasionOf, revealed, seesGifts, thanksFor, type Gifts } from '../gifts/gifts';
 import { allWaiting, canApprove, canEdit, canSee, getWish, seeWish, wishesAddedBy, wishesOf, type Wish } from '../wishes/wishes';
 import {
-  canRedraw, dayHasCome, exclusionsOf, latestDraw, latestDraws, managesDraw, occasionOf as drawDay, openAll, openOwn, opensNow, participantsOf,
+  canRedraw, dayHasCome, dayOfInstant, exclusionsOf, hostRoleOf, latestDraw, latestDraws, managesDraw, occasionOf as drawDay, openAll, openOwn, opensNow, participantsOf,
   revealedNow, unrevealedDraws, type Participant,
 } from '../draws/draws';
 import { keyring } from '../draws/sealed';
@@ -143,7 +143,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
    */
   const live = lazy(() => unrevealedDraws(db, now));
   const unnamed = (w: Wish, giverId: string | null, at: string) => giverId !== null && giverId !== viewer.id
-    && live().some((d) => d.people.has(giverId) && d.people.has(w.personId) && at.slice(0, 10) <= d.on);
+    && live().some((d) => d.people.has(giverId) && d.people.has(w.personId) && dayOfInstant(cfg.timezone, at) <= d.on);
   const giverRef = (w: Wish, giverId: string | null, at: string) => (unnamed(w, giverId, at) ? null : ref(giverId));
   /** What the viewer may see of a wish's gifts: everything for a giver (others' shares as names only), else nothing. */
   const gift = (w: Wish, g: Gifts): api.Gift => {
@@ -319,7 +319,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       const ps = participantsOf(db, [d.id]);
       const byId = new Map(ps.map((p) => [p.id, p]));
       const pref = (pid: string) => { const p = byId.get(pid); return p?.personId ? ref(p.personId) : null; };
-      const manages = managesDraw(viewer, c);
+      const manages = managesDraw(viewer, c, hostRoleOf(db, c));
       const mine = ps.find(isMine);
       const revealed = revealedNow(db, c, d, now);
       // A row that does not open with the keys here (a lost or rotated key) is only its own giver's problem.

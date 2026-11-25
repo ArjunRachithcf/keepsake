@@ -23,6 +23,7 @@ import { Refused, type Message } from '../errors';
 import { canChange, mustGetCelebration, peopleOf, type Celebration } from '../celebrations/celebrations';
 import { daysBetween, nextDate, onYear } from '../celebrations/dates';
 import { currency, getPerson, type Person } from '../household/people';
+import { today as dayIn } from '../celebrations/dates';
 import { keyId, openRow, sealReceiver, type Keyring } from './sealed';
 
 export type Draw = typeof t.draw.$inferSelect;
@@ -79,9 +80,13 @@ export function revealedNow(db: Db, c: Celebration, d: Draw, today: string): boo
 /** Whether a giver may open theirs now. */
 export const opensNow = (d: Draw, now: Date) => d.drawnAt !== null && (d.drawTogetherAt === null || now.getTime() >= Date.parse(d.drawTogetherAt));
 
-/** The host runs the draw; a celebration whose host has left, an admin. Never a kid. */
-export const managesDraw = (me: Pick<Person, 'id' | 'role'>, c: Pick<Celebration, 'hostId'>) =>
-  me.role !== 'kid' && (c.hostId ? c.hostId === me.id : me.role === 'admin');
+/**
+ * The host runs the draw; a celebration whose host has left, or whose host is now a kid, an admin. Never a kid.
+ * `hostRole`: the host's role now (null when there is none).
+ */
+export const managesDraw = (me: Pick<Person, 'id' | 'role'>, c: Pick<Celebration, 'hostId'>, hostRole: Person['role'] | null) =>
+  me.role !== 'kid' && (c.hostId && hostRole && hostRole !== 'kid' ? c.hostId === me.id : me.role === 'admin');
+export const hostRoleOf = (db: Db, c: Pick<Celebration, 'hostId'>) => (c.hostId ? getPerson(db, c.hostId)?.role ?? null : null);
 
 /** The celebration's latest draw (this year's, or the last one). */
 export function latestDraw(db: Db, celebrationId: string): Draw | undefined {
@@ -132,18 +137,21 @@ function audit(db: Db, actorId: string, action: (typeof t.AUDIT_ACTIONS)[number]
 
 function managing(db: Db, me: Person, celebrationId: string): Celebration {
   const c = mustGetCelebration(db, celebrationId);
-  if (!managesDraw(me, c)) throw new Refused(403, 'only the celebration\'s host runs its draw');
+  if (!managesDraw(me, c, hostRoleOf(db, c))) throw new Refused(403, 'only the celebration\'s host runs its draw');
   return c;
 }
 
 /** The input checked against the celebration and the household; returns it with duplicates gone. */
-function checked(db: Db, c: Celebration, i: DrawInput, d: Pick<Draw, 'year' | 'occasionOn'>): DrawInput {
+function checked(db: Db, c: Celebration, i: DrawInput, d: Pick<Draw, 'year' | 'occasionOn'> & { id?: string; drawnAt?: string | null }): DrawInput {
   const inCelebration = new Set(peopleOf(db, c.id));
+  // Someone in a drawn draw who has since become a kid stays in it until its day ("Kids draw too" decides who joins a
+  // draw, not who leaves one already drawn; ADR 0004).
+  const already = new Set(d.id && d.drawnAt ? participantsOf(db, [d.id]).map((p) => p.personId) : []);
   const people = [...new Set(i.people)];
   for (const id of people) {
     const p = getPerson(db, id);
     if (!p || !inCelebration.has(id)) throw new Refused(400, 'people: someone is not in the celebration');
-    if (p.role === 'kid' && !i.kidsDraw) throw new Refused(400, 'people: a kid draws only when kids draw too');
+    if (p.role === 'kid' && !i.kidsDraw && !already.has(id)) throw new Refused(400, 'people: a kid draws only when kids draw too');
   }
   const seen = new Set<string>();
   const exclusions: [string, string][] = [];
@@ -192,6 +200,9 @@ export function createDraw(db: Db, me: Person, celebrationId: string, i: DrawInp
   if (db.select({ id: t.draw.id }).from(t.draw).where(and(eq(t.draw.celebrationId, c.id), eq(t.draw.year, year))).get()) {
     throw new Refused(409, 'this celebration has a draw already');
   }
+  // A one-off moved into the next year must not let a new draw take the place of one whose names are drawn.
+  const latest = latestDraw(db, c.id);
+  if (latest?.drawnAt && !dayHasCome(c, latest, today)) throw new Refused(409, 'this celebration has a draw already');
   const input = checked(db, c, i, d0);
   const id = ulid();
   db.transaction((tx0) => {
@@ -246,17 +257,18 @@ function mayChangePairs(db: Db, me: Person, c: Celebration, d: Draw, today: stri
 
 /** Whether the host could re-draw now (for the view: the button), with the same checks as a re-draw. */
 export function canRedraw(db: Db, me: Person, c: Celebration, d: Draw, today: string): boolean {
-  if (!managesDraw(me, c)) return false;
+  if (!managesDraw(me, c, hostRoleOf(db, c))) return false;
   try { mayChangePairs(db, me, c, d, today); return true; } catch { return false; }
 }
 
 const BLOCKED: Record<Blocker, Message> = {
   too_few: 'a draw needs at least 4 people',
+  too_few_last_year: 'with not last year\'s person on, a draw needs at least 5 people',
   too_many: 'a draw holds at most 100 people',
   exclusions: 'who shouldn\'t draw whom leaves someone nobody to draw: loosen it',
   last_year_margin: 'with not last year\'s person on, everyone needs more people they may draw: loosen who shouldn\'t draw whom',
   guessable: 'these rules let someone work out another\'s person: add people or loosen who shouldn\'t draw whom',
-  too_tight: 'the rules leave too few ways to draw: loosen them',
+  too_tight: 'the rules leave too few ways to draw in time: loosen who shouldn\'t draw whom',
 };
 
 /**
@@ -395,7 +407,7 @@ export function editDraw(db: Db, me: Person, celebrationId: string, patch: Parti
     db.transaction((tx0) => {
       const tx = asDb(tx0);
       tx.update(t.draw).set({ ...settings(next), updatedAt: ts() }).where(eq(t.draw.id, d.id)).run();
-      if (rulesChange) writeRules(tx, d.id, next);
+      if (rulesChange) { veil(tx, d, today); writeRules(tx, d.id, next); }
       audit(tx, me.id, 'draw_changed', d.id);
       if (!same('revealOn')) audit(tx, me.id, 'reveal_set', d.id);
       if (!k) return;
@@ -418,6 +430,7 @@ export function removeDraw(db: Db, me: Person, celebrationId: string, today: str
   if (!d) throw new Refused(404, 'this celebration has no draw');
   mayChangePairs(db, me, c, d, today);
   db.transaction((tx) => {
+    veil(asDb(tx), d, today);
     tx.delete(t.draw).where(eq(t.draw.id, d.id)).run();
     audit(asDb(tx), me.id, 'draw_removed', d.id);
   });
@@ -504,6 +517,7 @@ export function beforePersonRemoved(db: Db, me: Person, personId: string, today:
       throw e;
     }
     const key = needKey(ring);
+    veil(db, d, today);
     db.delete(t.drawParticipant).where(eq(t.drawParticipant.id, p.id)).run();
     const left = db.select().from(t.draw).where(eq(t.draw.id, d.id)).get()!;
     const next = prepare(db, left, ring);
@@ -516,16 +530,38 @@ export function beforePersonRemoved(db: Db, me: Person, personId: string, today:
   }
 }
 
-/** Every drawn draw not revealed yet, with its people and day: whose gifts to each other stay unnamed (view, review H1). */
+/**
+ * Before a drawn draw that is not revealed goes, or its people change: a veil of who was in it and its day (never its
+ * pairs), so the gifts they made each other under it stay unnamed (second review M3, L6). Run in the change's
+ * transaction.
+ */
+export function veil(db: Db, d: Draw, today: string): void {
+  const c = mustGetCelebration(db, d.celebrationId);
+  if (!d.drawnAt || isRevealed(c, d, today)) return;
+  const people = participantsOf(db, [d.id]).filter((p) => p.personId).map((p) => p.personId!).sort();
+  db.insert(t.drawVeil).values({ id: ulid(), peopleJson: JSON.stringify(people), on: occasionOf(c, d), revealOn: d.revealOn, createdAt: ts() }).run();
+}
+/** Veils every drawn, unrevealed draw of a celebration that is about to be removed. */
+export function veilCelebration(db: Db, celebrationId: string, today: string): void {
+  for (const d of db.select().from(t.draw).where(eq(t.draw.celebrationId, celebrationId)).all()) veil(db, d, today);
+}
+
+/**
+ * Every drawn draw not revealed yet, and every veil not lifted (its reveal date passed after its day), with its people
+ * and day: whose gifts to each other stay unnamed (view, review H1).
+ */
 export function unrevealedDraws(db: Db, today: string): { people: Set<string>; on: string }[] {
   const cs = new Map(db.select().from(t.celebration).all().map((c) => [c.id, c]));
   const drawn = db.select().from(t.draw).all().filter((d) => d.drawnAt !== null && !isRevealed(cs.get(d.celebrationId)!, d, today));
   const ps = participantsOf(db, drawn.map((d) => d.id));
-  return drawn.map((d) => ({
-    people: new Set(ps.filter((p) => p.drawId === d.id && p.personId).map((p) => p.personId!)),
-    on: occasionOf(cs.get(d.celebrationId)!, d),
-  }));
+  const veils = db.select().from(t.drawVeil).all().filter((v) => !(v.revealOn !== null && today >= v.revealOn && today > v.on));
+  return [
+    ...drawn.map((d) => ({ people: new Set(ps.filter((p) => p.drawId === d.id && p.personId).map((p) => p.personId!)), on: occasionOf(cs.get(d.celebrationId)!, d) })),
+    ...veils.map((v) => ({ people: new Set(JSON.parse(v.peopleJson) as string[]), on: v.on })),
+  ];
 }
+/** The household's day a moment fell on (for comparing a gift's time with a draw's day, second review L7). */
+export const dayOfInstant = (timeZone: string, iso: string) => dayIn(timeZone, new Date(iso));
 
 /** Days until the draw's occasion (for the view). */
 export const daysUntil = (c: Celebration, d: Draw, today: string) => daysBetween(today, occasionOf(c, d));

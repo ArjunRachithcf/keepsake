@@ -99,7 +99,7 @@ const BODIES: Record<string, unknown> = {
   editGroupGift: { targetMinor: 15000 },
   chipIn: { amountMinor: 2500 },
   createDraw: { people: ['p_alex', 'p_sam', 'p_robin'], budgetMinor: null },
-  editDraw: { notLastYear: true },
+  editDraw: { drawTogetherAt: null },
 };
 
 export function request(o: SpecOp) {

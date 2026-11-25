@@ -66,6 +66,14 @@ CREATE TABLE `draw_try` (
 );
 --> statement-breakpoint
 CREATE INDEX `draw_try_celebration` ON `draw_try` (`celebration_id`,`year`,`at`);--> statement-breakpoint
+CREATE TABLE `draw_veil` (
+	`id` text PRIMARY KEY NOT NULL,
+	`people_json` text NOT NULL,
+	`on` text NOT NULL,
+	`reveal_on` text,
+	`created_at` text NOT NULL
+);
+--> statement-breakpoint
 PRAGMA foreign_keys=OFF;--> statement-breakpoint
 CREATE TABLE `__new_audit` (
 	`id` text PRIMARY KEY NOT NULL,

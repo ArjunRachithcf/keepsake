@@ -273,6 +273,20 @@ export const drawParticipant = sqliteTable('draw_participant', {
   check('draw_participant_has_person', sql`${t.kind} <> 'person' OR ${t.personId} IS NOT NULL`),
 ]);
 
+/**
+ * What stays of a drawn, unrevealed draw that went (its celebration removed, the draw removed, its people or rules
+ * changed, someone leaving): who was in it and its day, never its pairs. Gifts its people made for each other up to that
+ * day stay unnamed, as while the draw was there (ADR 0003, 0004; second review M3, L6): until its reveal date, if it had
+ * one and it has passed; with "never", for good.
+ */
+export const drawVeil = sqliteTable('draw_veil', {
+  id: text('id').primaryKey(),
+  peopleJson: text('people_json').notNull(),
+  on: text('on').notNull(),
+  revealOn: text('reveal_on'),
+  createdAt: text('created_at').notNull(),
+});
+
 /** Each try to draw a celebration's names in a year (drawn, re-drawn or refused): counted per celebration and year, so removing and re-creating a draw does not reset them. */
 export const drawTry = sqliteTable('draw_try', {
   id: text('id').primaryKey(),

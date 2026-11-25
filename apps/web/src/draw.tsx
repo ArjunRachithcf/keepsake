@@ -21,10 +21,11 @@ const toLocalInput = (iso: string | null) => {
 const fromLocalInput = (v: string) => (v ? new Date(v).toISOString() : null);
 const dayAfter = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
-/** Whether the viewer runs this celebration's draw (its host; an admin when it has none; never a kid). */
+/** Whether the viewer runs this celebration's draw (its host; an admin when it has none or its host is now a kid; never a kid). */
 export function useManagesDraw(c: Celebration): boolean {
-  const { me } = useHousehold();
-  return me.role !== 'kid' && (c.host ? c.host.id === me.id : me.role === 'admin');
+  const { me, person } = useHousehold();
+  const host = c.host ? person(c.host.id) : undefined;
+  return me.role !== 'kid' && (host && host.role !== 'kid' ? host.id === me.id : me.role === 'admin');
 }
 
 /** "4 of 6 opened their draw", with a bar. Counts only: never who. */
@@ -221,7 +222,7 @@ export function DrawFields({ value, onChange, people, yearly, locked }: {
             {p.id === me.id ? `${p.name} (you)` : p.name}
           </label>
         ))}
-        <p className="hint">At least four. Nobody draws themselves, and the rules must leave nobody able to work out someone else’s person.</p>
+        <p className="hint">At least four (five with “Not last year’s person”). Nobody draws themselves, and the rules must leave nobody able to work out someone else’s person.</p>
       </fieldset>
       {!locked && cur && (
         <Field label={`Budget (${cur})`} id={`${id}-b`} hint="Optional: what each gift should cost about.">

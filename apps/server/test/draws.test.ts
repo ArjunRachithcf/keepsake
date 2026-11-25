@@ -412,7 +412,13 @@ function twins(viewer: string): [Map<string, string>, Map<string, string>] {
   throw new Error('no twins');
 }
 
-interface State { opened: (viewer: string) => string[]; together?: 'later'; revealOn?: 'after'; redrawn?: true; claims?: true }
+interface State {
+  opened: (viewer: string) => string[]; together?: 'later'; revealOn?: 'after'; redrawn?: true; claims?: true;
+  /** The draw is last year's, its day passed (the gifts made before it). */
+  past?: true;
+  /** What goes, through the API, before the answers are read (second review M3, L6). */
+  then?: 'remove the celebration' | 'remove the draw';
+}
 const STATES: Record<string, State> = {
   'drawn, nobody opened': { opened: () => [] },
   'drawn, the viewer opened': { opened: (v) => IN.filter((p) => p === v) },
@@ -422,10 +428,12 @@ const STATES: Record<string, State> = {
   'a reveal date set, not reached': { opened: () => IN, revealOn: 'after' },
   'drawn again after some opened': { opened: (v) => IN.filter((p) => p !== v).slice(0, 2), redrawn: true },
   'participants claimed and chipped in on each other\'s lists (review H1)': { opened: () => IN, claims: true },
+  'its day passed, reveal never, then its celebration removed (second review M3)': { opened: () => IN, claims: true, past: true, then: 'remove the celebration' },
+  'everyone opened and claimed, then the draw removed before its day (second review L6)': { opened: () => IN, claims: true, then: 'remove the draw' },
 };
 
 /** Gifts between participants: Quinn and Robin claim, Sam and Robin chip in, Alex starts a group gift. */
-function participantGifts(db: Db) {
+function participantGifts(db: Db, NOW = '2026-11-01T10:00:00.000Z') {
   const w = (id: string, personId: string) => ({ id, personId, name: `A wish ${id}`, state: 'listed' as const, position: 0, addedBy: personId, createdAt: NOW, updatedAt: NOW, celebrationId: 'c_xmas' });
   db.insert(t.wish).values([w('w_robin_book', 'p_robin'), w('w_quinn_lamp', 'p_quinn'), w('w_mia_kite', 'p_mia')]).run();
   db.insert(t.claim).values([
@@ -459,18 +467,28 @@ function namedGivers(body: string): string[] {
 async function answers(viewer: Who, assignment: Map<string, string>, s: State): Promise<Record<string, string>> {
   const db = home();
   fiveInDraw(db);
+  const year = db.select().from(t.draw).get()!.year - (s.past ? 1 : 0);
   db.update(t.draw).set({
-    drawnAt: NOW, drawTogetherAt: s.together ? '2099-01-01T00:00:00.000Z' : null, revealOn: s.revealOn ? '2099-01-01' : null,
+    // drawn after the gifts were marked, so removing it before its day is allowed (nothing bought since the draw)
+    year, drawnAt: '2026-11-02T00:00:00.000Z', occasionOn: s.past ? `${year}-12-24` : null,
+    drawTogetherAt: s.together ? '2099-01-01T00:00:00.000Z' : null, revealOn: s.revealOn ? '2099-01-01' : null,
     redrawnAt: s.redrawn ? NOW : null,
   }).where(eq(t.draw.id, 'd_xmas')).run();
   sealAssignments(db, KEY, 'd_xmas', new Map([...assignment].map(([g, r]) => [pid(g), pid(r)])));
-  if (s.claims) participantGifts(db);
+  if (s.claims) participantGifts(db, s.past ? `${year}-12-01T10:00:00.000Z` : NOW);
+  // the fixture's scarf and pan, given after last year's day, are named as it should be: not this state's question
+  if (s.past) { db.delete(t.claim).where(eq(t.claim.id, 'cl_scarf')).run(); db.delete(t.groupGift).where(eq(t.groupGift.wishId, 'w_sam_pan')).run(); }
   for (const p of s.opened(`p_${viewer}`)) db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, pid(p))).run();
   const as = await start(db);
+  if (s.then) {
+    const r = await as('alex').send('DELETE', s.then === 'remove the draw' ? DRAW : '/api/celebrations/c_xmas');
+    expect(r.statusCode, r.body).toBe(204);
+  }
+  const gone = s.then === 'remove the celebration' ? [DRAW, '/api/celebrations/c_xmas', '/api/home?for=c_xmas'] : s.then ? [DRAW] : [];
   const out: Record<string, string> = {};
   for (const u of READS) {
     const r = await as(viewer).get(u);
-    expect(r.statusCode, `${viewer} ${u}: ${r.body}`).toBe(200);
+    expect(r.statusCode, `${viewer} ${u}: ${r.body}`).toBe(gone.some((g) => u === g || u.endsWith('?for=c_xmas')) && s.then === 'remove the celebration' && u.includes('c_xmas') ? (u.startsWith('/api/home') || u.includes('?for=') ? 400 : 404) : gone.includes(u) ? 404 : 200);
     out[u] = `${r.body}\n${JSON.stringify(Object.entries(r.headers).filter(([k]) => k !== 'date').sort())}`;
   }
   return out;
@@ -483,12 +501,16 @@ describe.each(Object.keys(STATES))('the surprise when %s: each viewer\'s answers
     const two = await answers(who, b, STATES[state]!);
     expect(two).toEqual(one);
     // and the viewer's own person is in their draw answer only once they opened theirs
-    const own = JSON.parse(one[DRAW]!.split('\n')[0]!).mine as { receiver: { id: string } | null } | null;
+    const own = STATES[state]!.then ? null : JSON.parse(one[DRAW]!.split('\n')[0]!).mine as { receiver: { id: string } | null } | null;
     const opened = STATES[state]!.opened(`p_${who}`).includes(`p_${who}`);
-    if (IN.includes(`p_${who}`)) expect(own?.receiver?.id ?? null).toBe(opened ? a.get(`p_${who}`) : null);
+    if (STATES[state]!.then) { /* the draw is gone */ } else if (IN.includes(`p_${who}`)) expect(own?.receiver?.id ?? null).toBe(opened ? a.get(`p_${who}`) : null);
     else expect(own).toBeNull();
     // and no answer names a participant's gift to another participant, but to its own giver
-    for (const [u, body] of Object.entries(one)) for (const g of namedGivers(body.split('\n')[0]!)) expect(g, `${who} ${u}`).toBe(`p_${who}`);
+    for (const [u, body] of Object.entries(one)) {
+      const b = body.split('\n')[0]!;
+      if (b.startsWith('{"error"')) continue;
+      for (const g of namedGivers(b)) expect(g, `${who} ${u}`).toBe(`p_${who}`);
+    }
   });
 });
 
@@ -720,5 +742,96 @@ describe('key rotation', () => {
     const as2 = await start(db, standalone({ KEEPSAKE_SEALING_KEY: NEW }));
     expect((await as2('sam').get(DRAW)).json().mine.receiver).toEqual({ id: 'p_robin', name: 'Robin' });
     expect(JSON.stringify(standalone({ KEEPSAKE_SEALING_KEY: NEW, KEEPSAKE_SEALING_KEY_PREVIOUS: TEST_KEY }))).not.toContain(TEST_KEY);
+  });
+});
+
+describe('second review', () => {
+  it('with not last year\'s person on, four are too few', async () => {
+    const db = home();
+    const as = await start(db);
+    await as('alex').send('PATCH', DRAW, { notLastYear: true });
+    expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'with not last year\'s person on, a draw needs at least 5 people' });
+  });
+
+  it('a veil keeps gifts unnamed after the celebration goes, and lifts on its reveal date if one had passed', async () => {
+    for (const revealOn of [null, 'passed'] as const) {
+      const db = home();
+      fiveInDraw(db);
+      const year = db.select().from(t.draw).get()!.year - 1;
+      db.update(t.draw).set({ year, drawnAt: NOW, occasionOn: `${year}-12-24` }).where(eq(t.draw.id, 'd_xmas')).run();
+      sealAssignments(db, KEY, 'd_xmas', new Map(IN.map((p, i) => [pid(p), pid(IN[(i + 1) % IN.length]!)])));
+      participantGifts(db, `${year}-12-01T10:00:00.000Z`);
+      if (revealOn) db.update(t.draw).set({ revealOn: inDays(1) }).where(eq(t.draw.id, 'd_xmas')).run();
+      const as = await start(db);
+      const giverOn = async () => (await as('uma').get('/api/people/p_robin')).json().wishes.find((w: { id: string }) => w.id === 'w_robin_book').gift.claims[0].giver;
+      expect(await giverOn()).toBeNull();
+      expect((await as('alex').send('DELETE', '/api/celebrations/c_xmas')).statusCode).toBe(204);
+      expect(db.select().from(t.drawVeil).all()).toHaveLength(1);
+      expect(Object.keys(db.select().from(t.drawVeil).get()!).sort()).toEqual(['createdAt', 'id', 'on', 'peopleJson', 'revealOn']);
+      expect(await giverOn()).toBeNull();
+      if (revealOn) {
+        db.update(t.drawVeil).set({ revealOn: inDays(-1) }).run();
+        expect(await giverOn()).toEqual({ id: 'p_quinn', name: 'Quinn' });
+      }
+    }
+  });
+
+  it('someone taken out of a drawn draw: the gifts made under it stay unnamed', async () => {
+    const db = home();
+    fiveInDraw(db);
+    db.update(t.draw).set({ drawnAt: '2026-11-02T00:00:00.000Z' }).where(eq(t.draw.id, 'd_xmas')).run();
+    sealAssignments(db, KEY, 'd_xmas', new Map(IN.map((p, i) => [pid(p), pid(IN[(i + 1) % IN.length]!)])));
+    participantGifts(db);
+    db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, 'dp_quinn')).run();
+    const as = await start(db);
+    const r = await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_mia'] });
+    expect(r.statusCode, r.body).toBe(200);
+    const g = (await as('uma').get('/api/people/p_robin')).json().wishes.find((w: { id: string }) => w.id === 'w_robin_book').gift;
+    expect(g.claims[0].giver).toBeNull(); // Quinn's claim, made while Quinn was in the draw
+  });
+
+  it.each([['America/Los_Angeles', 'named'], ['Pacific/Auckland', 'unnamed']] as const)('a gift\'s day is the household\'s (%s)', async (tz, _x) => {
+    const db = home();
+    fiveInDraw(db);
+    const year = db.select().from(t.draw).get()!.year;
+    const day = `${year}-12-24`;
+    db.update(t.draw).set({ drawnAt: NOW, occasionOn: day }).where(eq(t.draw.id, 'd_xmas')).run();
+    sealAssignments(db, KEY, 'd_xmas', new Map(IN.map((p, i) => [pid(p), pid(IN[(i + 1) % IN.length]!)])));
+    // Los Angeles: 19:00 on the day itself (03:00Z the next day): still the day, unnamed.
+    // Auckland: 00:30 the next day (11:30Z on the day): after the day, named.
+    const at = tz === 'America/Los_Angeles' ? `${year}-12-25T03:00:00.000Z` : `${year}-12-24T11:30:00.000Z`;
+    participantGifts(db, at);
+    const as = await start(db, standalone({ KEEPSAKE_TZ: tz }));
+    const g = (await as('uma').get('/api/people/p_robin')).json().wishes.find((w: { id: string }) => w.id === 'w_robin_book').gift;
+    expect(g.claims[0].giver).toEqual(tz === 'America/Los_Angeles' ? null : { id: 'p_quinn', name: 'Quinn' });
+  });
+
+  it('a one-off moved into next year does not let a second draw take a drawn one\'s place', async () => {
+    const db = home();
+    const as = await start(db);
+    await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_mia'] });
+    await as('alex').send('POST', `${DRAW}/run`);
+    const year = db.select().from(t.draw).get()!.year;
+    expect((await as('alex').send('PATCH', '/api/celebrations/c_xmas', { date: `${year + 1}-01-06`, recurrence: 'none' })).statusCode).toBe(200);
+    expect((await as('alex').send('POST', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_mia'] })).json()).toEqual({ error: 'this celebration has a draw already' });
+    expect(db.select().from(t.draw).all()).toHaveLength(1);
+  });
+
+  it('someone in a drawn draw who becomes a kid stays in it; a host who becomes a kid hands the draw to the admins', async () => {
+    const db = home();
+    fiveInDraw(db);
+    db.update(t.draw).set({ kidsDraw: 0 }).where(eq(t.draw.id, 'd_xmas')).run();
+    db.delete(t.drawParticipant).where(eq(t.drawParticipant.id, 'dp_mia')).run();
+    const as = await start(db);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    // Quinn becomes a kid: still in the draw, and the host can still change the budget
+    db.update(t.person).set({ role: 'kid' }).where(eq(t.person.id, 'p_quinn')).run();
+    expect((await as('alex').send('PATCH', DRAW, { budgetMinor: 2000 })).statusCode).toBe(200);
+    expect((await as('alex').get(DRAW)).json().people.map((p: { id: string }) => p.id)).toContain('p_quinn');
+    // the cousins' exchange: hosted by Sam, who becomes a kid; Alex (an admin) runs its draw then
+    db.update(t.celebration).set({ hostId: 'p_sam' }).where(eq(t.celebration.id, 'c_cousins')).run();
+    db.update(t.person).set({ role: 'kid' }).where(eq(t.person.id, 'p_sam')).run();
+    expect((await as('alex').send('POST', '/api/celebrations/c_cousins/draw', { people: ['p_alex', 'p_robin'] })).statusCode).toBe(201);
+    expect((await as('sam').get('/api/celebrations/c_cousins/draw')).json().canManage).toBe(false);
   });
 });

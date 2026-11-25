@@ -24,7 +24,7 @@ import {
 import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
 import { setProfile, type ProfileInput } from './household/profile';
 import {
-  auditMoves, beforePersonRemoved, checkCelebrationMove, checkCelebrationRemoval, checkPeopleChange, createDraw, dropLeavers, editDraw, openDraw,
+  auditMoves, beforePersonRemoved, veilCelebration, checkCelebrationMove, checkCelebrationRemoval, checkPeopleChange, createDraw, dropLeavers, editDraw, openDraw,
   removeDraw, runDraw, type DrawInput,
 } from './draws/draws';
 import { keyring } from './draws/sealed';
@@ -193,7 +193,12 @@ export function dataFor(cfg: Config, db: Db) {
         changed(0);
       },
       /** A drawn draw before its day goes only under the re-draw rules. */
-      remove: (r: Req, id: string) => { checkCelebrationRemoval(db, me(r), id, day()); return changed(removeCelebration(db, me(r), id)); },
+      remove: (r: Req, id: string) => {
+        checkCelebrationRemoval(db, me(r), id, day());
+        // Its draws go, but a veil of each secret one stays, so gifts made under it stay unnamed (ADR 0004).
+        db.transaction((tx) => { veilCelebration(asDb(tx), id, day()); removeCelebration(asDb(tx), me(r), id); });
+        return changed(undefined);
+      },
     },
   };
 }
