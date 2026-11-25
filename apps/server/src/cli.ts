@@ -1,11 +1,13 @@
 // `keepsake recover <admin id>` (Philobiblos ADR 0010): when an admin has lost every passkey, whoever runs Keepsake's
 // container writes a one-time link (24 hours) for that admin into KEEPSAKE_DATA_DIR/setup-link.txt (0600), never to
-// the terminal or a log. `keepsake admins` lists the admins' ids and names to pick from.
+// the terminal or a log. Using it removes the admin's other passkeys and ends their sessions. `keepsake admins` lists the admins' ids and names to pick from.
 import { createRecoveryLink } from './auth/invites';
 import { loadConfig } from './config';
 import { openDb } from './db/open';
 import { household } from './household/people';
 
+// Everything it writes is for Keepsake's user only.
+process.umask(0o077);
 const [cmd, arg, ...rest] = process.argv.slice(2);
 try {
   const cfg = loadConfig();

@@ -89,3 +89,24 @@ describe('isApi', () => {
     expect(isApi(url)).toBe(want);
   });
 });
+
+describe('the data folder', () => {
+  it('is for Keepsake\'s user only: the folder 0700, the database and its WAL 0600, whatever the umask', async () => {
+    const { mkdtempSync, mkdirSync: mk, statSync, chmodSync } = await import('node:fs');
+    const { join: j } = await import('node:path');
+    const { tmpdir: tmp } = await import('node:os');
+    const dir = j(mkdtempSync(j(tmp(), 'keepsake-mode-')), 'data');
+    const old = process.umask(0o022);
+    try {
+      mk(dir);
+      chmodSync(dir, 0o755);
+      const db = openDb(j(dir, 'keepsake.sqlite'));
+      db.$client.prepare('select 1').get();
+      expect(statSync(dir).mode & 0o777).toBe(0o700);
+      for (const f of ['keepsake.sqlite', 'keepsake.sqlite-wal', 'keepsake.sqlite-shm']) expect(statSync(j(dir, f)).mode & 0o777, f).toBe(0o600);
+      db.$client.close();
+    } finally {
+      process.umask(old);
+    }
+  });
+});

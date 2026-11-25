@@ -49,6 +49,7 @@ FORGED="{'x-homerslab-person':'hl-someone','x-homerslab-name':'Someone','x-homer
 
 # 1. Standalone, as a household would run it.
 mkdir -p "$work/data"
+chmod 755 "$work/data" # as `mkdir data` would make it
 port=$((20000 + $$ % 20000))
 KEEPSAKE_PORT="$port" KEEPSAKE_UID="$(id -u)" KEEPSAKE_GID="$(id -g)" dc up -d --no-build
 wait_health "http://127.0.0.1:$port/api/health" standalone
@@ -61,6 +62,11 @@ dc exec -T keepsake sh -c 'touch /data/x && rm /data/x' || { echo "/data is not 
 [ "$(stat -c %a "$work/data/setup-link.txt")" = 600 ] || { echo "no private setup link in data/" >&2; exit 1; }
 grep -Eq '^http://localhost:[0-9]+/setup#[A-Za-z0-9_-]{43}$' "$work/data/setup-link.txt" || { echo "the setup link looks wrong" >&2; exit 1; }
 [ -s "$work/data/keepsake.sqlite" ] || { echo "no database in data/" >&2; exit 1; }
+# the household's data for Keepsake's user only, although data/ was made with the usual umask
+for f in "$work/data/keepsake.sqlite" "$work/data/keepsake.sqlite-wal" "$work/data/keepsake.sqlite-shm"; do
+  [ ! -e "$f" ] || [ "$(stat -c %a "$f")" = 600 ] || { echo "$f is not 0600" >&2; exit 1; }
+done
+[ "$(stat -c %a "$work/data")" = 700 ] || { echo "data/ is not 0700" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port/api/household")" = 401 ] || { echo "standalone lets someone in without a passkey" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port/api/household" "$FORGED")" = 401 ] || { echo "standalone believes a HomersLab header" >&2; exit 1; }
 dc logs keepsake 2>&1 | grep -q '/setup#' && { echo "the setup link reached the log" >&2; exit 1; }

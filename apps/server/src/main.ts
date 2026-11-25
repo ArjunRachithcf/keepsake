@@ -4,6 +4,9 @@ import { pruneSessions } from './auth/sessions';
 import { loadConfig } from './config';
 import { openDb } from './db/open';
 
+// Everything Keepsake writes (the database, its WAL, the setup link) is for its own user only. Imports write nothing,
+// so this runs before any file is made.
+process.umask(0o077);
 const cfg = loadConfig(); // refuses to start in homerslab mode without its settings
 const db = openDb(cfg.dbFile); // creates and migrates the database in the data folder
 const { app } = await buildApp(cfg, db, { logger: true });
