@@ -276,11 +276,17 @@ export const drawParticipant = sqliteTable('draw_participant', {
 /**
  * What stays of a drawn, unrevealed draw that went (its celebration removed, the draw removed, its people or rules
  * changed, someone leaving): who was in it and its day, never its pairs. Gifts its people made for each other up to that
- * day stay unnamed, as while the draw was there (ADR 0003, 0004; second review M3, L6): until its reveal date, if it had
- * one and it has passed; with "never", for good.
+ * day stay unnamed, as while the draw was there (ADR 0003, 0004; second review M3, L6): while its draw lives, until the
+ * draw itself is revealed; once the draw is gone, until the reveal date it had, if it had one and it has passed after
+ * its day; with "never", for good.
  */
 export const drawVeil = sqliteTable('draw_veil', {
   id: text('id').primaryKey(),
+  /**
+   * The draw it was written for while that draw lives on (a re-draw, someone leaving): it then follows the draw's own
+   * reveal and day, as they are now (third review L8). When the draw goes, its day and reveal date are copied here.
+   */
+  drawId: text('draw_id').references(() => draw.id, { onDelete: 'set null' }),
   peopleJson: text('people_json').notNull(),
   on: text('on').notNull(),
   revealOn: text('reveal_on'),

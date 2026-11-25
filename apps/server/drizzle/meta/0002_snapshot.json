@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "3e25f42e-5a3c-4b66-9990-3dc307157339",
+  "id": "2529c675-7121-47cc-befd-c83aa45beb85",
   "prevId": "f2ee91d4-6c43-408d-adae-f0d1a6278528",
   "tables": {
     "audit": {
@@ -862,6 +862,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "draw_id": {
+          "name": "draw_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "people_json": {
           "name": "people_json",
           "type": "text",
@@ -892,7 +899,21 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "draw_veil_draw_id_draw_id_fk": {
+          "name": "draw_veil_draw_id_draw_id_fk",
+          "tableFrom": "draw_veil",
+          "tableTo": "draw",
+          "columnsFrom": [
+            "draw_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

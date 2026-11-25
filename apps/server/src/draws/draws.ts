@@ -376,6 +376,10 @@ export function runDraw(db: Db, me: Person, celebrationId: string, today: string
   const d = latestDraw(db, c.id);
   if (!d) throw new Refused(404, 'this celebration has no draw');
   mayChangePairs(db, me, c, d, today);
+  // Kids only with "Kids draw too", as roles are now; someone who became a kid after the draw was made stays (ADR 0004).
+  if (!d.drawnAt && !d.kidsDraw && participantsOf(db, [d.id]).some((p) => p.personId && getPerson(db, p.personId)?.role === 'kid')) {
+    throw new Refused(400, 'people: a kid draws only when kids draw too');
+  }
   const k = needKey(ring);
   often(db, d);
   const p = prepare(db, d, ring);
@@ -430,7 +434,7 @@ export function removeDraw(db: Db, me: Person, celebrationId: string, today: str
   if (!d) throw new Refused(404, 'this celebration has no draw');
   mayChangePairs(db, me, c, d, today);
   db.transaction((tx) => {
-    veil(asDb(tx), d, today);
+    veilGoing(asDb(tx), d, today);
     tx.delete(t.draw).where(eq(t.draw.id, d.id)).run();
     audit(asDb(tx), me.id, 'draw_removed', d.id);
   });
@@ -539,11 +543,21 @@ export function veil(db: Db, d: Draw, today: string): void {
   const c = mustGetCelebration(db, d.celebrationId);
   if (!d.drawnAt || isRevealed(c, d, today)) return;
   const people = participantsOf(db, [d.id]).filter((p) => p.personId).map((p) => p.personId!).sort();
-  db.insert(t.drawVeil).values({ id: ulid(), peopleJson: JSON.stringify(people), on: occasionOf(c, d), revealOn: d.revealOn, createdAt: ts() }).run();
+  db.insert(t.drawVeil).values({ id: ulid(), drawId: d.id, peopleJson: JSON.stringify(people), on: occasionOf(c, d), revealOn: d.revealOn, createdAt: ts() }).run();
+}
+/**
+ * Before a draw goes: its earlier veils take its day and reveal date as they are now (or go, if it is revealed), and
+ * a last veil is written for it (third review L8).
+ */
+export function veilGoing(db: Db, d: Draw, today: string): void {
+  const c = mustGetCelebration(db, d.celebrationId);
+  if (isRevealed(c, d, today)) db.delete(t.drawVeil).where(eq(t.drawVeil.drawId, d.id)).run();
+  else db.update(t.drawVeil).set({ on: occasionOf(c, d), revealOn: d.revealOn }).where(eq(t.drawVeil.drawId, d.id)).run();
+  veil(db, d, today);
 }
 /** Veils every drawn, unrevealed draw of a celebration that is about to be removed. */
 export function veilCelebration(db: Db, celebrationId: string, today: string): void {
-  for (const d of db.select().from(t.draw).where(eq(t.draw.celebrationId, celebrationId)).all()) veil(db, d, today);
+  for (const d of db.select().from(t.draw).where(eq(t.draw.celebrationId, celebrationId)).all()) veilGoing(db, d, today);
 }
 
 /**
@@ -554,10 +568,17 @@ export function unrevealedDraws(db: Db, today: string): { people: Set<string>; o
   const cs = new Map(db.select().from(t.celebration).all().map((c) => [c.id, c]));
   const drawn = db.select().from(t.draw).all().filter((d) => d.drawnAt !== null && !isRevealed(cs.get(d.celebrationId)!, d, today));
   const ps = participantsOf(db, drawn.map((d) => d.id));
-  const veils = db.select().from(t.drawVeil).all().filter((v) => !(v.revealOn !== null && today >= v.revealOn && today > v.on));
+  const draws = new Map(db.select().from(t.draw).all().map((d) => [d.id, d]));
+  // A veil whose draw lives on follows that draw: lifted only once the draw itself is revealed, its day the draw's day
+  // now. A veil whose draw is gone keeps the day and reveal date copied when it went.
+  const veils = db.select().from(t.drawVeil).all().flatMap((v) => {
+    const d = v.drawId ? draws.get(v.drawId) : undefined;
+    if (d) { const c = cs.get(d.celebrationId)!; return isRevealed(c, d, today) ? [] : [{ v, on: occasionOf(c, d) }]; }
+    return v.revealOn !== null && today >= v.revealOn && today > v.on ? [] : [{ v, on: v.on }];
+  });
   return [
     ...drawn.map((d) => ({ people: new Set(ps.filter((p) => p.drawId === d.id && p.personId).map((p) => p.personId!)), on: occasionOf(cs.get(d.celebrationId)!, d) })),
-    ...veils.map((v) => ({ people: new Set(JSON.parse(v.peopleJson) as string[]), on: v.on })),
+    ...veils.map(({ v, on }) => ({ people: new Set(JSON.parse(v.peopleJson) as string[]), on })),
   ];
 }
 /** The household's day a moment fell on (for comparing a gift's time with a draw's day, second review L7). */

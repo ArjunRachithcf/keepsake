@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
@@ -767,7 +767,7 @@ describe('second review', () => {
       expect(await giverOn()).toBeNull();
       expect((await as('alex').send('DELETE', '/api/celebrations/c_xmas')).statusCode).toBe(204);
       expect(db.select().from(t.drawVeil).all()).toHaveLength(1);
-      expect(Object.keys(db.select().from(t.drawVeil).get()!).sort()).toEqual(['createdAt', 'id', 'on', 'peopleJson', 'revealOn']);
+      expect(Object.keys(db.select().from(t.drawVeil).get()!).sort()).toEqual(['createdAt', 'drawId', 'id', 'on', 'peopleJson', 'revealOn']);
       expect(await giverOn()).toBeNull();
       if (revealOn) {
         db.update(t.drawVeil).set({ revealOn: inDays(-1) }).run();
@@ -833,5 +833,80 @@ describe('second review', () => {
     db.update(t.person).set({ role: 'kid' }).where(eq(t.person.id, 'p_sam')).run();
     expect((await as('alex').send('POST', '/api/celebrations/c_cousins/draw', { people: ['p_alex', 'p_robin'] })).statusCode).toBe(201);
     expect((await as('sam').get('/api/celebrations/c_cousins/draw')).json().canManage).toBe(false);
+  });
+});
+
+describe('a veil follows its draw while the draw lives on (third review L8)', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  /** Five in the draw, drawn through the API; Robin has a Christmas wish. Returns the year and helpers. */
+  async function setUp(revealOn: (y: number) => string | null) {
+    const db = home();
+    fiveInDraw(db);
+    let as = await start(db);
+    const Y = db.select().from(t.draw).get()!.year;
+    if (revealOn(Y)) expect((await as('alex').send('PATCH', DRAW, { revealOn: revealOn(Y) })).statusCode).toBe(200);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    const wish = (await as('robin').send('POST', '/api/wishes', { personId: 'p_robin', name: 'A puzzle', celebrationId: 'c_xmas' })).json().id as string;
+    const giver = async () => (await as('uma').get('/api/people/p_robin')).json().wishes.find((w: { id: string }) => w.id === wish).gift.claims[0]?.giver;
+    const at = async (iso: string) => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(iso)); as = await start(db); };
+    return { db, Y, wish, giver, at, as: () => as };
+  }
+
+  it('P1: re-drawn, a claim under the new pairs, then revealed: the claim is named after the reveal', async () => {
+    const x = await setUp(() => null);
+    // a correction: Mia out (re-draws, writes a veil while the draw lives on)
+    expect((await x.as()('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_quinn'], kidsDraw: false })).statusCode).toBe(200);
+    expect(x.db.select().from(t.drawVeil).all()).toHaveLength(1);
+    await x.as()('quinn').send('PUT', `/api/wishes/${x.wish}/claim`, { quantity: 1 });
+    expect(await x.giver()).toBeNull();
+    expect((await x.as()('alex').send('PATCH', DRAW, { revealOn: `${x.Y}-12-26` })).statusCode).toBe(200);
+    await x.at(`${x.Y}-12-27T12:00:00.000Z`);
+    expect((await x.as()('sam').get(DRAW)).json().pairs).toHaveLength(4);
+    expect(await x.giver()).toEqual({ id: 'p_quinn', name: 'Quinn' });
+  });
+
+  it('P2: someone taken out, then the host chooses never: the old pair stays hidden after the old reveal date', async () => {
+    const x = await setUp((Y) => `${Y}-12-26`);
+    await x.as()('quinn').send('POST', `${DRAW}/open`);
+    await x.as()('quinn').send('PUT', `/api/wishes/${x.wish}/claim`, { quantity: 1 });
+    expect((await x.as()('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_mia'] })).statusCode).toBe(200);
+    expect((await x.as()('alex').send('PATCH', DRAW, { revealOn: null })).statusCode).toBe(200);
+    await x.at(`${x.Y}-12-27T12:00:00.000Z`);
+    expect((await x.as()('sam').get(DRAW)).json().revealed).toBe(false);
+    expect(await x.giver()).toBeNull();
+  });
+
+  it('P3: someone taken out, then the celebration moved later: the veil waits for the new day', async () => {
+    const x = await setUp((Y) => `${Y}-12-26`);
+    await x.as()('quinn').send('POST', `${DRAW}/open`);
+    await x.as()('quinn').send('PUT', `/api/wishes/${x.wish}/claim`, { quantity: 1 });
+    expect((await x.as()('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_mia'] })).statusCode).toBe(200);
+    expect((await x.as()('alex').send('PATCH', '/api/celebrations/c_xmas', { date: '2024-12-31' })).statusCode).toBe(200);
+    await x.at(`${x.Y}-12-28T12:00:00.000Z`);
+    expect(await x.giver()).toBeNull();
+    await x.at(`${x.Y + 1}-01-02T12:00:00.000Z`);
+    expect((await x.as()('sam').get(DRAW)).json().revealed).toBe(true);
+    expect(await x.giver()).toEqual({ id: 'p_quinn', name: 'Quinn' });
+  });
+
+  it('when the draw goes, its veils take its day and reveal date as they are then', async () => {
+    const x = await setUp((Y) => `${Y}-12-26`);
+    await x.as()('quinn').send('POST', `${DRAW}/open`);
+    expect((await x.as()('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_mia'] })).statusCode).toBe(200);
+    expect((await x.as()('alex').send('PATCH', DRAW, { revealOn: null })).statusCode).toBe(200);
+    expect((await x.as()('alex').send('DELETE', DRAW)).statusCode).toBe(204);
+    const veils = x.db.select().from(t.drawVeil).all();
+    expect(veils).toHaveLength(2);
+    for (const v of veils) expect(v).toMatchObject({ drawId: null, revealOn: null, on: `${x.Y}-12-24` });
+  });
+
+  it('nit: someone who became a kid before the names are drawn is refused without "Kids draw too"', async () => {
+    const db = home();
+    db.update(t.draw).set({ kidsDraw: 0 }).where(eq(t.draw.id, 'd_xmas')).run();
+    db.delete(t.drawParticipant).where(eq(t.drawParticipant.id, 'dp_mia')).run();
+    fiveInDraw(db);
+    db.update(t.person).set({ role: 'kid' }).where(eq(t.person.id, 'p_quinn')).run();
+    const as = await start(db);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'people: a kid draws only when kids draw too' });
   });
 });

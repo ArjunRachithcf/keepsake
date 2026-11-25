@@ -81,8 +81,13 @@ list the whole draw through the app. The host chooses a reveal date or never ("n
   depends on who is in which draw, never on who drew whom.
 - **Veils** (second review M3, L6): when a drawn, unrevealed draw goes (its celebration removed, the draw removed),
   or its people or rules change once drawn, or someone leaves it, a veil keeps who was in it and its day (never its
-  pairs). Gifts they made each other up to that day stay unnamed, as above: until its reveal date if it had one and it
-  has passed, and with "never" for good. So removing a celebration after its day is allowed and gives nothing away.
+  pairs). Gifts they made each other up to that day stay unnamed, as above. While its draw lives on, a veil follows it:
+  lifted only once the draw itself is revealed (never with "never"), its day the draw's day now (third review L8). When
+  the draw goes, its veils take its day and reveal date as they are then (a revealed draw's veils go), and from then on
+  lift on that reveal date if there was one and it has passed after the day; with "never", for good. So removing a
+  celebration after its day is allowed and gives nothing away.
+- **Kids draw too** is checked against the roles when the names are first drawn too: someone who became a kid before
+  then is refused without it; someone who becomes a kid after stays.
 - **Re-draw**:
   - Free until someone has opened theirs. After that, only before the day, and not once a participant has marked a
     gift bought for another since the names were drawn. The caller's own wishes are left out of that check.
