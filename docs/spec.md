@@ -142,6 +142,9 @@ never opens with a household session it is not for.
 After its third review: one browser keeps every link it opened (a device cookie; each guest request names its link);
 a link's managers give it a new address (the same guest, place, pair and claims); the guest page sends nothing until
 Open; a guest session ends after 30 days unused and at a household sign-in in that browser.
+After its fourth review: only whoever may make a link now gives it a new address (a draw link: whoever runs the draw),
+and a new address shows (in the list, and on the guest's page with when the earlier one was last used); the device
+cookie is __Host- and gets a fresh value at every first exchange.
 
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by
