@@ -57,6 +57,12 @@ describe('RFC 8291', () => {
     expect(decrypt(UA_PRIVATE, AUTH, msg)).toEqual(plain);
   });
 
+  it('makes the RFC\'s example message byte for byte (Appendix A, PR #12 review, N3)', () => {
+    const msg = encrypt({ p256dh: UA_PUBLIC, auth: AUTH }, Buffer.from('When I grow up, I want to be a watermelon'), { ephemeral: AS_PRIVATE, salt: SALT });
+    expect(msg.toString('base64url')).toBe(
+      'DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN');
+  });
+
   it('every Keepsake push is the same length and says only {"v":1}; each is encrypted afresh', () => {
     const a = encrypt({ p256dh: UA_PUBLIC, auth: AUTH }, PAYLOAD, { padTo: 32 });
     const b = encrypt({ p256dh: UA_PUBLIC, auth: AUTH }, PAYLOAD, { padTo: 32 });
