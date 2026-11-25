@@ -240,6 +240,58 @@ describe('share links', () => {
   });
 });
 
+describe('a guest session left in a shared browser (review N1)', () => {
+  /** A guest route's answer with these cookies along: status, body and headers but `date`. */
+  const answer = async (h: Home, cookie: string, method: 'GET' | 'POST' = 'GET', url = '/api/guest', payload?: object) => {
+    const r = await h.built.app.inject({ method, url, payload, headers: { cookie, origin: ORIGIN } });
+    return JSON.stringify([r.statusCode, r.body, Object.entries(r.headers).filter(([k]) => k !== 'date').sort()]);
+  };
+  const UNKNOWN_GUEST = `keepsake_guest=${'u'.repeat(43)}`;
+
+  it.each([
+    { who: 'robin' as const, guest: 'gR' as const },
+    { who: 'mia' as const, guest: 'gM' as const },
+    { who: 'mia' as const, guest: 'gR' as const },
+    { who: 'leo' as const, guest: 'gM' as const },
+  ])('$guest\'s session with $who signed in answers exactly like an unknown one, and ends', async ({ who, guest }) => {
+    const h = await home();
+    const both = `${h.cookies[guest]}; ${h.cookies[who]}`;
+    const unknown = `${UNKNOWN_GUEST}; ${h.cookies[who]}`;
+    for (const [m, u, b] of [['GET', '/api/guest'], ['POST', '/api/guest/questions', { text: 'Which colour?' }]] as const) {
+      expect(await answer(h, both, m, u, b), u).toBe(await answer(h, unknown, m, u, b));
+    }
+    expect(await answer(h, both)).toContain('keepsake_guest=;');
+    expect(h.db.select().from(t.question).all()).toEqual([]);
+    // The session is gone: without the household session along it opens nothing either.
+    expect((await as(h, guest).get('/api/guest')).statusCode).toBe(401);
+    expect(h.db.select().from(t.guestSession).where(eq(t.guestSession.linkId, `l_${guest}`)).all()).toEqual([]);
+  });
+
+  it('with someone signed in who may see it (giving to its person), the guest session goes on', async () => {
+    const h = await home();
+    for (const [who, guest] of [['sam', 'gR'], ['robin', 'gM'], ['alex', 'gM']] as const) {
+      const r = await h.built.app.inject({ url: '/api/guest', headers: { cookie: `${h.cookies[guest]}; ${h.cookies[who]}` } });
+      expect([who, guest, r.statusCode, r.headers['set-cookie']]).toEqual([who, guest, 200, undefined]);
+    }
+  });
+
+  it('a draw guest\'s session with someone of that draw signed in: refused like an unknown one', async () => {
+    const db = withDraws(household());
+    db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    db.insert(t.person).values({ id: 'p_quinn', name: 'Quinn', role: 'adult', createdAt: '2026-11-01T10:00:00.000Z' }).run();
+    const s = await start(db);
+    const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
+    const g = cookieOf(await s.exchange(made.url));
+    // A grown-up outside the draw: the session goes on.
+    const quinn = await s.inject({ url: '/api/guest', headers: { cookie: `${g}; ${sessionCookie(db, 'p_quinn')}` } });
+    expect(quinn.statusCode).toBe(200);
+    const sam = await s.inject({ url: '/api/guest', headers: { cookie: `${g}; ${sessionCookie(db, 'p_sam')}` } });
+    const unknown = await s.inject({ url: '/api/guest', headers: { cookie: `keepsake_guest=${'u'.repeat(43)}; ${sessionCookie(db, 'p_sam')}` } });
+    expect([sam.statusCode, sam.body, sam.headers['set-cookie']]).toEqual([unknown.statusCode, unknown.body, unknown.headers['set-cookie']]);
+    expect((await s.guest(g).get('/api/guest')).statusCode).toBe(401);
+  });
+});
+
 describe('personal draw links', () => {
   /** withDraws: Christmas's draw (Alex hosts; Alex, Sam, Robin, Mia). */
   const fresh = () => { const db = withDraws(household()); db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run(); return db; };

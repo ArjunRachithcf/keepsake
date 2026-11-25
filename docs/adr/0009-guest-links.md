@@ -55,3 +55,11 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   without their household session (another browser, their phone; under HomersLab, once guests are let in) sees what
   is taken. Keepsake cannot tell them from the guest it was meant for; the rules above make it take someone else's
   deliberate act.
+
+**Second review of PR #11, decided 2026-11-25**:
+
+- **A guest session left in a shared browser** (N1): on every guest route, a household session along with the guest's
+  counts only to refuse. When it is one the link is not for (the same rule as the exchange: a share link's person or a
+  kid; for a draw link anyone in that draw), the guest session ends and the answer is the one 401 of an unknown
+  session; every refusal there clears the guest cookie. So the person who signs in later on the family computer never
+  sees the page a guest left open there.
