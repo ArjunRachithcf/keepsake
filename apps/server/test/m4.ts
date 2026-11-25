@@ -27,7 +27,7 @@ export interface Home { db: Db; built: BuiltApp; cookies: Record<string, string>
 export function withDevices(db: Db): Map<string, number> {
   const pushes = new Map<string, number>();
   for (const p of db.select({ id: t.person.id }).from(t.person).all()) {
-    db.insert(t.pushSubscription).values({ id: `ps_${p.id}`, personId: p.id, endpoint: `https://fcm.googleapis.com/fcm/send/${p.id}`, p256dh: 'x', auth: 'x', createdAt: NOW }).run();
+    db.insert(t.pushSubscription).values({ id: `ps_${p.id}`, personId: p.id, endpoint: `https://fcm.googleapis.com/fcm/send/${p.id}`, p256dh: 'x', auth: 'x', createdAt: NOW, confirmedAt: new Date().toISOString() }).run();
   }
   return pushes;
 }

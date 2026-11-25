@@ -99,11 +99,12 @@ function answerable(db: Db, me: Person, id: string, now: Date): Question {
 }
 
 /**
- * Who to tell that their question was answered (or declined), ADR 0010: the asker, if someone of the household. The
- * id goes to `tell` (the asker's own notice) and nowhere else: no answer carries it.
+ * Who to tell that their question was answered (or declined), ADR 0010: the asker, if someone of the household. Handed
+ * over as a function the push queue calls later, for every answer alike, guest asker or not (PR #12 review, L6); the
+ * id goes to the asker's own notice and nowhere else: no answer carries it.
  */
-export type TellAsker = (askerId: string) => void;
-const tellAsker = (q: Question, tellIt?: TellAsker) => { if (q.askerId && tellIt) tellIt(q.askerId); };
+export type TellAsker = (askers: () => string[]) => void;
+const tellAsker = (q: Question, tellIt?: TellAsker) => { if (tellIt) tellIt(() => (q.askerId ? [q.askerId] : [])); };
 
 export function answerQuestion(db: Db, me: Person, id: string, text: string, now = new Date(), tellIt?: TellAsker): string {
   const q = answerable(db, me, id, now);

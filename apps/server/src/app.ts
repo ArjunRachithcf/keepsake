@@ -75,6 +75,8 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   const egress = opts.egress ?? createEgress({ enabled: cfg.egress });
   const pusher = new Pusher(db, opts.pushTransport ?? (cfg.egress ? webPushTransport(egress, () => usableVapid(cfg), cfg.vapidSubject) : null));
   const data = dataFor(cfg, db, { pusher, egress });
+  pusher.start();
+  app.addHook('onClose', async () => pusher.stop());
   // The sign-in steps: 20 a minute per client (its socket address or the address a configured proxy saw; IPv6 by /64),
   // and 300 a minute for everyone together, counting only the tries a client's own limit let through: one client's
   // flood uses up its own budget and nobody else's (docs/security.md).

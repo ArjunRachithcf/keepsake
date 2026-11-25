@@ -27,7 +27,8 @@ CREATE TABLE `push_subscription` (
 	`p256dh` text NOT NULL,
 	`auth` text NOT NULL,
 	`created_at` text NOT NULL,
-	`failures` integer DEFAULT 0 NOT NULL,
+	`confirmed_at` text NOT NULL,
+	`failing_since` text,
 	FOREIGN KEY (`person_id`) REFERENCES `person`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON UPDATE no action ON DELETE cascade
 );

@@ -43,11 +43,11 @@ import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
 import { claimFor, setClaimStateFor, unclaimFor } from './gifts/gifts';
 import { applyImport, dryRun, type ImportInput } from './import/import';
 import { createEgress, type Egress } from './net/egress';
-import { drawStamps, drawsChanged, markRead, tell, type NoticeKind } from './notices/notices';
+import { drawStamps, drawsChanged, markRead, type NoticeKind } from './notices/notices';
 import { morning } from './jobs/morning';
 import { Pusher, subscribe, unsubscribe, type SubscriptionInput } from './push/push';
 import { usableVapid } from './push/keys';
-import { writeThanks } from './thanks/thanks';
+import { thankRecipients, writeThanks } from './thanks/thanks';
 import { previewLink } from './wishes/preview';
 import * as t from './db/schema';
 import { and, eq } from 'drizzle-orm';
@@ -111,13 +111,14 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
   const viewOf = (r: Req) => viewFor(db, cfg, me(r), fastifyRequestOf(r));
 
   /** Notices (ADR 0010): made in the changing request, pushed from the queue after it. */
-  const tellNow = (people: string[], kind: NoticeKind, subjectId: string, o?: { again?: boolean }) => pusher.wake(tell(db, people, kind, subjectId, day(), o));
+  // The request only hands over what to tell; who is told, and the push, are the queue's (PR #12 review, L6).
+  const tellLater = (people: () => string[], kind: NoticeKind, subjectId: string, o?: { again?: boolean }) => pusher.tell({ kind, subjectId, day: day(), people, again: o?.again });
   /** A change that may draw names, draw them again or clear them: the draw's people (but whoever did it) are told. */
   const drawsTold = <T>(r: Req, f: () => T): T => {
     const before = drawStamps(db);
     const v = f();
     const by = me(r).id;
-    for (const d of drawsChanged(db, before)) tellNow(d.people.filter((p) => p !== by), 'draw', d.celebrationId, { again: true });
+    for (const d of drawsChanged(db, before)) tellLater(() => d.people.filter((p) => p !== by), 'draw', d.celebrationId, { again: true });
     return v;
   };
   const previews = { inFlight: new Set<string>(), all: 0, recent: new Map<string, number[]>() };
@@ -250,9 +251,9 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     questions: {
       ask: (r: Req, personId: string, text: string) => { const p = me(r); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
       // Its asker (someone of the household) is told it was answered: questions.ts hands the id to the notice only.
-      answer: (r: Req, id: string, text: string) => { answerQuestion(db, me(r), id, text, new Date(), (a) => tellNow([a], 'answered', id)); },
-      decline: (r: Req, id: string) => { declineQuestion(db, me(r), id, new Date(), (a) => tellNow([a], 'answered', id)); },
-      withWish: (r: Req, id: string, i: WishInput) => changed(answerWithWish(db, me(r), id, i, new Date(), (a) => tellNow([a], 'answered', id))),
+      answer: (r: Req, id: string, text: string) => { answerQuestion(db, me(r), id, text, new Date(), (askers) => tellLater(askers, 'answered', id)); },
+      decline: (r: Req, id: string) => { declineQuestion(db, me(r), id, new Date(), (askers) => tellLater(askers, 'answered', id)); },
+      withWish: (r: Req, id: string, i: WishInput) => changed(answerWithWish(db, me(r), id, i, new Date(), (askers) => tellLater(askers, 'answered', id))),
       remove: (r: Req, id: string) => removeQuestion(db, me(r), id),
     },
     ideas: {
@@ -328,8 +329,9 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     /** Thank-yous (thanks/thanks.ts): the givers are told; who they are never comes back. Returns the wish's id. */
     thanks: {
       say: (r: Req, wishId: string, text: string) => {
-        const w = writeThanks(db, me(r), wishId, text, day());
-        tellNow(w.tell, 'thanked', w.id);
+        const id = writeThanks(db, me(r), wishId, text, day());
+        const on = day();
+        tellLater(() => thankRecipients(db, id, on), 'thanked', id);
         return wishId;
       },
     },

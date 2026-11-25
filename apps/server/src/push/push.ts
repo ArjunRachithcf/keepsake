@@ -10,7 +10,8 @@
 // - The key (VAPID) is kept like the sealing key (push/keys.ts): outside the database and its backup.
 // - A standalone subscription is the session's: it ends when that session ends (sign-out, a lost device).
 import { createHash } from 'node:crypto';
-import { and, asc, count, eq, inArray } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, lt, or } from 'drizzle-orm';
+import { tell, type NoticeKind } from '../notices/notices';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { Refused } from '../errors';
@@ -22,8 +23,6 @@ export type Subscription = typeof t.pushSubscription.$inferSelect;
 export const MAX_DEVICES = 10;
 /** The one message every push carries (ADR 0010). */
 export const PAYLOAD = Buffer.from('{"v":1}');
-/** Failures in a row after which a subscription is dropped (a 404 or 410 drops it at once). */
-const MAX_FAILURES = 5;
 
 export const subscriptionId = (endpoint: string) => createHash('sha256').update(`keepsake-push:${endpoint}`).digest('base64url').slice(0, 22);
 const PUSH_RULES = { name: 'push service', hosts: PUSH_HOSTS };
@@ -48,7 +47,8 @@ export function subscribe(db: Db, personId: string, sessionId: string | null, i:
   const id = subscriptionId(s.endpoint);
   db.transaction((tx) => {
     tx.delete(t.pushSubscription).where(eq(t.pushSubscription.id, id)).run();
-    tx.insert(t.pushSubscription).values({ id, personId, sessionId, endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth, createdAt: now.toISOString() }).run();
+    // Every PUT confirms it (the app sends it at every start and whenever it is shown, PR #12 review, M2, N4).
+    tx.insert(t.pushSubscription).values({ id, personId, sessionId, endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth, createdAt: now.toISOString(), confirmedAt: now.toISOString() }).run();
     // The oldest go beyond MAX_DEVICES.
     const n = tx.select({ n: count() }).from(t.pushSubscription).where(eq(t.pushSubscription.personId, personId)).get()?.n ?? 0;
     if (n > MAX_DEVICES) {
@@ -88,46 +88,91 @@ export function webPushTransport(egress: Egress, vapid: () => Vapid | null, subj
   };
 }
 
+/** A notice to make in the queue (ADR 0010): who is told is worked out there, never in the request that caused it. */
+export interface Telling { kind: NoticeKind; subjectId: string; day: string; people: () => string[]; again?: boolean }
+
+/** A push service failing with a 4xx other than 404, 410 or 429 for this long drops the subscription. */
+export const FAILING_DAYS = 3;
+/** A subscription its device has not confirmed (PUT again) for this long is dropped (PR #12 review, N4). */
+export const CONFIRM_DAYS = 30;
+const DAY = 86_400_000;
+
 /**
- * The push queue: `wake(people)` after a change or the morning batch, and each of their devices gets one push, one
- * after another, outside every request. `idle()` resolves when the queue is empty (the tests wait on it).
+ * The push queue (ADR 0010; PR #12 review, L6). A changing request only hands it what to tell (`tell`), and the
+ * morning batch who it told (`wake`). On a fixed tick (every 30 s, plus up to 30 s at random) the queue makes the
+ * notices, then encrypts and sends one push to each device of everyone told: no request does work that depends on who
+ * is told, and a push's arrival is not the moment of the change. `idle()` runs the queue now (tests).
+ *
+ * Answers: 2xx sent; 404 or 410 drops the subscription; 429 holds back that push service for the rest of the tick
+ * (its pushes wait for the next one); 5xx and a failure on our side change nothing; any other 4xx for FAILING_DAYS
+ * drops it (PR #12 review, L4). A subscription not confirmed for CONFIRM_DAYS goes (N4).
  */
 export class Pusher {
+  private tellings: Telling[] = [];
   private waiting = new Set<string>();
+  private held = new Set<string>();
   private running: Promise<void> | null = null;
-  constructor(private readonly db: Db, private readonly transport: Transport | null) {}
+  private timer: NodeJS.Timeout | undefined;
+  constructor(private readonly db: Db, private readonly transport: Transport | null, private readonly o: { tickMs?: number; jitterMs?: number } = {}) {}
 
-  wake(personIds: Iterable<string>): void {
-    if (!this.transport) return;
-    for (const p of personIds) this.waiting.add(p);
-    if (this.waiting.size && !this.running) this.running = this.drain().finally(() => { this.running = null; });
+  /** A notice to make (and push) at the next tick. */
+  tell(t: Telling): void { this.tellings.push(t); }
+  /** People already told (the morning batch): pushed at the next tick. */
+  wake(personIds: Iterable<string>): void { if (this.transport) for (const p of personIds) this.waiting.add(p); }
+
+  /** Ticks from now on (main.ts, buildApp); never keeps the process alive. */
+  start(): void {
+    if (this.timer) return;
+    const arm = () => {
+      this.timer = setTimeout(() => { void this.tick().finally(arm); }, (this.o.tickMs ?? 30_000) + Math.random() * (this.o.jitterMs ?? 30_000));
+      this.timer.unref();
+    };
+    arm();
   }
+  stop(): void { clearTimeout(this.timer); this.timer = undefined; }
 
+  /** One tick: what was handed over so far is told and pushed. */
+  tick(): Promise<void> {
+    if (!this.running) this.running = this.run().finally(() => { this.running = null; });
+    return this.running;
+  }
+  /** Ticks until nothing handed over is left (what a 429 held back waits for a real next tick). */
   async idle(): Promise<void> {
-    while (this.running) await this.running;
+    while (this.running || this.tellings.length || this.waiting.size) await this.tick();
   }
 
-  private async drain(): Promise<void> {
-    // The queue runs after the request that woke it has answered.
-    await new Promise((ok) => setImmediate(ok));
-    while (this.waiting.size) {
-      const people = [...this.waiting];
-      this.waiting.clear();
-      // A session that has ended takes its device's subscription with it (the foreign key), before anything is sent.
-      pruneSessions(this.db);
-      const subs = this.db.select().from(t.pushSubscription).where(inArray(t.pushSubscription.personId, people)).all();
-      for (const s of subs) {
-        let status: number;
-        try { status = await this.transport!(s); } catch { status = 0; }
-        if (status >= 200 && status < 300) {
-          if (s.failures) this.db.update(t.pushSubscription).set({ failures: 0 }).where(eq(t.pushSubscription.id, s.id)).run();
-        } else if (status === 404 || status === 410 || s.failures + 1 >= MAX_FAILURES) {
-          // Gone (the browser unsubscribed, or the service no longer knows it), or failing again and again.
-          this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
-        } else {
-          this.db.update(t.pushSubscription).set({ failures: s.failures + 1 }).where(eq(t.pushSubscription.id, s.id)).run();
-        }
+  private async run(): Promise<void> {
+    const now = Date.now();
+    const tellings = this.tellings.splice(0);
+    for (const x of tellings) for (const p of tell(this.db, x.people(), x.kind, x.subjectId, x.day, { again: x.again })) if (this.transport) this.waiting.add(p);
+    if (!this.transport) { this.waiting.clear(); return; }
+    // A session that has ended takes its device's subscription with it (the foreign key); unconfirmed ones go.
+    pruneSessions(this.db);
+    this.db.delete(t.pushSubscription).where(lt(t.pushSubscription.confirmedAt, new Date(now - CONFIRM_DAYS * DAY).toISOString())).run();
+    const people = [...this.waiting];
+    const held = [...this.held];
+    this.waiting.clear();
+    this.held.clear();
+    const subs = this.db.select().from(t.pushSubscription).where(or(inArray(t.pushSubscription.personId, people), inArray(t.pushSubscription.id, held))).all();
+    const throttled = new Set<string>();
+    for (const s of subs) {
+      const service = new URL(s.endpoint).hostname;
+      if (throttled.has(service)) { this.held.add(s.id); continue; }
+      let status: number;
+      try { status = await this.transport(s); } catch { status = 0; }
+      const at = new Date().toISOString();
+      if (status >= 200 && status < 300) {
+        if (s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: null }).where(eq(t.pushSubscription.id, s.id)).run();
+      } else if (status === 404 || status === 410) {
+        this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
+      } else if (status === 429) {
+        throttled.add(service);
+        this.held.add(s.id);
+      } else if (status >= 400 && status < 500) {
+        if (!s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: at }).where(eq(t.pushSubscription.id, s.id)).run();
+        else if (Date.parse(at) - Date.parse(s.failingSince) > FAILING_DAYS * DAY) this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
       }
+      // 5xx, or nothing (a failure on our side or the network's): the subscription stays as it is.
     }
   }
 }

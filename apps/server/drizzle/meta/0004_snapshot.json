@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1fe4a54a-4e32-4359-9d17-18bb8b4a60f1",
+  "id": "c50ff736-4963-4c41-8934-5d2a6c7b75b6",
   "prevId": "f124aa18-c3e9-4495-a279-0381d73ff216",
   "tables": {
     "audit": {
@@ -2064,13 +2064,19 @@
           "notNull": true,
           "autoincrement": false
         },
-        "failures": {
-          "name": "failures",
-          "type": "integer",
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": 0
+          "autoincrement": false
+        },
+        "failing_since": {
+          "name": "failing_since",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {

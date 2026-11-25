@@ -21,16 +21,24 @@ function giversOf(db: Db, wishId: string, today: string): string[] {
 }
 
 /**
- * Writes the thank-you for one of the caller's received gifts (a kid's parent: for the kid's). Returns the givers to
- * tell; they go to the notices only, never into an answer. A gift that is not in the caller's thank-yous is a 404,
- * as for none.
+ * Who a thank-you goes to: the household givers of its gift but its writer. Worked out in the push queue (ADR 0010,
+ * PR #12 review L6), never in the writer's request: the request does the same work whoever gave.
  */
-export function writeThanks(db: Db, me: Person, wishId: string, text: string, today: string): { id: string; tell: string[] } {
+export function thankRecipients(db: Db, thankYouId: string, today: string): string[] {
+  const x = getThankYou(db, thankYouId);
+  return x ? giversOf(db, x.wishId, today).filter((g) => g !== x.writtenBy) : [];
+}
+
+/**
+ * Writes the thank-you for one of the caller's received gifts (a kid's parent: for the kid's). Returns its id. A gift
+ * that is not in the caller's thank-yous is a 404, as for none.
+ */
+export function writeThanks(db: Db, me: Person, wishId: string, text: string, today: string): string {
   if (!thanksFor(db, me, today).some((x) => x.wishId === wishId)) throw new Refused(404, 'no such wish');
   if (db.select().from(t.thankYou).where(eq(t.thankYou.wishId, wishId)).get()) throw new Refused(409, 'it is thanked for already');
   const id = randomId();
   db.insert(t.thankYou).values({ id, wishId, writtenBy: me.id, text: text.trim(), day: today }).run();
-  return { id, tell: giversOf(db, wishId, today).filter((g) => g !== me.id) };
+  return id;
 }
 
 export function thankYouFor(db: Db, wishIds: string[]): Map<string, ThankYou> {

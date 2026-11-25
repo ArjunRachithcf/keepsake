@@ -12,6 +12,7 @@ import { refreshRevealed } from '../src/gifts/gifts';
 import { ORIGIN, TEST_P256DH, TEST_VAPID, sessionCookie } from './helpers';
 import { GUESTS, PEOPLE, as, makeHome, ok, pin, reads, setNow, type Guest, type Home, type Who } from './m4';
 import { vapidFrom } from '../src/push/webpush';
+import { subscribe } from '../src/push/push';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
 const BATCH = new Date('2026-12-02T08:00:00.000Z');
@@ -21,7 +22,7 @@ const homes: Home[] = [];
 const home = async (...a: Parameters<typeof makeHome>) => { const h = await makeHome(...a); homes.push(h); return h; };
 afterEach(async () => { setNow(T0); for (const h of homes.splice(0)) await h.built.app.close(); });
 
-const notices = async (h: Home, who: Who) => (await ok(as(h, who).get('/api/notices'))).json() as { notices: { kind: string; person: { id: string } | null; celebration: { id: string } | null; question: string | null; read: boolean; on: string }[]; unread: number };
+const notices = async (h: Home, who: Who) => (await h.built.pusher.idle(), await ok(as(h, who).get('/api/notices'))).json() as { notices: { kind: string; person: { id: string } | null; celebration: { id: string } | null; question: string | null; read: boolean; on: string }[]; unread: number };
 const kinds = async (h: Home, who: Who) => (await notices(h, who)).notices.map((n) => n.kind);
 const pushed = async (h: Home, who: Who) => { await h.built.pusher.idle(); return h.pushes.get(`p_${who}`) ?? 0; };
 /** Time travel: the clock moves on, the household signs in again (a session lasts 30 days, 7 idle). */
@@ -109,19 +110,75 @@ describe('a push says nothing', () => {
     expect(r.statusCode).toBe(204);
   });
 
-  it('a gone subscription (404, 410) is dropped; five failures in a row too', async () => {
+  it('what a push service answers (PR #12 review, L4): 404 and 410 drop; 429 holds that service back for the tick; 5xx and our own failures never drop; another 4xx drops only after 3 days', async () => {
     let status = 410;
-    const h = await home(ON, { pushTransport: async () => status });
+    const sent: string[] = [];
+    const h = await home(ON, { pushTransport: async (s) => { sent.push(s.id); return status; } });
     const subs = () => h.db.select().from(t.pushSubscription).where(eq(t.pushSubscription.personId, 'p_robin')).all();
-    h.built.pusher.wake(['p_robin']);
-    await h.built.pusher.idle();
+    const push = async () => { h.built.pusher.wake(['p_robin']); await h.built.pusher.idle(); };
+    await push();
     expect(subs()).toEqual([]);
+    await ok(as(h, 'robin').send('PUT', '/api/push/subscription', SUB('r1')));
+    for (const s of [500, 503, 0, 429]) { status = s; for (let i = 0; i < 10; i++) await push(); }
+    expect(subs()).toHaveLength(1);
+    // A 429: the service's other pushes in that tick wait for the next one, and are sent then.
+    await ok(as(h, 'robin').send('PUT', '/api/push/subscription', SUB('r2')));
+    sent.length = 0;
+    await push();
+    expect(sent).toHaveLength(1);
+    status = 201;
+    await h.built.pusher.tick();
+    expect(sent).toHaveLength(3);
+    status = 403;
+    await push();
+    expect(subs().every((s) => s.failingSince !== null)).toBe(true);
+    setNow(new Date(T0.getTime() + 2 * 86_400_000));
+    await push();
+    expect(subs()).toHaveLength(2);
+    setNow(new Date(T0.getTime() + 3 * 86_400_000 + 60_000));
+    await push();
+    expect(subs()).toEqual([]);
+  });
+
+  it('a subscription its device has not sent again for 30 days goes; sending it again confirms it (PR #12 review, N4, M2)', async () => {
+    // Behind HomersLab a subscription has no session to end with: only its confirmation keeps it.
+    const h = await home(ON);
+    const robin = () => h.db.select().from(t.pushSubscription).where(eq(t.pushSubscription.personId, 'p_robin')).all();
+    const push = async (day: number) => { setNow(new Date(T0.getTime() + day * 86_400_000)); h.built.pusher.wake(['p_robin']); await h.built.pusher.idle(); };
+    const r = { endpoint: SUB('r').endpoint, ...SUB('r').keys };
+    subscribe(h.db, 'p_robin', null, r, T0);
+    await push(20);
+    subscribe(h.db, 'p_robin', null, r, new Date(T0.getTime() + 20 * 86_400_000));
+    await push(45);
+    expect(robin().map((s) => s.endpoint)).toEqual(['https://fcm.googleapis.com/fcm/send/r']);
+    await push(51);
+    expect(robin()).toEqual([]);
+  });
+
+  it('a session that ended idle took its device\'s subscription; the next start of the app sends it again and pushes come again (PR #12 review, M2)', async () => {
+    const h = await home(ON);
     await ok(as(h, 'robin').send('PUT', '/api/push/subscription', SUB('r')));
-    status = 500;
-    for (let i = 0; i < 4; i++) { h.built.pusher.wake(['p_robin']); await h.built.pusher.idle(); }
-    expect(subs()[0]!.failures).toBe(4);
+    const robin = () => h.db.select().from(t.pushSubscription).where(eq(t.pushSubscription.personId, 'p_robin')).all().filter((s) => s.sessionId);
+    travel(h, new Date(T0.getTime() + 8 * 86_400_000));
     h.built.pusher.wake(['p_robin']); await h.built.pusher.idle();
-    expect(subs()).toEqual([]);
+    expect(robin()).toEqual([]);
+    await ok(as(h, 'robin').send('PUT', '/api/push/subscription', SUB('r')));
+    expect(robin()).toHaveLength(1);
+  });
+
+  it('the request that causes a notice makes none and sends nothing: the queue does, on its tick (PR #12 review, L6)', async () => {
+    const calls: string[] = [];
+    const h = await home(ON, { pushTransport: async (s) => { calls.push(s.personId); return 201; } });
+    const q = (await ok(as(h, 'quinn').send('POST', '/api/people/p_robin/questions', { text: 'Which size?' }))).json().id;
+    await morning(h, BATCH);
+    calls.length = 0;
+    const count = () => h.db.select().from(t.notice).all().length;
+    const before = count();
+    await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'M' }));
+    await new Promise((ok) => setTimeout(ok, 50));
+    expect([count(), calls]).toEqual([before, []]);
+    await h.built.pusher.tick();
+    expect([count(), calls]).toEqual([before + 1, ['p_quinn']]);
   });
 });
 

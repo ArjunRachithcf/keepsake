@@ -451,7 +451,8 @@ export const notice = sqliteTable('notice', {
 /**
  * A device's Web Push subscription (ADR 0010). The id is a hash of the endpoint. The endpoint is on one of the known
  * push services (net/egress.ts PUSH_HOSTS). A standalone subscription belongs to the session that made it and ends
- * with it, so a family computer someone signed out of gets nothing more for them.
+ * with it, so a family computer someone signed out of gets nothing more for them; the app sends it again at every
+ * start, which moves it to the new session and confirms it.
  */
 export const pushSubscription = sqliteTable('push_subscription', {
   id: text('id').primaryKey(),
@@ -461,7 +462,10 @@ export const pushSubscription = sqliteTable('push_subscription', {
   p256dh: text('p256dh').notNull(),
   auth: text('auth').notNull(),
   createdAt: text('created_at').notNull(),
-  failures: integer('failures').notNull().default(0),
+  /** When its device last sent it (every start of the app): one not confirmed for 30 days goes. */
+  confirmedAt: text('confirmed_at').notNull(),
+  /** Since when its push service has refused it (a 4xx but 404, 410, 429): after 3 days it goes. */
+  failingSince: text('failing_since'),
 }, (t) => [index('push_subscription_person').on(t.personId)]);
 
 /** "Remind me": one person asks to be reminded `days` before each celebration of another (ADR 0010). Only theirs to see. */
