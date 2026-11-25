@@ -1,4 +1,4 @@
-// Bundles the server (dist/main.js) with the workspace packages. Its own dependencies (Fastify) stay external and are
+// Bundles the server (dist/main.js) and its CLI (dist/cli.js) with the workspace packages. Its own dependencies (Fastify, native better-sqlite3, Drizzle) stay external and are
 // installed in the image by `pnpm deploy`.
 import { readFileSync } from 'node:fs';
 import { build } from 'esbuild';
@@ -7,7 +7,7 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 const external = Object.keys(pkg.dependencies).filter((d) => !d.startsWith('@keepsake/'));
 
 await build({
-  entryPoints: ['src/main.ts'],
+  entryPoints: ['src/main.ts', 'src/cli.ts'],
   bundle: true,
   platform: 'node',
   target: 'node22',

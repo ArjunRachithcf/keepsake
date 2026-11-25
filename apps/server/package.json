@@ -8,16 +8,26 @@
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "build": "node build.mjs",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@fastify/cookie": "11.1.5",
+    "@fastify/rate-limit": "11.2.2",
     "@fastify/static": "10.1.11",
     "@keepsake/contracts": "workspace:*",
     "@keepsake/draw": "workspace:*",
-    "fastify": "5.12.8"
+    "@simplewebauthn/server": "14.0.3",
+    "better-sqlite3": "13.2.0",
+    "drizzle-orm": "0.45.4",
+    "fastify": "5.12.8",
+    "ulid": "3.0.2"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
     "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "drizzle-kit": "0.31.11",
     "esbuild": "0.28.2",
     "tsx": "4.23.15",
     "yaml": "2.9.1"

@@ -1,0 +1,129 @@
+// The database (SQLite via Drizzle, ADR 0002). Migrations in drizzle/ come from `pnpm db:generate` after a change here
+// (test/migrations.contract.test.ts checks they agree). Routes never import this file: they go through the domain
+// modules, and every answer is built by the view layer (src/view, ADR 0003).
+import { sql } from 'drizzle-orm';
+import { blob, check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+
+/** The household's people (spec §2). Under HomersLab, external_id is the edge's stable person id. */
+export const person = sqliteTable('person', {
+  id: text('id').primaryKey(),
+  externalId: text('external_id'),
+  name: text('name').notNull(),
+  role: text('role', { enum: ['admin', 'adult', 'kid'] }).notNull(),
+  createdAt: text('created_at').notNull(),
+}, (t) => [
+  uniqueIndex('person_external_id').on(t.externalId),
+  check('person_role', sql`${t.role} IN ('admin', 'adult', 'kid')`),
+]);
+
+/** Who manages a kid (their parents): they approve the kid's wishes and keep the kid's list and profile. */
+export const manager = sqliteTable('manager', {
+  kidId: text('kid_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  managerId: text('manager_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+}, (t) => [primaryKey({ columns: [t.kidId, t.managerId] }), check('manager_not_self', sql`${t.kidId} <> ${t.managerId}`)]);
+
+/** Household settings that are not security settings (those come from the environment only, spec §10). */
+export const setting = sqliteTable('setting', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+});
+
+// Standalone sign-in (Philobiblos ADR 0010): passkeys, sessions and one-time links. Tokens are stored as SHA-256.
+export const passkey = sqliteTable('passkey', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  publicKey: blob('public_key', { mode: 'buffer' }).notNull(),
+  counter: integer('counter').notNull().default(0),
+  transportsJson: text('transports_json').notNull().default('[]'),
+  backedUp: integer('backed_up').notNull().default(0),
+  label: text('label').notNull(),
+  createdAt: text('created_at').notNull(),
+  lastUsedAt: text('last_used_at'),
+  invitedBy: text('invited_by').references(() => person.id, { onDelete: 'set null' }),
+}, (t) => [index('passkey_person').on(t.personId)]);
+
+export const session = sqliteTable('session', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  passkeyId: text('passkey_id').references(() => passkey.id, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull(),
+  lastSeenAt: text('last_seen_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+}, (t) => [index('session_person').on(t.personId)]);
+
+export const invite = sqliteTable('invite', {
+  id: text('id').primaryKey(),
+  kind: text('kind', { enum: ['setup', 'admin', 'self', 'recovery'] }).notNull(),
+  personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull(),
+  createdBy: text('created_by').references(() => person.id, { onDelete: 'cascade' }),
+  createdAt: text('created_at').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  usedAt: text('used_at'),
+}, (t) => [
+  uniqueIndex('invite_token').on(t.tokenHash),
+  check('invite_kind', sql`${t.kind} IN ('setup', 'admin', 'self', 'recovery')`),
+]);
+
+/** A date gifts are given for (spec §3, ADR 0007). A yearly one comes back on the same day each year. */
+export const celebration = sqliteTable('celebration', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  /** YYYY-MM-DD: the first (or only) date. */
+  date: text('date').notNull(),
+  place: text('place'),
+  poster: text('poster', { enum: ['pine', 'berry', 'night', 'gold'] }).notNull(),
+  recurrence: text('recurrence', { enum: ['none', 'yearly'] }).notNull(),
+  hostId: text('host_id').references(() => person.id, { onDelete: 'set null' }),
+  createdAt: text('created_at').notNull(),
+}, (t) => [
+  check('celebration_poster', sql`${t.poster} IN ('pine', 'berry', 'night', 'gold')`),
+  check('celebration_recurrence', sql`${t.recurrence} IN ('none', 'yearly')`),
+]);
+
+/** The people a celebration is for (whose lists it has). */
+export const celebrationPerson = sqliteTable('celebration_person', {
+  celebrationId: text('celebration_id').notNull().references(() => celebration.id, { onDelete: 'cascade' }),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+}, (t) => [primaryKey({ columns: [t.celebrationId, t.personId] }), index('celebration_person_person').on(t.personId)]);
+
+/**
+ * A wish (ADR 0007): belongs to its person; for one celebration, or any time (celebration_id null).
+ * state: 'listed' (the household sees it), 'awaiting_parent' (a kid's, until a manager approves it), 'suggested'
+ * (someone else's idea for the person, until the person or a kid's manager approves it).
+ */
+export const wish = sqliteTable('wish', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  celebrationId: text('celebration_id').references(() => celebration.id, { onDelete: 'set null' }),
+  name: text('name').notNull(),
+  /** Stored as typed, never fetched (spec §8: adding from a link comes in M5 through a hardened egress). */
+  link: text('link'),
+  /** In minor units of the household's currency. */
+  priceMinor: integer('price_minor'),
+  quantity: integer('quantity').notNull().default(1),
+  note: text('note'),
+  mostWanted: integer('most_wanted').notNull().default(0),
+  position: integer('position').notNull(),
+  state: text('state', { enum: ['listed', 'awaiting_parent', 'suggested'] }).notNull(),
+  addedBy: text('added_by').references(() => person.id, { onDelete: 'set null' }),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [
+  index('wish_person').on(t.personId, t.position),
+  index('wish_celebration').on(t.celebrationId),
+  check('wish_state', sql`${t.state} IN ('listed', 'awaiting_parent', 'suggested')`),
+  check('wish_quantity', sql`${t.quantity} BETWEEN 1 AND 99`),
+  check('wish_price', sql`${t.priceMinor} IS NULL OR ${t.priceMinor} >= 0`),
+]);
+
+/** Sizes, likes and "please no" (spec §3), kept by the person (or a kid's manager), each part dated. */
+export const profile = sqliteTable('profile', {
+  personId: text('person_id').primaryKey().references(() => person.id, { onDelete: 'cascade' }),
+  sizesJson: text('sizes_json').notNull().default('[]'),
+  sizesUpdatedAt: text('sizes_updated_at'),
+  likesJson: text('likes_json').notNull().default('[]'),
+  likesUpdatedAt: text('likes_updated_at'),
+  pleaseNoJson: text('please_no_json').notNull().default('[]'),
+  pleaseNoUpdatedAt: text('please_no_updated_at'),
+});
