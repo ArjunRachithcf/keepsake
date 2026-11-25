@@ -1,21 +1,39 @@
 // The Fastify app: /api (contracts/openapi.yaml) and, when built, the web app's static files.
 import { existsSync } from 'node:fs';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import fastifyCookie from '@fastify/cookie';
+import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
-import type { Health } from '@keepsake/contracts';
+import { authHook } from './auth/hook';
+import { Challenges, simpleWebAuthn, type WebAuthn } from './auth/webauthn';
 import type { Config } from './config';
+import type { Db } from './db/open';
+import { dataFor } from './data';
+import { clientKey, dropUntrustedIdentity } from './identity';
 import { isApi, servesPage } from './paths';
+import { authRoutes } from './routes/auth';
+import { celebrationRoutes } from './routes/celebrations';
+import { systemRoutes } from './routes/system';
+import { householdRoutes } from './routes/household';
+import { wishRoutes } from './routes/wishes';
+import { routerFor } from './router';
+import { installSeam } from './seam';
 import { SECURITY_HEADERS } from './security-headers';
-import { VERSION } from './version';
 
 export interface BuiltApp { app: FastifyInstance; apiRoutes: { method: string; url: string }[] }
+export interface AppOptions { logger?: boolean; webauthn?: WebAuthn }
 
-export async function buildApp(cfg: Config, opts: { logger?: boolean } = {}): Promise<BuiltApp> {
+/** Headers the logger never writes (Fastify's request serializer logs none today; this holds if that changes). */
+export const REDACTED = ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]', 'req.headers["x-homerslab-role"]'];
+
+export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Promise<BuiltApp> {
   const app = Fastify({
-    logger: opts.logger ? { redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-homerslab-person"]', 'req.headers["x-homerslab-name"]'] } : false,
+    logger: opts.logger ? { redact: REDACTED } : false,
     trustProxy: false,
     bodyLimit: 64 * 1024,
   });
+  // First of all: X-HomersLab-* from anywhere but the trusted proxy are gone before anything reads them.
+  app.addHook('onRequest', async (req) => dropUntrustedIdentity(cfg, req.socket.remoteAddress, req.headers));
   app.addHook('onSend', async (req, reply) => {
     for (const [name, value] of Object.entries(SECURITY_HEADERS)) void reply.header(name, value);
     if (isApi(req.url)) void reply.header('Cache-Control', 'no-store');
@@ -25,9 +43,32 @@ export async function buildApp(cfg: Config, opts: { logger?: boolean } = {}): Pr
     if (!isApi(r.url)) return;
     for (const m of [r.method].flat()) if (m !== 'HEAD') apiRoutes.push({ method: m, url: r.url });
   });
+  await app.register(fastifyCookie);
+  await app.register(fastifyRateLimit, { global: false });
+  const webauthn = opts.webauthn ?? simpleWebAuthn(cfg);
+  const challenges = new Challenges();
+  const data = dataFor(cfg, db);
+  // The sign-in steps: 20 a minute per client (its socket address or the address a configured proxy saw; IPv6 by /64),
+  // and 300 a minute for everyone together, counting only the tries a client's own limit let through: one client's
+  // flood uses up its own budget and nobody else's (docs/security.md).
+  const signInLimit = { max: 20, timeWindow: '1 minute', keyGenerator: (req: FastifyRequest) => clientKey(cfg, req.socket.remoteAddress, req.headers) };
+  const signInWindow = { start: 0, n: 0 };
   await app.register(async (api) => {
-    // Public: says only that the server runs, its version and mode (contracts/openapi.yaml, docs/security.md).
-    api.get('/health', async (): Promise<Health> => ({ ok: true, version: VERSION, mode: cfg.mode }));
+    installSeam(api);
+    api.addHook('onRequest', authHook(cfg, db));
+    // preHandler: after the per-client limit (an onRequest hook on each sign-in route), so refused tries do not count.
+    api.addHook('preHandler', async (req, reply) => {
+      if (!req.routeOptions.config.signIn) return;
+      const now = Date.now();
+      if (now - signInWindow.start > 60_000) { signInWindow.start = now; signInWindow.n = 0; }
+      if (++signInWindow.n > 300) return reply.code(429).send({ error: 'too many tries; wait a minute' });
+    });
+    const router = routerFor(api, signInLimit);
+    systemRoutes(router, data);
+    authRoutes(router, cfg, data, webauthn, challenges);
+    householdRoutes(router, cfg, data);
+    wishRoutes(router, data);
+    celebrationRoutes(router, data);
   }, { prefix: '/api' });
   const notFound = { error: 'not found' };
   const webDir = cfg.webDir && existsSync(cfg.webDir) ? cfg.webDir : null;
