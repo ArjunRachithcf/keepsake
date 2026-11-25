@@ -44,7 +44,10 @@ export interface Config {
    * no push (homerslab mode without the secret). Hidden from logs like the sealing key.
    */
   vapidKey: SealingKeySource | null;
-  /** Who runs this Keepsake, for the push services (VAPID `sub`): KEEPSAKE_VAPID_SUBJECT (mailto: or https:), else the origin. */
+  /**
+   * Who runs this Keepsake, for the push services (VAPID `sub`): KEEPSAKE_VAPID_SUBJECT (mailto: or https:), else a
+   * neutral `mailto:` that names no household (PR #12 review, L2): the origin would go to every push service with every push.
+   */
   vapidSubject: string;
   /** false: nothing leaves Keepsake (KEEPSAKE_EGRESS=off): no push, no page read from a shop link (ADR 0011). */
   egress: boolean;
@@ -63,6 +66,9 @@ export type SealingKeySource = { value: string } | { file: string; create: boole
  * KEEPSAKE_EDGE_IDENTITY to this value once its edge does that; until then homerslab mode does not start.
  */
 export const EDGE_IDENTITY = 'homerslab-v1';
+
+/** The VAPID subject when none is set: a reserved domain (RFC 2606), so it names no household (ADR 0010). */
+export const DEFAULT_VAPID_SUBJECT = 'mailto:keepsake@example.org';
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const mode = env.KEEPSAKE_MODE ?? 'standalone';
@@ -89,8 +95,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const vapidKey = keySource(env, mode, dataDir, VAPID);
   const egress = (env.KEEPSAKE_EGRESS ?? 'on') !== 'off';
   if (env.KEEPSAKE_EGRESS && env.KEEPSAKE_EGRESS !== 'on' && env.KEEPSAKE_EGRESS !== 'off') throw new Error(`KEEPSAKE_EGRESS must be on or off, not ${env.KEEPSAKE_EGRESS}`);
-  const vapidSubject = env.KEEPSAKE_VAPID_SUBJECT ?? origin.origin;
-  if (!/^(?:mailto:[^\s@]+@[^\s@]+|https:\/\/[^\s]+|http:\/\/localhost(?::\d+)?)$/.test(vapidSubject)) throw new Error(`KEEPSAKE_VAPID_SUBJECT must be mailto:… or https://…, not ${vapidSubject}`);
+  // Only a subject someone set is checked: the default is fixed and fits every origin (http on loopback included).
+  const vapidSubject = env.KEEPSAKE_VAPID_SUBJECT ?? DEFAULT_VAPID_SUBJECT;
+  if (env.KEEPSAKE_VAPID_SUBJECT !== undefined && !/^(?:mailto:[^\s@/]+@[^\s@/]+\.[^\s@/]+|https:\/\/[^\s/]+(?:\/\S*)?)$/.test(vapidSubject)) {
+    throw new Error(`KEEPSAKE_VAPID_SUBJECT must be mailto:… or https://…, not ${vapidSubject}`);
+  }
   return {
     mode,
     dataDir,
@@ -189,12 +198,15 @@ export function canonicalIp(v: string): string | null {
   });
 }
 
+/** Loopback host names an http origin may have (a secure context in browsers). */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 function parseOrigin(v: string): URL {
   let u: URL;
   try { u = new URL(v); } catch { throw new Error(`KEEPSAKE_ORIGIN must be scheme://host[:port], not ${v}`); }
   if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) throw new Error(`KEEPSAKE_ORIGIN must be scheme://host[:port], not ${v}`);
   // WebAuthn and Secure cookies need a secure context: https, or http only on localhost.
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1'))) {
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && LOOPBACK.has(u.hostname))) {
     throw new Error(`KEEPSAKE_ORIGIN must be https (or http://localhost), not ${v}`);
   }
   return u;

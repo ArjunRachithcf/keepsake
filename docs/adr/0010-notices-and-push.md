@@ -28,8 +28,12 @@ something is new.
   Apple, Microsoft): a subscription's endpoint is checked when it is made, so a subscription cannot point Keepsake at
   the household's network. A 404 or 410 drops the subscription; so do five failures in a row.
 - **The VAPID key** is kept like the sealing key (ADR 0004): `KEEPSAKE_VAPID_KEY` or `_FILE`, under HomersLab a secret;
-  standalone makes `keys/vapid.key` once (0600), never in `data/`. Without it, or with `KEEPSAKE_EGRESS=off`, there is no
-  push; the notices still show in the app.
+  standalone makes `keys/vapid.key` once (0600), never in `data/`; base64 or base64url, read as the sealing key is.
+  Without it, or with `KEEPSAKE_EGRESS=off`, there is no push; the notices still show in the app.
+- **The VAPID subject** (`sub`, sent to the push services with every push) is `KEEPSAKE_VAPID_SUBJECT` (mailto: or
+  https:) if the admin sets one, else `mailto:keepsake@example.org`, a reserved domain that names no household (PR #12
+  review, L2). The origin is never sent: it would tell Google, Mozilla, Apple and Microsoft whose Keepsake this is. A
+  service that wants a real contact gets one only if the admin gives it.
 - **A device's subscription is its session's** (standalone): signing out, or a lost device's sessions ended, ends it,
   so a family computer someone signed out of gets nothing more for them. At most 10 devices a person.
 - **The morning batch** (ADR 0008's 08:00, household time): questions that reached their person, celebrations a week

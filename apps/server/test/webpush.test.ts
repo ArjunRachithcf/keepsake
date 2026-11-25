@@ -130,7 +130,19 @@ describe('the VAPID key is kept as the sealing key is', () => {
   it('homerslab mode without the secret has no key (no push), and makes no file', () => {
     const cfg = loadConfig({ KEEPSAKE_MODE: 'homerslab', KEEPSAKE_EDGE_IDENTITY: 'homerslab-v1', KEEPSAKE_TRUSTED_PROXY: '10.0.0.1', KEEPSAKE_ORIGIN: 'https://k.example', KEEPSAKE_DATA_DIR: dir() });
     expect(cfg.vapidKey).toBeNull();
-    expect(cfg.vapidSubject).toBe('https://k.example');
+    expect(cfg.vapidSubject).toBe('mailto:keepsake@example.org');
+  });
+
+  it('http on loopback starts; the default subject names no household; only a subject someone set is checked (PR #12 review, L2)', () => {
+    const base = { KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: '/nonexistent', KEEPSAKE_SEALING_KEY: 'x', KEEPSAKE_VAPID_KEY: 'x' };
+    for (const origin of ['http://127.0.0.1:8080', 'http://[::1]:8080', 'http://localhost:8080', 'https://keepsake.family.example']) {
+      const cfg = loadConfig({ ...base, KEEPSAKE_ORIGIN: origin });
+      expect(cfg.vapidSubject, origin).toBe('mailto:keepsake@example.org');
+      expect(cfg.vapidSubject).not.toContain(new URL(origin).hostname);
+    }
+    expect(() => loadConfig({ ...base, KEEPSAKE_ORIGIN: 'http://192.168.1.5:8080' })).toThrow(/https/);
+    expect(loadConfig({ ...base, KEEPSAKE_VAPID_SUBJECT: 'mailto:admin@family.example' }).vapidSubject).toBe('mailto:admin@family.example');
+    for (const bad of ['http://localhost', 'mailto:nobody', 'https://', 'someone']) expect(() => loadConfig({ ...base, KEEPSAKE_VAPID_SUBJECT: bad }), bad).toThrow(/mailto/);
   });
 
   it('the settings: KEEPSAKE_EGRESS on or off, a VAPID subject that is mailto: or https:, shops by host name only', () => {
