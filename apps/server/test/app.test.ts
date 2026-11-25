@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import { isApi } from '../src/paths';
+import { openDb } from '../src/db/open';
 
 describe('config', () => {
   it('standalone binds to 127.0.0.1 by default', () => {
@@ -13,9 +14,20 @@ describe('config', () => {
     expect(cfg.host).toBe('127.0.0.1');
     expect(cfg.port).toBe(8080);
   });
-  it('refuses an unknown mode or port', () => {
+  it('refuses an unknown mode, port, time zone or origin', () => {
     expect(() => loadConfig({ KEEPSAKE_MODE: 'open' })).toThrow(/KEEPSAKE_MODE/);
     expect(() => loadConfig({ KEEPSAKE_PORT: '80a' })).toThrow(/KEEPSAKE_PORT/);
+    expect(() => loadConfig({ KEEPSAKE_TZ: 'Mars/Olympus' })).toThrow(/KEEPSAKE_TZ/);
+    for (const o of ['http://keepsake.example.org', 'https://keepsake.example.org/path', 'https://user@keepsake.example.org', 'nonsense']) {
+      expect(() => loadConfig({ KEEPSAKE_ORIGIN: o }), o).toThrow(/KEEPSAKE_ORIGIN/);
+    }
+  });
+  it('standalone: the origin is localhost on the port unless set; the database is in the data folder', () => {
+    const cfg = loadConfig({ KEEPSAKE_PORT: '9090', KEEPSAKE_DATA_DIR: '/data' });
+    expect(cfg.origin).toBe('http://localhost:9090');
+    expect(cfg.rpId).toBe('localhost');
+    expect(cfg.dbFile).toBe('/data/keepsake.sqlite');
+    expect(cfg.trustedProxy).toBeNull();
   });
 });
 
@@ -27,7 +39,7 @@ describe('security headers', () => {
   afterAll(() => rmSync(web, { recursive: true, force: true }));
 
   it.each(['/api/health', '/', '/celebrations', '/api/nothing', '/api', '/api?x=1'])('%s carries them', async (url) => {
-    const { app } = await buildApp({ ...loadConfig({}), webDir: web });
+    const { app } = await buildApp({ ...loadConfig({}), webDir: web }, openDb(':memory:'));
     const res = await app.inject({ method: 'GET', url });
     expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     expect(res.headers['content-security-policy']).toContain("default-src 'self'");
@@ -45,7 +57,7 @@ describe('security headers', () => {
   it.each([
     ['GET', '/'], ['GET', '/celebrations'], ['GET', '/family/someone'], ['HEAD', '/celebrations'],
   ] as const)('%s %s gets the page', async (method, url) => {
-    const { app } = await buildApp({ ...loadConfig({}), webDir: web });
+    const { app } = await buildApp({ ...loadConfig({}), webDir: web }, openDb(':memory:'));
     const res = await app.inject({ method, url });
     expect(res.statusCode).toBe(200);
     if (method === 'GET') expect(page(res)).toBe(true);
@@ -56,7 +68,7 @@ describe('security headers', () => {
     ['POST', '/'], ['DELETE', '/celebrations'], ['PUT', '/family'], ['GET', '/api'], ['GET', '/api?x=1'], ['GET', '/api/nothing'],
     ['POST', '/api/health'], ['GET', '/api/health%00'], ['GET', '/assets/missing.js'],
   ] as const)('%s %s is a JSON 404, not the page', async (method, url) => {
-    const { app } = await buildApp({ ...loadConfig({}), webDir: web });
+    const { app } = await buildApp({ ...loadConfig({}), webDir: web }, openDb(':memory:'));
     const res = await app.inject({ method, url });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toEqual({ error: 'not found' });
@@ -64,7 +76,7 @@ describe('security headers', () => {
   });
 
   it('serves the build\'s files', async () => {
-    const { app } = await buildApp({ ...loadConfig({}), webDir: web });
+    const { app } = await buildApp({ ...loadConfig({}), webDir: web }, openDb(':memory:'));
     const res = await app.inject({ method: 'GET', url: '/assets/app.js' });
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe('export {};');
