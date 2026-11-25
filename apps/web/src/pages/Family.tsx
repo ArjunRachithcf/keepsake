@@ -1,9 +1,11 @@
 // Family (spec §4): the grown-ups and the kids (with how many wishes wait for you); for admins, the household:
-// people, roles, kids' managers, one-time links and the currency.
+// people, roles, kids' managers, one-time links, the currency, every guest link, and the sheet's one-time import.
 import { useEffect, useId, useState } from 'react';
-import { api, message, type Home, type OneTimeLink, type Passkeys, type Person } from '../api';
+import { api, message, type Celebration, type Home, type OneTimeLink, type Passkeys, type Person } from '../api';
 import { roleLabel, useHousehold } from '../household';
 import { Field, Group, Link, Notice, PageHead, Sheet } from '../ui';
+import { LinksList } from '../links';
+import { ImportWizard } from '../import';
 
 export function Family({ onSignOut }: { onSignOut?: () => void }) {
   const { household, me } = useHousehold();
@@ -57,6 +59,8 @@ function ManageHousehold() {
     try { await f(); await reload(); } catch (e) { setError(message(e)); }
   };
   const grownUps = household.people.filter((p) => p.role !== 'kid');
+  const [celebrations, setCelebrations] = useState<Celebration[]>([]);
+  useEffect(() => { api<{ upcoming: Celebration[] }>('/celebrations').then((c) => setCelebrations(c.upcoming), () => undefined); }, []);
   return (
     <div className="stack">
       {error && <Notice kind="error">{error}</Notice>}
@@ -127,6 +131,8 @@ function ManageHousehold() {
           </li>
         ))}
       </ul>
+      <LinksList title="Guest links" footer="Every open share link and personal draw link. Revoking one stops it at once." />
+      <ImportWizard celebrations={celebrations} />
       {link && (
         <Notice title={`A one-time link for ${link.name}`}>
           <p>Send it to them yourself. It works once, until {new Date(link.link.expiresAt).toLocaleDateString()}.</p>

@@ -8,9 +8,11 @@ import { Field, Notice, Switch } from './ui';
 
 const STATE_LABEL: Record<Wish['state'], string | null> = { listed: null, awaiting_parent: 'Waiting for a parent', suggested: 'Suggestion' };
 
-export function WishRow({ wish, celebrations, onEdit, onChanged, showFor = true, move }: {
+export function WishRow({ wish, celebrations, onEdit, onChanged, showFor = true, move, guest }: {
   wish: Wish; celebrations: Celebration[]; onEdit?: (w: Wish) => void; onChanged: () => void; showFor?: boolean;
   move?: { up?: () => void; down?: () => void };
+  /** On the guest page: a guest's claims go to /guest/wishes/…, and there are no group gifts to start. */
+  guest?: boolean;
 }) {
   const { household, name } = useHousehold();
   const [busy, setBusy] = useState(false);
@@ -39,7 +41,7 @@ export function WishRow({ wish, celebrations, onEdit, onChanged, showFor = true,
         {meta && <p className="row-sub">{meta}</p>}
         {wish.note && <p className="row-note">{wish.note}</p>}
         {state && <p className="badge">{state}</p>}
-        {wish.gift && <GiftLine wish={wish} onChanged={onChanged} />}
+        {wish.gift && <GiftLine wish={wish} onChanged={onChanged} guest={guest} />}
         {error && <p className="row-error" role="alert">{error}</p>}
       </div>
       <div className="wish-actions">
@@ -59,8 +61,10 @@ export function WishRow({ wish, celebrations, onEdit, onChanged, showFor = true,
 }
 
 /** Add a wish for `personId` (yourself, a kid you manage, or a suggestion), or change `wish`. */
-export function WishForm({ personId, wish, celebrations, initialFor, onDone }: {
+export function WishForm({ personId, wish, celebrations, initialFor, onDone, answering }: {
   personId: string; wish?: Wish; celebrations: Celebration[]; initialFor?: string | null; onDone: () => void;
+  /** "Add a wish instead": the new wish answers this question. */
+  answering?: string;
 }) {
   const { household, me, person, name: nameOf } = useHousehold();
   const id = useId();
@@ -93,6 +97,7 @@ export function WishForm({ personId, wish, celebrations, initialFor, onDone }: {
     setBusy(true); setError(null);
     try {
       if (wish) await api(`/wishes/${wish.id}`, { method: 'PATCH', body: fields });
+      else if (answering) await api(`/questions/${answering}/wish`, { method: 'POST', body: fields });
       else await api('/wishes', { method: 'POST', body: { ...fields, personId } satisfies WishInput });
       onDone();
     } catch (err) { setError(message(err)); } finally { setBusy(false); }
@@ -134,7 +139,7 @@ export function WishForm({ personId, wish, celebrations, initialFor, onDone }: {
       </Field>
       {error && <Notice kind="error">{error}</Notice>}
       <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={busy || !name.trim()} aria-busy={busy}>
-        {wish ? 'Save' : keeps ? 'Add the wish' : 'Suggest it'}
+        {wish ? 'Save' : answering ? 'Add it and answer' : keeps ? 'Add the wish' : 'Suggest it'}
       </button>
       {wish && <button type="button" className="btn btn-danger btn-block" disabled={busy} onClick={remove}>Remove the wish</button>}
     </form>

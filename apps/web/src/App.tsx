@@ -8,6 +8,7 @@ import { Family } from './pages/Family';
 import { MyWishes } from './pages/MyWishes';
 import { Person } from './pages/Person';
 import { Enrol, SignIn, takeToken } from './pages/SignIn';
+import { Guest } from './pages/Guest';
 import { Nav, useRouter } from './router';
 import { Link, Loading, Notice, PageHead } from './ui';
 
@@ -25,7 +26,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => setHousehold(await api<Household>('/household')), []);
-  useEffect(() => { api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e))); }, []);
+  useEffect(() => { if (route.tab !== 'guest') api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e))); }, [route.tab]);
   useEffect(() => { if (session?.signedIn) reload().catch((e) => setError(message(e))); }, [session, reload]);
 
   const signedIn = (s: AuthSession) => { setSession(s); go('/'); };
@@ -36,6 +37,8 @@ export function App() {
     go('/');
   };
 
+  // A guest has no account: their page needs no session (and the household's sign-in is never shown to them).
+  if (route.tab === 'guest') return <Guest />;
   if (error) return <main className="auth" id="main"><PageHead title="Keepsake" /><Notice kind="error" title="Keepsake did not answer.">{error}</Notice></main>;
   if (!session) return <main className="auth" id="main"><Loading /></main>;
   if (route.tab === 'setup' || route.tab === 'enrol') return <Nav.Provider value={go}><Enrol kind={route.tab} token={token} onSignedIn={signedIn} /></Nav.Provider>;

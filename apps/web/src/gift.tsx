@@ -1,10 +1,10 @@
 // What a giver sees and does on someone's wish (spec §4, the person's page on the design canvas): "I'll get it",
 // "Mark bought", "Anna is getting this", bought struck through, "Chip in" with a progress bar. Only a wish that comes
 // with `gift` shows any of it, and the server sends `gift` to givers only, never to the wish's person or a kid.
-import { useId, useState, type ReactNode } from 'react';
+import { useContext, useId, useState, type ReactNode } from 'react';
 import { api, message, type Gift, type Wish } from './api';
 import { money, parseMoney, toMoneyText } from './format';
-import { useHousehold } from './household';
+import { HouseholdContext } from './household';
 import { Field, Notice, Sheet } from './ui';
 
 const names = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
@@ -12,21 +12,25 @@ const names = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -
 /** Whether the row's title is struck through: someone bought it (or everything wanted is bought). */
 export const isBought = (g: Gift | undefined) => Boolean(g && (g.group ? g.group.state !== 'open' : g.claims.length > 0 && g.left === 0 && g.claims.every((c) => c.state !== 'claimed')));
 
-export function GiftLine({ wish, onChanged }: { wish: Wish; onChanged: () => void }) {
+/**
+ * `guest`: on the guest page (ADR 0009), where a guest claims through /guest/… and starts no group gift; the currency
+ * then comes from `currency` (a guest has no household).
+ */
+export function GiftLine({ wish, onChanged, guest, currency }: { wish: Wish; onChanged: () => void; guest?: boolean; currency?: string | null }) {
   const g = wish.gift!;
   const open = wish.state === 'listed';
-  const { household } = useHousehold();
+  const household = { currency: useContext(HouseholdContext)?.household.currency ?? currency ?? null };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sheet, setSheet] = useState<'chip' | 'group' | null>(null);
   const cur = household.currency;
   const call = async (path: string, method: string, body?: unknown) => {
     setBusy(true); setError(null);
-    try { await api(`/wishes/${wish.id}${path}`, { method, body }); onChanged(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    try { await api(`${guest ? '/guest' : ''}/wishes/${wish.id}${path}`, { method, body }); onChanged(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
   };
   const mine = g.claims.find((c) => c.mine);
   const others = g.claims.filter((c) => !c.mine);
-  const who = (c: Gift['claims'][number]) => c.giver?.name ?? 'Someone';
+  const who = (c: Gift['claims'][number]) => c.giver?.name ?? c.guest ?? 'Someone';
   const lines: string[] = [];
   if (mine) lines.push(mine.state === 'claimed' ? 'You’re getting this' : mine.state === 'bought' ? 'You bought this' : 'You gave this');
   const getting = others.filter((c) => c.state === 'claimed').map(who);
@@ -62,8 +66,8 @@ export function GiftLine({ wish, onChanged }: { wish: Wish; onChanged: () => voi
         {mine?.state === 'bought' && <Pill disabled={busy} onClick={() => call('/claim', 'PATCH', { state: 'given' })}>Given</Pill>}
         {mine?.state === 'given' && !g.mine?.over && <Pill disabled={busy} onClick={() => call('/claim', 'PATCH', { state: 'bought' })}>Not given yet</Pill>}
         {mine?.state === 'claimed' && <Pill disabled={busy} onClick={() => call('/claim', 'DELETE')}>Not me after all</Pill>}
-        {!grp && g.claims.length === 0 && cur && <Pill disabled={busy} onClick={() => setSheet('group')}>Make it a group gift</Pill>}
-        {grp?.state === 'open' && <Pill accent disabled={busy} onClick={() => setSheet('chip')} label={wish.name}>{grp.myShareMinor === null ? 'Chip in' : 'Change my share'}</Pill>}
+        {!guest && !grp && g.claims.length === 0 && cur && <Pill disabled={busy} onClick={() => setSheet('group')}>Make it a group gift</Pill>}
+        {!guest && grp?.state === 'open' && <Pill accent disabled={busy} onClick={() => setSheet('chip')} label={wish.name}>{grp.myShareMinor === null ? 'Chip in' : 'Change my share'}</Pill>}
         {grp?.state === 'open' && grp.myShareMinor !== null && <Pill disabled={busy} onClick={() => call('/group/share', 'DELETE')}>Take my share back</Pill>}
         {grp?.canManage && grp.state === 'open' && <Pill disabled={busy} onClick={() => call('/group', 'PATCH', { state: 'bought' })}>Mark bought</Pill>}
         {grp?.canManage && grp.state === 'bought' && <Pill disabled={busy} onClick={() => call('/group', 'PATCH', { state: 'given' })}>Given</Pill>}

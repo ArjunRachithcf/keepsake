@@ -10,6 +10,8 @@ import { api, message, ApiError, type Celebration, type Draw, type DrawInput } f
 import { day, fractionDigits, money, parseMoney, toMoneyText } from './format';
 import { useHousehold } from './household';
 import { Field, Group, Link, Notice, Sheet, Switch } from './ui';
+import { AskForm } from './questions';
+import { DrawGuests } from './links';
 
 const dateTimeFmt = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' });
 /** An instant as the datetime-local field shows it (the browser's own time zone). */
@@ -35,7 +37,7 @@ function DrawState({ d }: { d: Draw }) {
     <li className="row">
       <span className="row-title">{d.drawn ? `${d.opened} of ${d.total} opened their draw` : `${d.total} drawing names`}</span>
       {d.drawn && <div className="gift-bar" role="progressbar" aria-label="Opened their draw" aria-valuemin={0} aria-valuemax={d.total} aria-valuenow={d.opened}><span style={{ width: `${pct}%` }} /></div>}
-      <span className="row-sub">{d.people.map((p) => p.name).join(', ')}</span>
+      <span className="row-sub">{[...d.people.map((p) => p.name), ...d.guests.map((g) => `${g} (by link)`)].join(', ')}</span>
     </li>
   );
 }
@@ -46,6 +48,7 @@ export function DrawSection({ celebration, onChanged }: { celebration: Celebrati
   const [d, setD] = useState<Draw | null | 'none'>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
+  const [ask, setAsk] = useState(false);
   const [revealing, setRevealing] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -119,13 +122,16 @@ export function DrawSection({ celebration, onChanged }: { celebration: Celebrati
             {mine.opened && !receiver && mine.unreadable && <><p className="draw-eyebrow">Your draw</p><p className="draw-title">It does not open</p><p className="draw-sub">Its key is not on the server any more. {celebration.host ? `${celebration.host.name} can draw the names again.` : 'The host can draw the names again.'}</p></>}
             {mine.opened && !receiver && !mine.unreadable && <><p className="draw-eyebrow">Your draw</p><p className="draw-title">They have left</p><p className="draw-sub">The person you drew is no longer in the household.</p></>}
           </div>
-          {mine.opened && receiver && shown && (
+          {mine.opened && receiver && shown && !mine.receiverGuest && (
             <div className="button-row draw-actions">
               <Link to={`/family/${receiver.id}`} className="btn">{receiver.name}’s wishes</Link>
-              <button type="button" className="btn" disabled aria-describedby={`ask-${receiver.id}`}>Ask {receiver.name}</button>
-              <p className="hint" id={`ask-${receiver.id}`}>Anonymous questions come soon.</p>
+              <button type="button" className="btn" onClick={() => setAsk(true)}>Ask {receiver.name}</button>
             </div>
           )}
+          {mine.opened && receiver && shown && mine.receiverGuest && <p className="hint">{receiver.name} joined by link: they keep no list in Keepsake.</p>}
+          <Sheet title={receiver ? `Ask ${receiver.name}` : 'Ask'} open={ask} onClose={() => setAsk(false)}>
+            {receiver && !mine.receiverGuest && <AskForm name={receiver.name} url={`/people/${receiver.id}/questions`} onSent={() => undefined} />}
+          </Sheet>
         </div>
       )}
       {error && <div className="section"><Notice kind="error">{error}</Notice></div>}
@@ -146,6 +152,7 @@ export function DrawSection({ celebration, onChanged }: { celebration: Celebrati
           {d.pairs.map((p, i) => <li key={i} className="row"><span className="row-title">{p.giver?.name ?? 'Someone who left'} → {p.receiver?.name ?? 'someone who left'}</span></li>)}
         </Group>
       )}
+      {manages && !d.over && <DrawGuests celebrationId={celebration.id} />}
       {manages && !d.over && (
         <div className="section button-row">
           {!d.drawn && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(false)}>Draw the names</button>}

@@ -1,12 +1,15 @@
 // A person's page as a giver sees it (spec §4): their sizes and likes (dated), celebration chips, their list; the
 // keeper (the person, a kid's parent) changes it, anyone else suggests. A giver claims and chips in on each wish
-// (gift.tsx); the server sends the gifts to givers only. Ideas and questions come later.
+// (gift.tsx); the server sends the gifts to givers only. Givers also see the person's answers (and ask anonymously)
+// and the ideas others keep for them; the person's keepers see the links that share the list outside the family.
 import { useCallback, useEffect, useId, useState } from 'react';
 import { api, message, type Celebration, type PersonPage, type Profile, type Size, type Wish } from '../api';
 import { since } from '../format';
 import { roleLabel, useHousehold } from '../household';
 import { Chips, Field, Group, Link, Loading, Notice, PageHead, Sheet } from '../ui';
 import { WishForm, WishRow } from '../wish';
+import { AskForm, IdeasGroup, QuestionsGroup } from '../questions';
+import { ShareLinks } from '../links';
 
 export function Person({ id }: { id: string }) {
   const { me } = useHousehold();
@@ -14,7 +17,7 @@ export function Person({ id }: { id: string }) {
   const [page, setPage] = useState<PersonPage | null>(null);
   const [all, setAll] = useState<Celebration[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<{ wish?: Wish; for?: string | null } | 'profile' | null>(null);
+  const [sheet, setSheet] = useState<{ wish?: Wish; for?: string | null } | 'profile' | 'ask' | null>(null);
   const load = useCallback(async () => {
     try {
       setPage(await api<PersonPage>(`/people/${id}${chip === 'all' ? '' : `?for=${encodeURIComponent(chip)}`}`));
@@ -61,6 +64,10 @@ export function Person({ id }: { id: string }) {
         )}
       </Group>
 
+      {page.questions && <QuestionsGroup name={p.name} questions={page.questions} onAsk={page.keeps ? undefined : () => setSheet('ask')} onChanged={load} />}
+      {page.ideas && <IdeasGroup personId={p.id} name={p.name} ideas={page.ideas} onChanged={load} />}
+      {(page.keeps && me.role !== 'kid') || (self && p.role === 'kid') ? <ShareLinks personId={p.id} name={p.name} self={self} kid={p.role === 'kid'} /> : null}
+
       {page.keeps && !self && p.role === 'kid' && p.signsIn && (
         <p className="section">
           <button type="button" className="btn" onClick={() => { if (confirm(`Sign ${p.name} out on every device? Their passkeys stay.`)) api(`/people/${p.id}/sessions/end`, { method: 'POST' }).catch((e) => setError(message(e))); }}>
@@ -69,9 +76,10 @@ export function Person({ id }: { id: string }) {
         </p>
       )}
 
-      <Sheet title={sheet === 'profile' ? 'Sizes and likes' : sheet?.wish ? 'Change the wish' : page.keeps ? 'New wish' : 'Suggest a wish'} open={sheet !== null} onClose={() => setSheet(null)}>
+      <Sheet title={sheet === 'ask' ? `Ask ${p.name}` : sheet === 'profile' ? 'Sizes and likes' : sheet?.wish ? 'Change the wish' : page.keeps ? 'New wish' : 'Suggest a wish'} open={sheet !== null} onClose={() => setSheet(null)}>
+        {sheet === 'ask' && <AskForm name={p.name} url={`/people/${p.id}/questions`} onSent={() => void load()} />}
         {sheet === 'profile' && <ProfileForm personId={p.id} profile={pr} onDone={() => { setSheet(null); void load(); }} />}
-        {sheet && sheet !== 'profile' && <WishForm personId={p.id} wish={sheet.wish} celebrations={all} initialFor={sheet.for} onDone={() => { setSheet(null); void load(); }} />}
+        {sheet && sheet !== 'profile' && sheet !== 'ask' && <WishForm personId={p.id} wish={sheet.wish} celebrations={all} initialFor={sheet.for} onDone={() => { setSheet(null); void load(); }} />}
       </Sheet>
     </>
   );
