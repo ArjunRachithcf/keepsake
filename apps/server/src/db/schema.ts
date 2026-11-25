@@ -364,6 +364,10 @@ export const guestLink = sqliteTable('guest_link', {
   revokedAt: text('revoked_at'),
   openedAt: text('opened_at'),
   openedBy: text('opened_by'),
+  // A new address (review M-b, R-1): when it last got one, how often, and when its earlier address was last used.
+  reissuedAt: text('reissued_at'),
+  reissueCount: integer('reissue_count').notNull().default(0),
+  earlierLastUsedAt: text('earlier_last_used_at'),
 }, (t) => [
   uniqueIndex('guest_link_token').on(t.tokenHash),
   index('guest_link_person').on(t.personId),

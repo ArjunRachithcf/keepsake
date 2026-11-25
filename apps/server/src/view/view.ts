@@ -303,6 +303,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
     id: l.id, kind: l.kind, label: l.label, guestName: l.guestName,
     person: l.personId ? ref(l.personId) : null, celebration: celebrationRef(l.celebrationId),
     lastDay: lastDayOf(db, l), createdAt: l.createdAt, openedAt: l.openedAt, revokedAt: l.revokedAt,
+    reissuedAt: l.reissuedAt, reissueCount: l.reissueCount,
   });
   const mustLink = (id: string) => {
     const l = getLink(db, id);
@@ -543,6 +544,9 @@ export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'se
         wishes: wishes(reach),
         questions: questions(reach),
         lastDay: lastDayOf(db, l),
+        // A link given a new address says so, and when the earlier address was last used (review R-1): a peek by
+        // whoever held it in between shows to the guest.
+        reissued: l.reissuedAt ? { on: dayOfInstant(cfg.timezone, l.reissuedAt), earlierLastUsedOn: l.earlierLastUsedAt ? dayOfInstant(cfg.timezone, l.earlierLastUsedAt) : null } : null,
       });
     },
     /** One wish the guest reaches (404 otherwise). */

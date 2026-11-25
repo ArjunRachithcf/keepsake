@@ -109,3 +109,7 @@ list the whole draw through the app. The host chooses a reveal date or never ("n
   host once, and whoever opens it sees whom the cousin drew. Known and accepted, with the link opening on one device
   only (ADR 0009): if the host opens it, the cousin is told it was opened on another device, and the host is warned
   not to when it is made.
+- **The host can give the cousin's link a new address** (PR #11's fourth review, R-1), and open it: known and accepted,
+  because it shows. Her session ends at once, the new address's page tells her when the earlier one was last used, and
+  the host's list counts the new addresses. Only whoever runs the draw can (its host, an admin only when it has none):
+  an admin in the draw who is not its host cannot, so the pairs stay secret from everyone else in it.

@@ -187,7 +187,10 @@ export function reissueLink(db: Db, me: Person, id: string): { id: string; token
   }
   const token = newToken();
   db.transaction((tx) => {
-    tx.update(t.guestLink).set({ tokenHash: hashToken(token), openedAt: null, openedBy: null }).where(eq(t.guestLink.id, l.id)).run();
+    // When the address that ends was last used (opened, or a page read with it), for the guest's new page to show.
+    const used = [l.openedAt, ...tx.select({ at: t.guestSession.lastSeenAt }).from(t.guestSession).where(eq(t.guestSession.linkId, l.id)).all().map((x) => x.at)]
+      .filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
+    tx.update(t.guestLink).set({ tokenHash: hashToken(token), openedAt: null, openedBy: null, reissuedAt: ts(), reissueCount: l.reissueCount + 1, earlierLastUsedAt: used }).where(eq(t.guestLink.id, l.id)).run();
     tx.delete(t.guestSession).where(eq(t.guestSession.linkId, l.id)).run();
     audit(tx as unknown as Db, me.id, 'link_reissued', l.id);
   });

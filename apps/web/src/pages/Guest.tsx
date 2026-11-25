@@ -84,6 +84,13 @@ export function Guest() {
     <main className="screen" id="main">
       <PageHead title={title} eyebrow={page.name ? `Hello, ${page.name}` : 'By link'}
         sub={page.lastDay ? `This link works until ${day(page.lastDay)}.` : 'Shared with you by link.'} />
+      {page.reissued && (
+        <Notice title={`This link got a new address on ${day(page.reissued.on)}`}>
+          {page.reissued.earlierLastUsedOn
+            ? `The earlier one was last opened on ${day(page.reissued.earlierLastUsedOn)}. If that wasn’t you, tell whoever sent it.`
+            : 'The earlier one was never opened.'}
+        </Notice>
+      )}
       {!page.name && <NameCard onDone={setPage} />}
       {page.kind === 'draw' && <GuestDraw page={page} onChanged={setPage} />}
       {page.person && (

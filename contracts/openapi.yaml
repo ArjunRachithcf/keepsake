@@ -1824,7 +1824,7 @@ components:
     GuestLink:
       type: object
       additionalProperties: false
-      required: [id, kind, label, guestName, person, celebration, lastDay, createdAt, openedAt, revokedAt]
+      required: [id, kind, label, guestName, person, celebration, lastDay, createdAt, openedAt, revokedAt, reissuedAt, reissueCount]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         kind: { enum: [share, draw] }
@@ -1836,6 +1836,8 @@ components:
         createdAt: { $ref: '#/components/schemas/DateTime' }
         openedAt: { description: 'When it was opened, on its one device (null: not yet)', anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
         revokedAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        reissuedAt: { description: 'When it last got a new address (null: never)', anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        reissueCount: { type: integer, minimum: 0, description: 'How many new addresses it got' }
 
     GuestLinks:
       type: object
@@ -1883,7 +1885,7 @@ components:
     GuestPage:
       type: object
       additionalProperties: false
-      required: [link, kind, name, currency, person, profile, celebration, draw, wishes, questions, lastDay]
+      required: [link, kind, name, currency, person, profile, celebration, draw, wishes, questions, lastDay, reissued]
       properties:
         link: { $ref: '#/components/schemas/Id', description: 'The link''s id: the guest page names it in X-Keepsake-Link' }
         kind: { enum: [share, draw] }
@@ -1922,6 +1924,16 @@ components:
         wishes: { type: array, description: 'As a giver sees them, without anyone''s name on a gift (the guest''s own marked mine)', items: { $ref: '#/components/schemas/Wish' } }
         questions: { type: array, items: { $ref: '#/components/schemas/AskedQuestion' } }
         lastDay: { description: 'A draw link: the last day it works', anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+        reissued:
+          description: 'The link got a new address (on, household day) and when its earlier address was last used (null: never opened); null when it never got one'
+          anyOf:
+            - type: object
+              additionalProperties: false
+              required: [on, earlierLastUsedOn]
+              properties:
+                on: { $ref: '#/components/schemas/Day' }
+                earlierLastUsedOn: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+            - { type: 'null' }
 
     ImportInput:
       type: object

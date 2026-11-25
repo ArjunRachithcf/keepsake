@@ -26,6 +26,7 @@ export function LinksList({ title, filter, make, footer }: {
   const run = async (f: () => Promise<unknown>) => { setError(null); try { await f(); await load(); } catch (e) { setError(message(e)); } };
   const what = (l: GuestLink) => [
     l.kind === 'share' ? `${l.person?.name ?? 'Someone'}’s wishes` : `${l.celebration?.name ?? 'A celebration'}’s draw`,
+    l.reissuedAt ? `new address ${day(l.reissuedAt.slice(0, 10))}${l.reissueCount > 1 ? ` (${l.reissueCount} so far)` : ''}` : null,
     l.openedAt ? `opened ${day(l.openedAt.slice(0, 10))}${l.guestName && l.guestName !== l.label ? ` as ${l.guestName}` : ''}` : 'not opened yet',
     l.revokedAt ? `revoked ${day(l.revokedAt.slice(0, 10))}` : l.lastDay ? `until ${day(l.lastDay)}` : `made ${day(l.createdAt.slice(0, 10))}`,
   ].filter(Boolean).join(' · ');

@@ -1397,6 +1397,10 @@ export interface components {
             /** @description When it was opened, on its one device (null: not yet) */
             openedAt: components["schemas"]["DateTime"] | null;
             revokedAt: components["schemas"]["DateTime"] | null;
+            /** @description When it last got a new address (null: never) */
+            reissuedAt: components["schemas"]["DateTime"] | null;
+            /** @description How many new addresses it got */
+            reissueCount: number;
         };
         GuestLinks: {
             links: components["schemas"]["GuestLink"][];
@@ -1457,6 +1461,11 @@ export interface components {
             questions: components["schemas"]["AskedQuestion"][];
             /** @description A draw link: the last day it works */
             lastDay: components["schemas"]["Day"] | null;
+            /** @description The link got a new address (on, household day) and when its earlier address was last used (null: never opened); null when it never got one */
+            reissued: {
+                on: components["schemas"]["Day"];
+                earlierLastUsedOn: components["schemas"]["Day"] | null;
+            } | null;
         };
         ImportInput: {
             /** @description The sheet's "Gift List" tab as CSV: Person, Item, Link, Priority, Status, Bought by, Price, Occasion, Notes (at most 2000 rows) */
