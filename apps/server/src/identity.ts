@@ -52,15 +52,28 @@ export function dropUntrustedIdentity(cfg: Pick<Config, 'mode' | 'trustedProxy'>
   for (const k of Object.keys(headers)) if (k.startsWith('x-homerslab-')) delete headers[k];
 }
 
+/** An IPv6 address's /64 (one household's or one host's network: they come with at least that many addresses). */
+export function prefix64(ip: string): string {
+  const [head = '', tail = ''] = ip.split('::') as [string, string?];
+  const h = head ? head.split(':') : [];
+  const tl = ip.includes('::') ? (tail ? tail.split(':') : []) : [];
+  const groups = ip.includes('::') ? [...h, ...Array<string>(8 - h.length - tl.length).fill('0'), ...tl] : h;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+
+/** An address as a rate-limit key: IPv4 as it is, IPv6 by its /64. */
+const keyOf = (ip: string) => (ip.includes(':') ? prefix64(ip) : ip);
+
 /**
  * The sign-in rate limit's key: the socket's address, or, from the configured proxy, the last address it put in
- * X-Forwarded-For (the client it saw). Used for nothing else.
+ * X-Forwarded-For (the client it saw). IPv6 counts by /64, so one client cannot spread its tries over its own
+ * addresses. Used for nothing else.
  */
 export function clientKey(cfg: Pick<Config, 'rateLimitProxy'>, remoteAddress: string | undefined, headers: Headers): string {
   const socket = remoteAddress ? normaliseIp(remoteAddress) : 'unknown';
-  if (!cfg.rateLimitProxy || socket !== cfg.rateLimitProxy) return socket;
+  if (!cfg.rateLimitProxy || socket !== cfg.rateLimitProxy) return socket === 'unknown' ? socket : keyOf(socket);
   const xff = headers['x-forwarded-for'];
   const last = (typeof xff === 'string' ? xff : '').split(',').map((x) => x.trim()).filter(Boolean).at(-1);
   const ip = last ? canonicalIp(last) : null;
-  return ip ? `via-proxy:${ip}` : socket;
+  return ip ? `via-proxy:${keyOf(ip)}` : socket;
 }

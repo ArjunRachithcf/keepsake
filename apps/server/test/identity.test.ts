@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { REDACTED, buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
-import { dropUntrustedIdentity, fromTrustedProxy, resolveIdentity } from '../src/identity';
+import { clientKey, dropUntrustedIdentity, fromTrustedProxy, prefix64, resolveIdentity } from '../src/identity';
 import { ORIGIN, hl, homerslab, household, sessionCookie, standalone } from './helpers';
 
 const PROXY = '10.89.0.2';
@@ -116,5 +116,16 @@ describe('homerslab mode', () => {
     const app = await buildApp(standalone(), household());
     expect((await app.app.inject({ url: '/api/household', headers: hl('hl-alex', 'Alex', 'admin') })).statusCode).toBe(401);
     await app.app.close();
+  });
+});
+
+describe('the sign-in limit\'s client key', () => {
+  it('IPv4 as it is, IPv6 by its /64, through a configured proxy the last X-Forwarded-For address', () => {
+    expect(clientKey({ rateLimitProxy: null }, '192.0.2.1', {})).toBe('192.0.2.1');
+    expect(clientKey({ rateLimitProxy: null }, '::ffff:192.0.2.1', {})).toBe('192.0.2.1');
+    expect(clientKey({ rateLimitProxy: null }, '2001:db8:1:2:3:4:5:6', {})).toBe('2001:db8:1:2::/64');
+    expect(clientKey({ rateLimitProxy: '10.0.0.2' }, '10.0.0.2', { 'x-forwarded-for': '203.0.113.5, 2001:db8::9' })).toBe('via-proxy:2001:db8:0:0::/64');
+    expect(prefix64('2001:0db8:0000:0042::1')).toBe('2001:db8:0:42::/64');
+    expect(prefix64('::1')).toBe('0:0:0:0::/64');
   });
 });
