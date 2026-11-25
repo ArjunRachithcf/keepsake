@@ -41,11 +41,21 @@ export function checkSubscription(i: SubscriptionInput): SubscriptionInput {
   return { endpoint: u.href, p256dh: i.p256dh, auth: i.auth };
 }
 
-/** Keeps a device's subscription for the caller (moved to them if another person had it on that device). */
-export function subscribe(db: Db, personId: string, sessionId: string | null, i: SubscriptionInput, now = new Date()): void {
+/**
+ * Keeps a device's subscription for the caller. Turning the switch on moves it to them if another person had it on that
+ * device; the app's own re-sending (`sync`, PR #12 second review, N-M2) never does: it only confirms one that is the
+ * caller's, or keeps a new one. Sent again with the same keys, it keeps when it was made and since when it fails.
+ */
+export function subscribe(db: Db, personId: string, sessionId: string | null, i: SubscriptionInput, now = new Date(), o: { sync?: boolean } = {}): void {
   const s = checkSubscription(i);
   const id = subscriptionId(s.endpoint);
   db.transaction((tx) => {
+    const had = tx.select().from(t.pushSubscription).where(eq(t.pushSubscription.id, id)).get();
+    if (had && had.personId !== personId && o.sync) return;
+    if (had && had.personId === personId && had.p256dh === s.p256dh && had.auth === s.auth) {
+      tx.update(t.pushSubscription).set({ sessionId, confirmedAt: now.toISOString() }).where(eq(t.pushSubscription.id, id)).run();
+      return;
+    }
     tx.delete(t.pushSubscription).where(eq(t.pushSubscription.id, id)).run();
     // Every PUT confirms it (the app sends it at every start and whenever it is shown, PR #12 review, M2, N4).
     tx.insert(t.pushSubscription).values({ id, personId, sessionId, endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth, createdAt: now.toISOString(), confirmedAt: now.toISOString() }).run();

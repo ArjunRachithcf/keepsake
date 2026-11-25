@@ -73,7 +73,7 @@ export const MESSAGES = [
   'the file is not a CSV the importer reads', 'the file has more than 2000 rows', 'the file needs the columns Person and Item',
   'map or skip every name in the file first', 'people and occasions: names of up to 200 characters, each to an id or null',
   // notices, push, reminders, thank-yous (M5, ADR 0010)
-  'endpoint: a push service this Keepsake knows', 'keys: the subscription\'s p256dh and auth', 'push is off on this server',
+  'endpoint: a push service this Keepsake knows', 'keys: the subscription\'s p256dh and auth', 'sync: true or false', 'push is off on this server',
   'your own celebrations remind you a week before', 'it is thanked for already',
   // add from a link (M5, ADR 0011): never the page's own words
   'adding from a link is off on this server: type the wish instead',

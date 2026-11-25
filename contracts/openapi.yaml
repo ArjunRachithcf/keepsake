@@ -1850,6 +1850,7 @@ components:
       properties:
         endpoint: { type: string, maxLength: 1000 }
         expirationTime: { anyOf: [{ type: number }, { type: 'null' }] }
+        sync: { type: boolean, description: 'The app sending it again by itself (at a start, when shown): it only confirms a subscription that is the caller''s or new, and never moves one from another person; only the switch (no sync) does' }
         keys:
           type: object
           additionalProperties: false

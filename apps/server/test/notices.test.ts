@@ -183,6 +183,31 @@ describe('a push says nothing', () => {
     expect([count(), calls]).toEqual([before + 1, ['p_quinn']]);
   });
 
+  it('the app\'s own re-sending (sync) never moves a device from one person to another; the switch does (PR #12 second review, N-M2)', async () => {
+    const h = await home(ON);
+    const owner = () => h.db.select().from(t.pushSubscription).all().filter((s) => /\/(shared|mine)$/.test(s.endpoint)).map((s) => s.personId);
+    await ok(as(h, 'quinn').send('PUT', '/api/push/subscription', SUB('shared')));
+    const synced = await as(h, 'robin').send('PUT', '/api/push/subscription', { ...SUB('shared'), sync: true });
+    expect([synced.statusCode, owner()]).toEqual([204, ['p_quinn']]);
+    await ok(as(h, 'robin').send('PUT', '/api/push/subscription', { ...SUB('mine'), sync: true }));
+    expect(owner().sort()).toEqual(['p_quinn', 'p_robin']);
+    await ok(as(h, 'robin').send('PUT', '/api/push/subscription', SUB('shared')));
+    expect(owner()).toEqual(['p_robin', 'p_robin']);
+    expect((await as(h, 'robin').send('PUT', '/api/push/subscription', { ...SUB('x'), sync: 'yes' })).statusCode).toBe(400);
+  });
+
+  it('sent again with the same keys, a subscription keeps since when it fails and when it was made (PR #12 second review)', async () => {
+    const h = await home(ON, { pushTransport: async () => 403 });
+    const robin = () => h.db.select().from(t.pushSubscription).where(eq(t.pushSubscription.endpoint, 'https://fcm.googleapis.com/fcm/send/r')).get()!;
+    await ok(as(h, 'robin').send('PUT', '/api/push/subscription', SUB('r')));
+    h.built.pusher.wake(['p_robin']); await h.built.pusher.idle();
+    const first = robin();
+    expect(first.failingSince).not.toBeNull();
+    setNow(new Date(T0.getTime() + 60_000));
+    await ok(as(h, 'robin').send('PUT', '/api/push/subscription', { ...SUB('r'), sync: true }));
+    expect(robin()).toMatchObject({ failingSince: first.failingSince, createdAt: first.createdAt, confirmedAt: new Date(T0.getTime() + 60_000).toISOString() });
+  });
+
   describe('the queue is durable: a stop or a crash before the tick loses nothing (PR #12 second review, N-M1)', () => {
     const answered = async () => {
       const h = await makeHome(ON);

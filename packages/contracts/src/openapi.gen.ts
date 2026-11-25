@@ -1456,6 +1456,8 @@ export interface components {
         PushSubscriptionInput: {
             endpoint: string;
             expirationTime?: number | null;
+            /** @description The app sending it again by itself (at a start, when shown): it only confirms a subscription that is the caller's or new, and never moves one from another person; only the switch (no sync) does */
+            sync?: boolean;
             keys: {
                 p256dh: string;
                 auth: string;

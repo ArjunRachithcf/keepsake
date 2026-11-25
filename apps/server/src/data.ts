@@ -353,10 +353,10 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     },
     /** This device's Web Push subscription (push/push.ts): the caller's own; a standalone one ends with this session. */
     push: {
-      subscribe: (r: Req, i: SubscriptionInput) => {
+      subscribe: (r: Req, i: SubscriptionInput & { sync?: boolean }) => {
         if (!cfg.egress || !usableVapid(cfg)) throw new Refused(409, 'push is off on this server');
         const c = fastifyRequestOf(r).caller;
-        subscribe(db, me(r).id, c?.session?.id ?? null, i);
+        subscribe(db, me(r).id, c?.session?.id ?? null, i, new Date(), { sync: i.sync });
       },
       unsubscribe: (r: Req, endpoint: string) => unsubscribe(db, me(r).id, endpoint),
     },
