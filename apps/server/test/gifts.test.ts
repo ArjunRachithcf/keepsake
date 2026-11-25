@@ -1,17 +1,24 @@
-// Claims and group gifts (spec §3) and ADR 0003's matrix on the raw response bytes: every reading route × viewer
-// (the person, a kid's parent, another adult, a kid, an admin, the givers) × wish state (claimed, bought, given, a
-// group gift with shares, after the celebration with and without a name). For whoever must not see gifts (the
-// person, and kids), every answer is byte for byte the answer with no gifts at all, until the celebration is over.
+// Claims and group gifts (spec §3) and ADR 0003's matrix on the raw responses (bodies and headers): every reading
+// route × viewer (the person, a kid's parent, another adult, a kid, an admin, the givers) × wish state (claimed, bought,
+// given, partly given, a group gift, after the occasion with and without a name, a celebration postponed or removed
+// after the gift, the wish moved after it, the giver removed, a late gift). For whoever must not see gifts (the person,
+// and kids), every answer is byte for byte the answer in a twin household with the same changes but no gifts at all,
+// until the gift reaches its person (the day after the later of its occasion and the day it was given).
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
+import { today } from '../src/celebrations/dates';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
+import { refreshRevealed } from '../src/gifts/gifts';
 import { ORIGIN, household, sessionCookie, standalone } from './helpers';
 
 const PEOPLE = ['alex', 'sam', 'robin', 'mia', 'leo', 'quinn', 'uma'] as const;
 type Who = (typeof PEOPLE)[number];
 const NOW = '2026-11-01T10:00:00.000Z';
+const TODAY = () => today(standalone().timezone);
+/** The household's day `n` days from today. */
+const D = (n: number) => new Date(Date.parse(`${TODAY()}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
 let built: BuiltApp | undefined;
 let db: Db;
@@ -30,6 +37,8 @@ async function fresh() {
   built = await buildApp(standalone(), db);
 }
 afterAll(() => built?.app.close());
+/** A change made straight in the database (a test's time travel): what is received is rebuilt as after any change. */
+const direct = (f: () => void) => { f(); refreshRevealed(db, TODAY()); };
 
 const as = (who: Who) => ({
   get: (url: string) => built!.app.inject({ url, headers: { cookie: cookies[who]! } }),
@@ -42,16 +51,23 @@ const ok = async (p: Promise<{ statusCode: number; body: string }>) => {
   return r;
 };
 
-// Every reading route but the household's own list of people (which names Quinn and Uma by design).
+// Every reading route. /household names Quinn and Uma by design, and /auth/session names the caller: the "never
+// anywhere" checks leave those two out, the byte-for-byte comparison does not.
 const READS = ['/api/home', '/api/home?for=c_xmas', '/api/home?for=c_mia', '/api/home?for=any', '/api/celebrations',
-  '/api/celebrations/c_xmas', '/api/celebrations/c_mia', '/api/auth/session',
+  '/api/celebrations/c_xmas', '/api/celebrations/c_mia', '/api/auth/session', '/api/household', '/api/me/passkeys',
   ...['alex', 'sam', 'robin', 'mia', 'leo'].flatMap((p) => [`/api/people/p_${p}`, `/api/people/p_${p}?for=c_xmas`, `/api/people/p_${p}?for=any`])];
-async function reads(who: Who): Promise<Record<string, string>> {
-  return Object.fromEntries(await Promise.all(READS.map(async (u) => {
+type Snap = { body: Record<string, string>; head: Record<string, string> };
+/** Every reading answer, its headers without the one that changes by the second (`date`). */
+async function reads(who: Who): Promise<Snap> {
+  const out: Snap = { body: {}, head: {} };
+  for (const u of READS) {
     const r = await as(who).get(u);
-    expect(r.statusCode, `${who} ${u}: ${r.body}`).toBe(200);
-    return [u, r.body] as const;
-  })));
+    // A celebration removed in this state answers 404 for its page and 400 as a `for`, the same in both households.
+    if (r.statusCode !== 404 && r.statusCode !== 400) expect(r.statusCode, `${who} ${u}: ${r.body}`).toBe(200);
+    out.body[u] = r.body;
+    out.head[u] = JSON.stringify(Object.entries(r.headers).filter(([k]) => k !== 'date').sort());
+  }
+  return out;
 }
 
 // What only givers may learn: the givers' ids and names, each share, the total and the target.
@@ -60,44 +76,94 @@ const AMOUNTS = { quinn: '4321', uma: '1357', total: '5678', target: '9753' };
 
 // Two wishes: an adult's (Sam's cookbook, for Christmas) and a kid's (Mia's bike, for her birthday).
 const TARGETS = {
-  w_sam_book: { person: 'sam' as Who, past: '2025-12-24', shouldNot: ['sam', 'mia', 'leo'] as Who[], givers: ['alex', 'robin', 'quinn', 'uma'] as Who[] },
-  w_mia_bike: { person: 'mia' as Who, past: '2026-03-14', shouldNot: ['mia', 'leo'] as Who[], givers: ['alex', 'sam', 'robin', 'quinn', 'uma'] as Who[] },
+  w_sam_book: { person: 'sam' as Who, cel: 'c_xmas', givers: ['alex', 'robin', 'quinn', 'uma'] as Who[], shouldNot: ['sam', 'mia', 'leo'] as Who[] },
+  w_mia_bike: { person: 'mia' as Who, cel: 'c_mia', givers: ['alex', 'sam', 'robin', 'quinn', 'uma'] as Who[], shouldNot: ['mia', 'leo'] as Who[] },
 };
 type Target = keyof typeof TARGETS;
 
-const over = (wishId: string, past: string) => {
-  db.update(t.claim).set({ forDate: past, givenOn: past }).where(eq(t.claim.wishId, wishId)).run();
-  db.update(t.groupGift).set({ forDate: past, givenOn: past }).where(eq(t.groupGift.wishId, wishId)).run();
-};
 const group = async (w: string) => {
   await ok(as('quinn').send('POST', `/api/wishes/${w}/group`, { targetMinor: Number(AMOUNTS.target) }));
   await ok(as('quinn').send('PUT', `/api/wishes/${w}/group/share`, { amountMinor: Number(AMOUNTS.quinn) }));
   await ok(as('uma').send('PUT', `/api/wishes/${w}/group/share`, { amountMinor: Number(AMOUNTS.uma) }));
 };
-const claim = (w: string, state?: 'bought' | 'given') => async () => {
-  await ok(as('quinn').send('PUT', `/api/wishes/${w}/claim`, { quantity: 1 }));
-  if (state) await ok(as('quinn').send('PATCH', `/api/wishes/${w}/claim`, { state }));
+const claim = async (w: string, state?: 'bought' | 'given', who: Who = 'quinn') => {
+  await ok(as(who).send('PUT', `/api/wishes/${w}/claim`, { quantity: 1 }));
+  if (state) await ok(as(who).send('PATCH', `/api/wishes/${w}/claim`, { state }));
+};
+const groupGiven = async (w: string) => { await group(w); await ok(as('quinn').send('PATCH', `/api/wishes/${w}/group`, { state: 'given' })); };
+/** Given `n` days ago (the database's given_on: time travel). */
+const givenAgo = (w: string, n: number) => direct(() => {
+  db.update(t.claim).set({ givenOn: D(-n) }).where(eq(t.claim.wishId, w)).run();
+  db.update(t.groupGift).set({ givenOn: D(-n) }).where(eq(t.groupGift.wishId, w)).run();
+});
+const dateOf = (cel: string, day: string) => ok(as('alex').send('PATCH', `/api/celebrations/${cel}`, { date: day }));
+const moveTo = (w: string, cel: string | null) => ok(as('sam').send('PATCH', `/api/wishes/${w}`, { celebrationId: cel }));
+const named = (w: string) => ok(as('quinn').send('PUT', `/api/wishes/${w}/named`, { named: true }));
+
+interface State {
+  /** Changes that are not gifts, made before the gifts, in both households. */
+  pre?: (w: Target) => Promise<void>;
+  /** The gifts (and their time travel), only in the household with gifts. */
+  gifts: (w: Target) => Promise<void>;
+  /** Changes that are not gifts, made after the gifts, in both households. */
+  post?: (w: Target) => Promise<void>;
+  /** Its person has it by today. */
+  over: (w: Target) => boolean;
+  named?: boolean; given?: boolean; group?: boolean; uma?: boolean; quinnGone?: boolean;
+  /** Only gifts change (the write-route comparison runs on these). */
+  pure?: boolean;
+}
+const yes = () => true, no = () => false;
+const STATES: Record<string, State> = {
+  claimed: { gifts: (w) => claim(w), over: no, pure: true },
+  bought: { gifts: (w) => claim(w, 'bought'), over: no, pure: true },
+  given: { gifts: (w) => claim(w, 'given'), over: no, given: true, pure: true },
+  'partly given (2 wanted, 1 given, 1 claimed)': {
+    pre: async (w) => { await ok(as('sam').send('PATCH', `/api/wishes/${w}`, { quantity: 2 })); },
+    gifts: async (w) => { await claim(w, 'given'); await claim(w, undefined, 'uma'); }, over: no, uma: true,
+  },
+  'group gift with shares': { gifts: group, over: no, group: true, uma: true, pure: true },
+  'group gift given': { gifts: groupGiven, over: no, given: true, group: true, uma: true, pure: true },
+  'a late gift (given today, 5 days after the day)': { pre: (w) => dateOf(TARGETS[w].cel, D(-5)).then(), gifts: (w) => claim(w, 'given'), over: no, given: true },
+  'after the occasion, no name': {
+    pre: (w) => dateOf(TARGETS[w].cel, D(-8)).then(), gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 10); }, over: yes, given: true,
+  },
+  'after the occasion, named': {
+    pre: (w) => dateOf(TARGETS[w].cel, D(-8)).then(), gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 10); await named(w); }, over: yes, named: true, given: true,
+  },
+  'group gift after the occasion, Quinn named': {
+    pre: (w) => dateOf(TARGETS[w].cel, D(-8)).then(), gifts: async (w) => { await groupGiven(w); givenAgo(w, 10); await named(w); }, over: yes, named: true, given: true, group: true, uma: true,
+  },
+  'the celebration postponed after the gift': {
+    pre: (w) => dateOf(TARGETS[w].cel, D(-3)).then(), gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5); },
+    post: (w) => dateOf(TARGETS[w].cel, D(10)).then(), over: no, given: true,
+  },
+  'the wish moved to a later celebration after the gift': {
+    pre: async (w) => {
+      direct(() => {
+        db.insert(t.celebration).values({ id: 'c_soon', name: 'Garden day', date: D(-3), poster: 'gold', recurrence: 'yearly', hostId: 'p_alex', createdAt: NOW }).run();
+        db.insert(t.celebrationPerson).values({ celebrationId: 'c_soon', personId: `p_${TARGETS[w].person}` }).run();
+      });
+      await moveTo(w, 'c_soon');
+    },
+    gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5); },
+    post: (w) => moveTo(w, TARGETS[w].cel).then(), over: no, given: true,
+  },
+  'the celebration removed after the gift': {
+    gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5); },
+    post: (w) => ok(as('alex').send('DELETE', `/api/celebrations/${TARGETS[w].cel}`)).then(),
+    // Sam is in no other celebration: the day after it was given. Mia has Christmas still to come.
+    over: (w) => w === 'w_sam_book', given: true,
+  },
+  'the giver removed (claimed)': {
+    gifts: (w) => claim(w), post: () => ok(as('alex').send('DELETE', '/api/people/p_quinn')).then(), over: no, quinnGone: true,
+  },
+  'the giver removed after the occasion': {
+    pre: (w) => dateOf(TARGETS[w].cel, D(-8)).then(), gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 10); },
+    post: () => ok(as('alex').send('DELETE', '/api/people/p_quinn')).then(), over: yes, given: true, quinnGone: true,
+  },
 };
 
-/** Each state: how to get there, whether the celebration is over, whether Quinn's name is on it. */
-const STATES: Record<string, { setup: (w: Target) => Promise<void>; isOver: boolean; named: boolean; given: boolean; group: boolean }> = {
-  claimed: { setup: (w) => claim(w)(), isOver: false, named: false, given: false, group: false },
-  bought: { setup: (w) => claim(w, 'bought')(), isOver: false, named: false, given: false, group: false },
-  given: { setup: (w) => claim(w, 'given')(), isOver: false, named: false, given: true, group: false },
-  'group gift with shares': { setup: group, isOver: false, named: false, given: false, group: true },
-  'group gift given': { setup: async (w) => { await group(w); await ok(as('quinn').send('PATCH', `/api/wishes/${w}/group`, { state: 'given' })); }, isOver: false, named: false, given: true, group: true },
-  'after the celebration, no name': { setup: async (w) => { await claim(w, 'given')(); over(w, TARGETS[w].past); }, isOver: true, named: false, given: true, group: false },
-  'after the celebration, named': {
-    setup: async (w) => { await claim(w, 'given')(); over(w, TARGETS[w].past); await ok(as('quinn').send('PUT', `/api/wishes/${w}/named`, { named: true })); },
-    isOver: true, named: true, given: true, group: false,
-  },
-  'group gift after the celebration, Quinn named': {
-    setup: async (w) => { await group(w); await ok(as('quinn').send('PATCH', `/api/wishes/${w}/group`, { state: 'given' })); over(w, TARGETS[w].past); await ok(as('quinn').send('PUT', `/api/wishes/${w}/named`, { named: true })); },
-    isOver: true, named: true, given: true, group: true,
-  },
-};
-
-const ALL = (b: Record<string, string>) => Object.values(b).join('\n');
 /** Every answer but those of these routes (a route and its `?for=` forms). */
 const without = (b: Record<string, string>, ...urls: string[]) => Object.entries(b).filter(([u]) => !urls.includes(u.split('?')[0]!)).map(([, v]) => v).join('\n');
 /** Every object with this id in an answer. */
@@ -111,66 +177,86 @@ const withId = (body: string, id: string): Record<string, unknown>[] => {
   return out;
 };
 
+/** The two runs made their changes at different moments: the wishes' change times are set alike in both. */
+const sameTimes = () => direct(() => db.update(t.wish).set({ updatedAt: NOW }).run());
+/** The twin household: the same changes, no gifts. */
+async function twin(target: Target, S: State) {
+  await fresh();
+  await S.pre?.(target);
+  await S.post?.(target);
+  sameTimes();
+}
+async function withGifts(target: Target, S: State) {
+  await fresh();
+  await S.pre?.(target);
+  await S.gifts(target);
+  await S.post?.(target);
+  sameTimes();
+}
+
 describe.each(Object.keys(TARGETS) as Target[])('the surprise for %s (raw responses)', (target) => {
   const T = TARGETS[target];
-  const baseline: Partial<Record<Who, Record<string, string>>> = {};
-  beforeEach(fresh);
 
-  it('the baseline: no gifts', async () => {
-    for (const who of PEOPLE) baseline[who] = await reads(who);
-    // (Quinn and Uma's own session names them, of course.)
-    for (const who of PEOPLE) for (const g of [...GIVERS, ...Object.values(AMOUNTS)]) expect(without(baseline[who]!, '/api/auth/session').includes(g), `${who}: ${g}`).toBe(false);
+  it("with no gifts, nobody's answers name a giver or an amount", async () => {
+    await fresh();
+    for (const who of PEOPLE) {
+      const b = (await reads(who)).body;
+      for (const g of [...GIVERS, ...Object.values(AMOUNTS)]) expect(without(b, '/api/auth/session', '/api/household').includes(g), `${who}: ${g}`).toBe(false);
+    }
   });
 
   describe.each(Object.keys(STATES))('%s', (state) => {
     const S = STATES[state]!;
     it.each(PEOPLE)('as %s', async (who) => {
-      await S.setup(target);
-      const body = await reads(who);
-      const all = ALL(body);
+      if (S.quinnGone && who === 'quinn') return;
       const giver = T.givers.includes(who);
+      const isOver = S.over(target);
+      const twinSnap = !giver && !isOver ? (await twin(target, S), await reads(who)) : null;
+      await withGifts(target, S);
+      const snap = await reads(who);
+      const body = snap.body;
+      const all = without(body, '/api/household', '/api/auth/session');
       if (!giver) {
-        // The person and kids: before the celebration is over, exactly what they got with no gifts at all.
-        if (!S.isOver) expect(body).toEqual(baseline[who]);
+        // The person and kids: until the gift reaches its person, exactly the twin's answers, headers included.
+        if (twinSnap) expect(snap).toEqual(twinSnap);
         else {
-          const home = JSON.parse(body['/api/home']!) as { thanks: { wish: { id: string }; from: { name: string }[] }[] };
+          const home = JSON.parse(body['/api/home']!) as { wishes: { id: string }[]; thanks: { wish: { id: string }; from: { name: string }[] }[] };
           // Received: gone from every list, the person's own included…
           expect(without(body, '/api/home').includes(target), `${who} still sees ${target}`).toBe(false);
-          expect(JSON.parse(body['/api/home']!).wishes.map((w: { id: string }) => w.id)).not.toContain(target);
-          // …and their thank-you names only who chose it; a kid who is not the person gets no thank-you for it.
+          expect(home.wishes.map((w) => w.id)).not.toContain(target);
+          // …and the thank-you (the kid's goes to the kid; Mia is no parent) names only who chose it.
           const thanks = home.thanks.filter((x) => x.wish.id === target);
           expect(thanks.length, `${who}'s thanks`).toBe(who === T.person ? 1 : 0);
           if (who === T.person) expect(thanks[0]!.from.map((p) => p.name)).toEqual(S.named ? ['Quinn'] : []);
         }
         // Never a share, a total, a target, Uma (never named), nor Quinn outside a thank-you she chose.
         for (const x of [...Object.values(AMOUNTS), 'p_uma', 'Uma']) expect(all.includes(x), `${who} sees ${x}`).toBe(false);
-        const named = who === T.person && S.named;
-        expect(without(body, '/api/home').includes('Quinn'), `${who} sees Quinn`).toBe(false);
-        expect(body['/api/home']!.includes('Quinn'), `${who}'s home names Quinn`).toBe(named);
+        expect(without(body, '/api/home', '/api/household', '/api/auth/session').includes('Quinn'), `${who} sees Quinn`).toBe(false);
+        expect(body['/api/home']!.includes('Quinn'), `${who}'s home names Quinn`).toBe(who === T.person && Boolean(S.named) && !S.quinnGone);
         for (const b of Object.values(body)) for (const w of withId(b, target)) expect(w, `${who} gets ${target}'s gifts`).not.toHaveProperty('gift');
         return;
       }
       // Givers: until it is all given, they see it with its gifts; given, it is gone from their lists.
-      const listed = without(body, '/api/home', '/api/auth/session').includes(target);
+      const listed = without(body, '/api/home', '/api/auth/session', '/api/household').includes(target);
       expect(listed, `${who} lists ${target}`).toBe(!S.given);
       if (!S.given) {
-        expect(all.includes('Quinn'), `${who} sees Quinn`).toBe(true);
+        expect(all.includes('Quinn'), `${who} sees Quinn`).toBe(!S.quinnGone);
+        expect(all.includes('Uma'), `${who} sees Uma`).toBe(Boolean(S.uma));
         if (S.group) {
           expect(all.includes(AMOUNTS.total) && all.includes(AMOUNTS.target), `${who} sees the total and target`).toBe(true);
-          expect(all.includes('Uma')).toBe(true);
           // Others' shares are names, not amounts: each giver sees their own only.
           expect(all.includes(AMOUNTS.quinn), `${who} sees Quinn's share`).toBe(who === 'quinn');
           expect(all.includes(AMOUNTS.uma), `${who} sees Uma's share`).toBe(who === 'uma');
         }
       }
-      if (S.isOver && (who === 'quinn' || (S.group && who === 'uma'))) {
+      if (isOver && (who === 'quinn' || (S.group && who === 'uma'))) {
         const gave = JSON.parse(body['/api/home']!).gave as { wish: { id: string }; named: boolean }[];
-        expect(gave.find((g) => g.wish.id === target)).toMatchObject({ named: who === 'quinn' && S.named });
+        expect(gave.find((g) => g.wish.id === target)).toMatchObject({ named: who === 'quinn' && Boolean(S.named) });
       }
     });
   });
 
-  it('the person\'s and a kid\'s answer to every gift route is the same whatever the gifts are', async () => {
+  it('the person\'s and a kid\'s answers to the gift routes and to their own changes are the same whatever the gifts are', async () => {
     const tries = [
       ['PUT', `/api/wishes/${target}/claim`, { quantity: 1 }], ['PATCH', `/api/wishes/${target}/claim`, { state: 'bought' }],
       ['DELETE', `/api/wishes/${target}/claim`], ['PUT', `/api/wishes/${target}/named`, { named: true }],
@@ -178,27 +264,31 @@ describe.each(Object.keys(TARGETS) as Target[])('the surprise for %s (raw respon
       ['DELETE', `/api/wishes/${target}/group`], ['PUT', `/api/wishes/${target}/group/share`, { amountMinor: 100 }],
       ['DELETE', `/api/wishes/${target}/group/share`],
     ] as const;
+    // New ids and the time of a change differ between runs; nothing else may.
+    const norm = (r: { statusCode: number; body: string; headers: Record<string, unknown> }) => `${r.statusCode} ${JSON.stringify(Object.entries(r.headers).filter(([k]) => k !== 'date' && k !== 'content-length').sort())} ${
+      r.body.replace(/"[0-9A-HJKMNP-TV-Z]{26}"/g, '"<id>"').replace(/"\d{4}-\d\d-\d\dT[^"]+"/g, '"<time>"')}`;
     const answers = async () => {
       const out: string[] = [];
       for (const who of T.shouldNot) {
         for (const [m, u, b] of tries) {
-          // On a fresh copy each time, so one try cannot change the next.
           const r = await as(who).send(m, u, b);
-          out.push(`${who} ${m} ${u} ${r.statusCode} ${r.body}`);
+          out.push(`${who} ${m} ${u} ${norm(r)}`);
           expect(r.statusCode, `${who} ${m} ${u}`).toBe(403);
         }
       }
-      // Changing the wish (its keeper): the same answer, but for the time it was changed.
-      const r = await as(T.person).send('PATCH', `/api/wishes/${target}`, { note: 'Blue, please' });
-      out.push(r.body.replace(/"updatedAt":"[^"]+"/, ''));
+      // The person changes the wish, adds one; an adult person hosts a celebration; a kid says yes to a suggestion.
+      out.push(norm(await as(T.person).send('PATCH', `/api/wishes/${target}`, { note: 'Blue, please' })));
+      out.push(norm(await as(T.person).send('POST', '/api/wishes', { personId: `p_${T.person}`, name: 'A torch', celebrationId: null })));
+      if (T.person === 'sam') out.push(norm(await as('sam').send('POST', '/api/celebrations', { name: 'Picnic', date: '2027-06-01', poster: 'gold', recurrence: 'none', people: ['p_sam'] })));
+      else out.push(norm(await as('mia').send('POST', '/api/wishes/w_sug_for_mia/approve')));
       return out;
     };
     await fresh();
     const none = await answers();
-    for (const state of Object.keys(STATES)) {
-      if (STATES[state]!.isOver) continue;
+    for (const [state, S] of Object.entries(STATES)) {
+      if (!S.pure) continue;
       await fresh();
-      await STATES[state]!.setup(target);
+      await S.gifts(target);
       expect(await answers(), state).toEqual(none);
     }
   });
@@ -211,6 +301,10 @@ describe('claims', () => {
   it('I\'ll get this, bought, given, and back; others see who', async () => {
     const r = await as('quinn').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 });
     expect(r.json().gift).toMatchObject({ claimed: 1, left: 0, given: false, claims: [{ giver: { name: 'Quinn' }, state: 'claimed', mine: true }], mine: { state: 'claimed', over: false, celebrationId: 'c_xmas', forDate: '2026-12-24' } });
+    // The occasion is the wish's, read now: moved, the claim follows.
+    await moveTo('w_sam_book', null);
+    expect((await as('quinn').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 })).json().gift.mine).toMatchObject({ celebrationId: 'c_xmas', forDate: '2026-12-24' });
+    await moveTo('w_sam_book', 'c_xmas');
     expect(await gift('robin', 'w_sam_book')).toMatchObject({ claims: [{ giver: { name: 'Quinn' }, mine: false }], mine: null });
     expect((await as('robin').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 })).statusCode).toBe(409);
     expect((await as('quinn').send('PATCH', '/api/wishes/w_sam_book/claim', { state: 'bought' })).json().gift.claims[0].state).toBe('bought');
@@ -259,25 +353,59 @@ describe('claims', () => {
     expect(db.select().from(t.claim).where(eq(t.claim.wishId, 'w_sam_book')).all()).toEqual([]);
   });
 
-  it('moving a wish keeps its claims (ADR 0007); a claim left over from long ago counts for the next celebration', async () => {
-    await ok(as('quinn').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 }));
-    await ok(as('sam').send('PATCH', '/api/wishes/w_sam_book', { celebrationId: null }));
-    expect((await as('quinn').get('/api/people/p_sam')).json().wishes.find((w: { id: string }) => w.id === 'w_sam_book').gift.claims).toHaveLength(1);
-    db.update(t.claim).set({ forDate: '2024-12-24' }).where(eq(t.claim.wishId, 'w_sam_book')).run();
-    const g = (await as('quinn').send('PATCH', '/api/wishes/w_sam_book/claim', { state: 'given' })).json().gift;
-    expect(g.mine).toMatchObject({ forDate: '2026-12-24', over: false });
-    // …so Sam still sees it, as he did.
+  it('moving a wish keeps its claims (ADR 0007), and the reveal follows the wish', async () => {
+    await claim('w_sam_book', 'given');
+    givenAgo('w_sam_book', 5);
+    await dateOf('c_xmas', D(-3));
+    expect((await as('sam').get('/api/home')).json().thanks.map((x: { wish: { id: string } }) => x.wish.id)).toEqual(['w_sam_book']);
+    // Back on the list for Sam once its occasion is later again: moved to a celebration still to come…
+    direct(() => {
+      db.insert(t.celebration).values({ id: 'c_soon', name: 'Sam turns 40', date: D(20), poster: 'gold', recurrence: 'none', hostId: 'p_alex', createdAt: NOW }).run();
+      db.insert(t.celebrationPerson).values({ celebrationId: 'c_soon', personId: 'p_sam' }).run();
+    });
+    await moveTo('w_sam_book', 'c_soon');
+    expect((await as('quinn').get('/api/people/p_sam')).json().wishes.map((w: { id: string }) => w.id)).not.toContain('w_sam_book');
+    expect((await as('sam').get('/api/home')).json().wishes.map((w: { id: string }) => w.id)).toContain('w_sam_book');
+    expect((await as('sam').get('/api/home')).json().thanks).toEqual([]);
+    // …and the giver cannot put a name on it before that.
+    expect((await as('quinn').send('PUT', '/api/wishes/w_sam_book/named', { named: true })).statusCode).toBe(409);
+  });
+
+  it('a late gift: its person learns it the next day, not the same day', async () => {
+    await dateOf('c_xmas', D(-12));
+    await claim('w_sam_book', 'given');
+    expect((await as('sam').get('/api/home')).json().wishes.map((w: { id: string }) => w.id)).toContain('w_sam_book');
+    expect((await as('quinn').send('PUT', '/api/wishes/w_sam_book/named', { named: true })).statusCode).toBe(409);
+    givenAgo('w_sam_book', 1); // the next day
+    expect((await as('sam').get('/api/home')).json().thanks.map((x: { wish: { id: string } }) => x.wish.id)).toEqual(['w_sam_book']);
+    expect((await as('quinn').get('/api/home')).json().gave[0]).toMatchObject({ wish: { id: 'w_sam_book', gift: { mine: { celebrationId: 'c_xmas', forDate: D(-12), over: true } } } });
+    // Over: it stays given.
+    expect((await as('quinn').send('PATCH', '/api/wishes/w_sam_book/claim', { state: 'claimed' })).statusCode).toBe(409);
+  });
+
+  it('a gift more than a month after a yearly day counts for the next one; an early one for the day ahead', async () => {
+    await dateOf('c_xmas', D(-40));
+    await claim('w_sam_book', 'given');
+    const mine = (await as('quinn').send('PUT', '/api/wishes/w_sam_book/named', { named: true }));
+    expect(mine.statusCode).toBe(409);
     expect((await as('sam').get('/api/home')).json().wishes.map((w: { id: string }) => w.id)).toContain('w_sam_book');
   });
 
-  it('given a little late: the person learns it the next day', async () => {
-    await ok(as('quinn').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 }));
-    const yesterday = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
-    db.update(t.claim).set({ forDate: yesterday }).where(eq(t.claim.wishId, 'w_sam_book')).run();
-    expect((await as('quinn').send('PATCH', '/api/wishes/w_sam_book/claim', { state: 'given' })).json().gift.mine).toMatchObject({ forDate: yesterday, over: true });
-    expect((await as('sam').get('/api/home')).json().thanks.map((x: { wish: { id: string } }) => x.wish.id)).toEqual(['w_sam_book']);
-    // Over: it stays given.
-    expect((await as('quinn').send('PATCH', '/api/wishes/w_sam_book/claim', { state: 'claimed' })).statusCode).toBe(409);
+  it('a removed giver\'s gifts stay, without a name: the wish does not come back, the thank-you does not go', async () => {
+    await claim('w_mia_bike'); // a claim, not given
+    await dateOf('c_xmas', D(-8));
+    await claim('w_sam_book', 'given');
+    givenAgo('w_sam_book', 10);
+    await named('w_sam_book');
+    expect((await as('sam').get('/api/home')).json().thanks).toMatchObject([{ wish: { id: 'w_sam_book' }, from: [{ name: 'Quinn' }] }]);
+    expect((await as('alex').send('DELETE', '/api/people/p_quinn')).statusCode).toBe(204);
+    expect(db.select().from(t.claim).all().filter((c) => c.wishId !== 'w_robin_scarf')).toMatchObject([{ giverId: null, named: 0 }, { giverId: null, named: 0 }]);
+    const sam = (await as('sam').get('/api/home')).json();
+    expect(sam.wishes.map((w: { id: string }) => w.id)).not.toContain('w_sam_book');
+    expect(sam.thanks).toMatchObject([{ wish: { id: 'w_sam_book' }, from: [] }]);
+    // The bike is still claimed, by nobody named: nobody else buys it twice.
+    expect((await as('robin').get('/api/people/p_mia')).json().wishes.find((w: { id: string }) => w.id === 'w_mia_bike').gift)
+      .toMatchObject({ claimed: 1, left: 0, claims: [{ giver: null, mine: false }] });
   });
 });
 
@@ -304,10 +432,11 @@ describe('the name on a gift, after the celebration', () => {
 describe('thank-yous for a kid\'s gifts', () => {
   beforeEach(fresh);
   it('go to the kid and the kid\'s parents, only after the occasion; nobody else', async () => {
-    await claim('w_mia_bike', 'given')();
+    await dateOf('c_mia', D(-8));
+    await claim('w_mia_bike', 'given');
     const thanks = async (who: Who) => (await as(who).get('/api/home')).json().thanks.map((x: { wish: { id: string } }) => x.wish.id);
     for (const who of ['mia', 'sam'] as const) expect(await thanks(who), `${who} before`).toEqual([]);
-    over('w_mia_bike', '2026-03-14');
+    givenAgo('w_mia_bike', 10);
     await ok(as('quinn').send('PUT', '/api/wishes/w_mia_bike/named', { named: true }));
     expect(await thanks('mia')).toEqual(['w_mia_bike']);
     const sam = (await as('sam').get('/api/home')).json().thanks;
@@ -331,6 +460,9 @@ describe('group gifts', () => {
     expect(JSON.stringify(g)).not.toContain('2000');
     expect((await as('robin').send('PATCH', url, { state: 'bought' })).statusCode).toBe(403);
     expect((await as('quinn').send('DELETE', url)).statusCode).toBe(409); // others chipped in
+    // All together up to the target: a share past it is refused, and so is a target below what is in.
+    expect((await as('alex').send('PUT', `${url}/share`, { amountMinor: 2501 })).statusCode).toBe(409);
+    expect((await as('quinn').send('PATCH', url, { targetMinor: 3499 })).statusCode).toBe(409);
     expect((await as('quinn').send('PATCH', url, { targetMinor: 4000 })).json().gift.group.targetMinor).toBe(4000);
     await ok(as('quinn').send('PATCH', url, { state: 'bought' }));
     expect((await as('robin').send('DELETE', `${url}/share`)).statusCode).toBe(409);

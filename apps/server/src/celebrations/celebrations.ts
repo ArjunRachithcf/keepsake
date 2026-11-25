@@ -109,7 +109,8 @@ export function removeCelebration(db: Db, me: Person, id: string): void {
  * for is the gift's own (claim.celebration_id), and a wish that is gone is gone whatever it is for, so nothing about a
  * wish's row tells its person whether it was given (ADR 0003). Yearly ones roll on to their next date and keep theirs. `today` is the household's day.
  */
-export function settlePastCelebrations(db: Db, today: string): void {
+/** Whether any wish moved. */
+export function settlePastCelebrations(db: Db, today: string): boolean {
   const past = db.select({ id: t.celebration.id }).from(t.celebration).where(and(eq(t.celebration.recurrence, 'none'), lt(t.celebration.date, today))).all().map((c) => c.id);
-  if (past.length) db.update(t.wish).set({ celebrationId: null }).where(inArray(t.wish.celebrationId, past)).run();
+  return past.length > 0 && db.update(t.wish).set({ celebrationId: null }).where(inArray(t.wish.celebrationId, past)).run().changes > 0;
 }

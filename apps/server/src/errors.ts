@@ -36,7 +36,8 @@ export const MESSAGES = [
   'only for a gift you gave, once its celebration is over', 'it is a group gift already',
   'whoever started the group gift changes it', 'it is bought: the target stays',
   'others have chipped in: they take their share back first', 'it is bought: shares stay as they are',
-  'you have not chipped in', 'targetMinor or state: one of them',
+  'you have not chipped in', 'targetMinor or state: one of them', 'that would go over the target',
+  'the target cannot go below what is chipped in',
 ] as const;
 export type Message = (typeof MESSAGES)[number];
 

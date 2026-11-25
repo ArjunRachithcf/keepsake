@@ -515,7 +515,7 @@ export interface paths {
         delete: operations["endGroupGift"];
         options?: never;
         head?: never;
-        /** The target (while open) or the state, by whoever started it */
+        /** The target (while open, never below what is chipped in) or the state, by whoever started it */
         patch: operations["editGroupGift"];
         trace?: never;
     };
@@ -529,7 +529,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Chips in, or changes your share, while the group gift is open */
+        /** Chips in, or changes your share, while the group gift is open (all shares together at most the target) */
         put: operations["chipIn"];
         post?: never;
         /** Takes your share back while the group gift is open */
@@ -778,7 +778,9 @@ export interface components {
             named: boolean;
             /** @description Given, and its celebration is over: you may put your name on it */
             over: boolean;
+            /** @description The occasion it counts for, as the wish is now (computed when read) */
             celebrationId: components["schemas"]["Id"] | null;
+            /** @description That occasion's day; its person learns of a given gift the day after the later of this and the day it was given */
             forDate: components["schemas"]["Day"] | null;
         };
         CelebrationRef: {

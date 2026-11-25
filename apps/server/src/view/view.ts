@@ -20,8 +20,8 @@ import { canChange, allCelebrations, mustGetCelebration, peopleByCelebration, ty
 import { daysBetween, nextDate, today } from '../celebrations/dates';
 import { currency, hasPasskey, household, keeps, managersOf, mustGetPerson, type Person } from '../household/people';
 import { getProfile, type ProfileRow } from '../household/profile';
-import { NO_GIFTS, fullyGiven, gaveBy, giftsOf, isOver, managesGroup, receivedIds, seesGifts, thanksFor, type Gifts } from '../gifts/gifts';
-import { allWaiting, canApprove, canEdit, canSee, seeWish, wishesAddedBy, wishesOf, type Wish } from '../wishes/wishes';
+import { NO_GIFTS, calendarOf, fullyGiven, gaveBy, giftsOf, isOver, managesGroup, occasionOf, revealed, seesGifts, thanksFor, type Gifts } from '../gifts/gifts';
+import { allWaiting, canApprove, canEdit, canSee, getWish, seeWish, wishesAddedBy, wishesOf, type Wish } from '../wishes/wishes';
 
 /** Each answer with the request it was built for (the seam lets it out on that request only). */
 const VIEWED = new WeakMap<object, object>();
@@ -149,14 +149,16 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
         myShareMinor: myShare?.amountMinor ?? null,
         canManage: managesGroup(db, viewer, g.group),
       } : null,
-      mine: mine ? {
-        state: mine.state, named: mine.named, over: isOver(mine.dated, now),
-        celebrationId: mine.dated.celebrationId, forDate: mine.dated.forDate,
-      } : null,
+      mine: mine ? (() => {
+        const occ = occasionOf(w, mine.dated.givenOn ?? now, calendar());
+        return { state: mine.state, named: mine.named, over: isOver(w, mine.dated, calendar(), now), celebrationId: occ.celebrationId, forDate: occ.date };
+      })() : null,
     };
   };
   type Seen = { w: Wish; gift?: api.Gift };
-  const received = lazy(() => receivedIds(db, now));
+  const calendar = lazy(() => calendarOf(db));
+  // What the household has received: the same work whatever is hidden from this viewer (gifts/gifts.ts `revealed`).
+  const received = lazy(() => revealed(db, now).received);
   /** The first step of every list: only what the viewer may see, and gifts read only for the wishes of a giver's. */
   const seen = (rows: Wish[]): Seen[] => {
     const shown = rows.filter((w) => canSee(db, viewer, w));
@@ -233,14 +235,17 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
         // After the celebration: thank-yous (named givers only) for the viewer's gifts and, for a kid's parent, the
         // kid's; and the gifts the viewer gave, to put their name on.
         thanks: thanksFor(db, viewer, now).flatMap((x) => {
-          const [s] = seen([x.wish]);
+          const row = getWish(db, x.wishId);
+          const [s] = row ? seen([row]) : [];
           if (!s) return [];
           // A kid's parent sees the kid's wish with its gifts; a thank-you carries the wish as its person sees it.
           return [{ wish: wishOf(s.w), celebration: celebrationRef(x.celebrationId), on: x.on, from: x.from.map(ref).filter((r): r is api.PersonRef => r !== null) }];
         }),
-        gave: viewer.role === 'kid' ? [] : gaveBy(db, viewer.id, now).flatMap((x) => seen([x.wish]).filter((s) => s.gift).map((s) => ({
-          wish: wish(s), celebration: celebrationRef(x.celebrationId), on: x.on, named: x.named,
-        }))),
+        gave: viewer.role === 'kid' ? [] : gaveBy(db, viewer.id, now).flatMap((x) => {
+          const row = getWish(db, x.wishId);
+          return (row ? seen([row]) : []).filter((s) => s.gift)
+            .map((s) => ({ wish: wish(s), celebration: celebrationRef(x.celebrationId), on: x.on, named: x.named }));
+        }),
       });
     },
     personPage: (id: string, f: ListFor): Viewed<api.PersonPage> => {

@@ -106,7 +106,13 @@ export function removePerson(db: Db, id: string, by: string): void {
   const p = mustGetPerson(db, id);
   if (id === by) throw new Refused(409, 'you cannot remove yourself');
   if (p.role === 'admin' && adminsWithPasskey(db, id) === 0) throw new Refused(409, 'the household needs an admin who can sign in');
-  db.delete(t.person).where(eq(t.person.id, id)).run();
+  db.transaction((tx) => {
+    // Their gifts stay, given or not, without a giver and never named (the foreign keys set the giver to null): a wish
+    // must not come back, or a thank-you go, because a giver left (ADR 0003).
+    tx.update(t.claim).set({ named: 0 }).where(eq(t.claim.giverId, id)).run();
+    tx.update(t.share).set({ named: 0 }).where(eq(t.share.giverId, id)).run();
+    tx.delete(t.person).where(eq(t.person.id, id)).run();
+  });
 }
 
 /** Sets a kid's managers (adults or admins of the household). */

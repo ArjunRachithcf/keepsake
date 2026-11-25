@@ -603,7 +603,7 @@ paths:
     patch:
       tags: [gifts]
       operationId: editGroupGift
-      summary: The target (while open) or the state, by whoever started it
+      summary: The target (while open, never below what is chipped in) or the state, by whoever started it
       requestBody:
         required: true
         content:
@@ -633,7 +633,7 @@ paths:
     put:
       tags: [gifts]
       operationId: chipIn
-      summary: Chips in, or changes your share, while the group gift is open
+      summary: Chips in, or changes your share, while the group gift is open (all shares together at most the target)
       requestBody:
         required: true
         content:
@@ -1083,8 +1083,8 @@ components:
         state: { enum: [claimed, bought, given, open] }
         named: { type: boolean, description: 'Your name is on it for the person (after the celebration)' }
         over: { type: boolean, description: 'Given, and its celebration is over: you may put your name on it' }
-        celebrationId: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
-        forDate: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+        celebrationId: { description: 'The occasion it counts for, as the wish is now (computed when read)', anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+        forDate: { description: 'That occasion''s day; its person learns of a given gift the day after the later of this and the day it was given', anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
 
     CelebrationRef:
       type: object

@@ -109,8 +109,10 @@ question"), so a lock screen gives nothing away. Questions reach their person in
 2026-11-25: logo A, the Tied K.
 
 2026-11-25 (M2, decided by default, open to change): kids see no claims or shares of anyone and do not claim; givers
-see who chipped in and the total, not each other's amounts; a wish is either claimed or a group gift, not both; the
-person learns a gift was given the day after the occasion it was claimed for.
+see who chipped in and the total, not each other's amounts, and the shares together stay within the target; a wish
+is either claimed or a group gift, not both; the person learns a gift was given on the day after the later of the
+wish's current occasion and the day it was given, computed when read, never stored (ADR 0003); a giver who leaves the
+household leaves their gifts behind, unnamed.
 
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by

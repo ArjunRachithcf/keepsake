@@ -5,17 +5,20 @@
 //   claims or shares of anyone, so nothing spoils through a kid). That is checked before anything about the wish's
 //   gifts is read, so the person's (and a kid's) answer to every gift route is the same whatever the gifts are.
 // - Nothing here changes a wish's own row: the person's view of their wish cannot move because someone claimed it.
-// - The view layer reads gifts only for a viewer who `seesGifts`; for everyone else it reads `receivedIds`, the wishes
-//   whose gifts are given and whose celebration is over (by then the person has them).
-import { and, eq, inArray } from 'drizzle-orm';
+// - When a given gift reaches its person is never stored: `revealDay` computes it when read, from the wish's current
+//   occasion and the day it was given, so a postponed celebration or a moved wish postpones it too.
+// - The view layer reads gifts only for a viewer who `seesGifts`. Everyone else's lists follow `revealed()`, what the
+//   household has received: built once a day and after each change by whoever makes it (`refreshRevealed`), so a
+//   person's own reading requests do the same work whatever is hidden from them.
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { asDb, type Db } from '../db/open';
 import * as t from '../db/schema';
 import { Refused } from '../errors';
-import { celebrationsOfPerson, getCelebration } from '../celebrations/celebrations';
-import { daysBetween, nextDate } from '../celebrations/dates';
+import { allCelebrations, peopleByCelebration, type Celebration } from '../celebrations/celebrations';
+import { nextDate } from '../celebrations/dates';
 import { currency, getPerson, managesKid, type Person } from '../household/people';
-import { getWish, seeWish, type Wish } from '../wishes/wishes';
+import { seeWish, type Wish } from '../wishes/wishes';
 
 export type Claim = typeof t.claim.$inferSelect;
 export type ClaimState = Claim['state'];
@@ -28,21 +31,49 @@ export const NO_GIFTS: Gifts = Object.freeze({ claims: [], group: null, shares: 
 /** Who sees a wish's gifts: anyone but its person, and no kid. A kid's managers do (they coordinate). */
 export const seesGifts = (me: Pick<Person, 'id' | 'role'>, w: Pick<Wish, 'personId'>): boolean => me.id !== w.personId && me.role !== 'kid';
 
-/** A given gift reaches its person after the day it was for (or, with no celebration, the day after it was given). */
-type Dated = { state: string; forDate: string | null; givenOn: string | null };
-export const revealOn = (g: Dated): string | null => g.forDate ?? g.givenOn;
-export const isOver = (g: Dated, today: string): boolean => g.state === 'given' && (revealOn(g) ?? today) < today;
+// --- When a gift reaches its person (decided 2026-11-25, PR #9 review) ----------------------------------------------
+
+/** The household's celebrations and who is in them, read once for an answer. */
+export interface Calendar { byId: Map<string, Celebration>; ofPerson: (personId: string) => Celebration[] }
+export function calendarOf(db: Db): Calendar {
+  const all = allCelebrations(db);
+  const people = peopleByCelebration(db);
+  return { byId: new Map(all.map((c) => [c.id, c])), ofPerson: (id) => all.filter((c) => people.get(c.id)?.includes(id)) };
+}
+
+/** A yearly celebration's day a gift given on `on` counts for: one up to this many days before (a late gift), or the next. */
+export const LATE_DAYS = 30;
+const minusDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+const occurrence = (c: Celebration, on: string) => (c.recurrence === 'none' ? c.date : nextDate(c.date, 'yearly', minusDays(on, LATE_DAYS)));
+
+/**
+ * The occasion a gift given on `on` is for, as the wish is now: its celebration's day (a yearly one: the day it counts
+ * for); for an any-time wish (or one whose celebration was removed), the person's next celebration on or after `on`;
+ * else none.
+ */
+export function occasionOf(w: Pick<Wish, 'personId' | 'celebrationId'>, on: string, cal: Calendar): { celebrationId: string | null; date: string | null } {
+  const c = w.celebrationId ? cal.byId.get(w.celebrationId) : undefined;
+  if (c) return { celebrationId: c.id, date: occurrence(c, on) };
+  const next = cal.ofPerson(w.personId).map((x) => ({ x, d: nextDate(x.date, x.recurrence, on) })).filter((n) => n.d >= on)
+    .sort((a, b) => a.d.localeCompare(b.d) || a.x.name.localeCompare(b.x.name))[0];
+  return next ? { celebrationId: next.x.id, date: next.d } : { celebrationId: null, date: null };
+}
+
+/** The last day a given gift stays hidden from its person: the later of its occasion's day and the day it was given. */
+export function revealDay(w: Pick<Wish, 'personId' | 'celebrationId'>, givenOn: string, cal: Calendar): string {
+  const d = occasionOf(w, givenOn, cal).date;
+  return d && d > givenOn ? d : givenOn;
+}
+
+type Given = { state: string; givenOn: string | null };
+/** Given, and its person has it: from the day after `revealDay`. */
+export const isOver = (w: Pick<Wish, 'personId' | 'celebrationId'>, g: Given, cal: Calendar, today: string): boolean =>
+  g.state === 'given' && g.givenOn !== null && revealDay(w, g.givenOn, cal) < today;
 
 /** Every unit given (a giver's view: gone everywhere). */
 export function fullyGiven(w: Pick<Wish, 'quantity'>, g: Gifts): boolean {
   if (g.group) return g.group.state === 'given';
   return g.claims.filter((c) => c.state === 'given').reduce((n, c) => n + c.quantity, 0) >= w.quantity;
-}
-
-/** Every unit given and its celebration over (the person's view, and a kid's: gone from then on). */
-export function received(w: Pick<Wish, 'quantity'>, g: Gifts, today: string): boolean {
-  if (g.group) return isOver(g.group, today);
-  return g.claims.filter((c) => isOver(c, today)).reduce((n, c) => n + c.quantity, 0) >= w.quantity;
 }
 
 /** The gifts of these wishes (for the view layer, and only for a viewer who sees them). */
@@ -56,63 +87,76 @@ export function giftsOf(db: Db, wishIds: string[]): Map<string, Gifts> {
   return m;
 }
 
-/** The gifts that have been given, by wish (the person's thank-yous and a giver's "gifts you gave"). */
-function givenGifts(db: Db): Map<string, Gifts> {
+/** A gift its person has (given, and the occasion over): one entry per wish, with who gave it and who is named. */
+export interface Over {
+  wishId: string; personId: string; celebrationId: string | null; on: string;
+  givers: { giverId: string | null; named: boolean }[];
+  /** Every unit of the wish is given and over: gone from its person's (and kids') lists. */
+  received: boolean;
+}
+export interface Revealed { day: string; over: Over[]; received: Set<string> }
+
+function computeRevealed(db: Db, today: string): Revealed {
   const ids = new Set([
-    ...db.select({ id: t.claim.wishId }).from(t.claim).where(eq(t.claim.state, 'given')).all().map((r) => r.id),
-    ...db.select({ id: t.groupGift.wishId }).from(t.groupGift).where(eq(t.groupGift.state, 'given')).all().map((r) => r.id),
+    ...db.select({ id: t.claim.wishId }).from(t.claim).where(isNotNull(t.claim.givenOn)).all().map((r) => r.id),
+    ...db.select({ id: t.groupGift.wishId }).from(t.groupGift).where(isNotNull(t.groupGift.givenOn)).all().map((r) => r.id),
   ]);
-  return giftsOf(db, [...ids]);
+  const gifts = giftsOf(db, [...ids]);
+  const cal = calendarOf(db);
+  const wishes = ids.size ? db.select().from(t.wish).where(inArray(t.wish.id, [...ids])).all() : [];
+  const over: Over[] = [];
+  for (const w of wishes) {
+    const g = gifts.get(w.id)!;
+    const done: Given[] = g.group ? (isOver(w, g.group, cal, today) ? [g.group] : []) : g.claims.filter((c) => isOver(w, c, cal, today));
+    if (!done.length) continue;
+    const last = done.map((x) => x.givenOn!).sort().at(-1)!;
+    over.push({
+      wishId: w.id, personId: w.personId, celebrationId: occasionOf(w, last, cal).celebrationId, on: revealDay(w, last, cal),
+      givers: (g.group ? g.shares : (done as Claim[])).map((x) => ({ giverId: x.giverId, named: x.named === 1 })),
+      received: g.group ? true : (done as Claim[]).reduce((n, c) => n + c.quantity, 0) >= w.quantity,
+    });
+  }
+  over.sort((a, b) => b.on.localeCompare(a.on) || a.wishId.localeCompare(b.wishId));
+  return { day: today, over, received: new Set(over.filter((o) => o.received).map((o) => o.wishId)) };
 }
 
-/** Wishes whose gifts have all been given and whose celebration is over: the one thing a non-giver's lists follow. */
-export function receivedIds(db: Db, today: string): Set<string> {
-  const given = givenGifts(db);
-  const wishes = given.size ? db.select({ id: t.wish.id, quantity: t.wish.quantity }).from(t.wish).where(inArray(t.wish.id, [...given.keys()])).all() : [];
-  return new Set(wishes.filter((w) => received(w, given.get(w.id)!, today)).map((w) => w.id));
+const REVEALED = new WeakMap<Db, Revealed>();
+/** After any change to gifts, wishes, celebrations or people: rebuilt by whoever made the change (data.ts). */
+export function refreshRevealed(db: Db, today: string): void {
+  REVEALED.set(db, computeRevealed(db, today));
+}
+/** What the household has received by `today` (rebuilt once a day besides the changes). */
+export function revealed(db: Db, today: string): Revealed {
+  const r = REVEALED.get(db);
+  if (r && r.day === today) return r;
+  refreshRevealed(db, today);
+  return REVEALED.get(db)!;
 }
 
-export interface Thanks { wish: Wish; celebrationId: string | null; on: string; from: string[] }
-
+export interface Thanks { wishId: string; celebrationId: string | null; on: string; from: string[] }
 /**
- * The thank-yous: the viewer's wishes (and, for a kid's parent, the kid's: they help write them) with a gift given
- * whose celebration is over, and of its givers only those who chose to put their name on it. The others stay hidden
- * for good. Never before the occasion is over, for the parent as for the kid.
+ * The thank-yous: the viewer's received gifts (and, for a kid's parent, the kid's: they help write them), naming only
+ * the givers who chose it. The others stay hidden for good. Never before the occasion is over.
  */
 export function thanksFor(db: Db, viewer: Person, today: string): Thanks[] {
-  const given = givenGifts(db);
-  const out: Thanks[] = [];
-  const forViewer = (personId: string) => {
+  const mine = (personId: string) => {
     if (personId === viewer.id) return true;
     const owner = getPerson(db, personId);
     return Boolean(owner && managesKid(db, viewer, owner));
   };
-  for (const [wishId, g] of given) {
-    const w = getWish(db, wishId);
-    if (!w || !forViewer(w.personId)) continue;
-    const over = g.group ? (isOver(g.group, today) ? [g.group] : []) : g.claims.filter((c) => isOver(c, today));
-    if (!over.length) continue;
-    const from = g.group ? g.shares.filter((s) => s.named).map((s) => s.giverId) : g.claims.filter((c) => isOver(c, today) && c.named).map((c) => c.giverId);
-    const last = over.map((x) => ({ on: revealOn(x)!, celebrationId: x.celebrationId })).sort((a, b) => b.on.localeCompare(a.on))[0]!;
-    out.push({ wish: w, celebrationId: last.celebrationId, on: last.on, from });
-  }
-  return out.sort((a, b) => b.on.localeCompare(a.on) || a.wish.name.localeCompare(b.wish.name)).slice(0, 100);
+  return revealed(db, today).over.filter((o) => mine(o.personId)).slice(0, 100).map((o) => ({
+    wishId: o.wishId, celebrationId: o.celebrationId, on: o.on,
+    from: o.givers.filter((x) => x.named && x.giverId).map((x) => x.giverId!),
+  }));
 }
 
-export interface Gave { wish: Wish; celebrationId: string | null; on: string; named: boolean }
-
-/** A giver's own gifts given whose celebration is over: where they choose to put their name on each. */
+export interface Gave { wishId: string; celebrationId: string | null; on: string; named: boolean }
+/** A giver's own gifts that their person has: where they choose to put their name on each. */
 export function gaveBy(db: Db, giverId: string, today: string): Gave[] {
-  const out: Gave[] = [];
-  for (const [wishId, g] of givenGifts(db)) {
-    const w = getWish(db, wishId);
-    if (!w) continue;
-    const mine = g.group ? g.shares.find((s) => s.giverId === giverId) : g.claims.find((c) => c.giverId === giverId);
-    const dated = g.group ?? (mine as Claim | undefined);
-    if (!mine || !dated || !isOver(dated, today)) continue;
-    out.push({ wish: w, celebrationId: dated.celebrationId, on: revealOn(dated)!, named: mine.named === 1 });
-  }
-  return out.sort((a, b) => b.on.localeCompare(a.on) || a.wish.name.localeCompare(b.wish.name)).slice(0, 100);
+  return revealed(db, today).over.flatMap((o) => {
+    const me = o.givers.find((x) => x.giverId === giverId);
+    return me ? [{ wishId: o.wishId, celebrationId: o.celebrationId, on: o.on, named: me.named }] : [];
+  }).slice(0, 100);
 }
 
 // --- What givers do ---------------------------------------------------------------------------------------------
@@ -130,29 +174,13 @@ function giving(db: Db, me: Person, wishId: string): Wish {
 const listed = (w: Wish) => {
   if (w.state !== 'listed') throw new Refused(409, 'only a wish on the list can be given');
 };
-
-/** The occasion a gift is for: the wish's celebration (its next date), or the person's next celebration, or none. */
-function occasion(db: Db, w: Wish, today: string): { celebrationId: string | null; forDate: string | null } {
-  const c = w.celebrationId ? getCelebration(db, w.celebrationId) : undefined;
-  if (c) return { celebrationId: c.id, forDate: nextDate(c.date, c.recurrence, today) };
-  const next = celebrationsOfPerson(db, w.personId).map((x) => ({ x, d: nextDate(x.date, x.recurrence, today) }))
-    .filter((n) => n.d >= today).sort((a, b) => a.d.localeCompare(b.d) || a.x.name.localeCompare(b.x.name))[0];
-  return next ? { celebrationId: next.x.id, forDate: next.d } : { celebrationId: null, forDate: null };
-}
-
-/**
- * Marking given: the occasion stays the one it was claimed for, unless that day is more than a month gone (a claim
- * left over from a past year), then it is the next one. Given a little late, the person learns it the next day.
- */
-const STALE_DAYS = 30;
-function givenNow<T extends Dated & { celebrationId: string | null }>(db: Db, w: Wish, g: T, today: string) {
-  const fresh = g.forDate && daysBetween(g.forDate, today) > STALE_DAYS ? occasion(db, w, today) : { celebrationId: g.celebrationId, forDate: g.forDate };
-  return { ...fresh, givenOn: today };
-}
-const notGiven = { givenOn: null };
+const overNow = (db: Db, w: Wish, g: Given, today: string) => isOver(w, g, calendarOf(db), today);
 
 function myClaim(db: Db, me: Person, wishId: string): Claim | undefined {
   return db.select().from(t.claim).where(and(eq(t.claim.wishId, wishId), eq(t.claim.giverId, me.id))).get();
+}
+function myShare(db: Db, me: Pick<Person, 'id'>, wishId: string): Share | undefined {
+  return db.select().from(t.share).where(and(eq(t.share.wishId, wishId), eq(t.share.giverId, me.id))).get();
 }
 function groupOf(db: Db, wishId: string): GroupGift | undefined {
   return db.select().from(t.groupGift).where(eq(t.groupGift.wishId, wishId)).get();
@@ -165,7 +193,7 @@ function mustGroup(db: Db, wishId: string): GroupGift {
 const ts = () => new Date().toISOString();
 
 /** "I'll get this" (or change how many): within what is left, not on a group gift, not once you have given it. */
-export function claimWish(db: Db, me: Person, wishId: string, quantity: number, today: string): Wish {
+export function claimWish(db: Db, me: Person, wishId: string, quantity: number): Wish {
   const w = giving(db, me, wishId);
   listed(w);
   db.transaction((tx0) => {
@@ -177,20 +205,19 @@ export function claimWish(db: Db, me: Person, wishId: string, quantity: number, 
     const others = claims.filter((c) => c.giverId !== me.id).reduce((n, c) => n + c.quantity, 0);
     if (others + quantity > w.quantity) throw new Refused(409, others >= w.quantity ? 'someone is getting it already' : 'not that many are left to claim');
     if (mine) tx.update(t.claim).set({ quantity, updatedAt: ts() }).where(eq(t.claim.id, mine.id)).run();
-    else tx.insert(t.claim).values({ id: ulid(), wishId: w.id, giverId: me.id, quantity, state: 'claimed', ...occasion(tx, w, today), createdAt: ts(), updatedAt: ts() }).run();
+    else tx.insert(t.claim).values({ id: ulid(), wishId: w.id, giverId: me.id, quantity, state: 'claimed', createdAt: ts(), updatedAt: ts() }).run();
   });
   return w;
 }
 
-/** Bought, given, or back: a given gift whose celebration is over stays given (its person has seen it by then). */
+/** Bought, given (today), or back: a given gift its person has by now stays given. */
 export function setClaimState(db: Db, me: Person, wishId: string, state: ClaimState, today: string): Wish {
   const w = giving(db, me, wishId);
   const c = myClaim(db, me, w.id);
   if (!c) throw new Refused(404, 'you have not claimed it');
   if (c.state === state) return w;
-  if (isOver(c, today)) throw new Refused(409, 'it was given, and its celebration is over');
-  const dates = state === 'given' ? givenNow(db, w, c, today) : notGiven;
-  db.update(t.claim).set({ state, ...dates, named: state === 'given' ? c.named : 0, updatedAt: ts() }).where(eq(t.claim.id, c.id)).run();
+  if (overNow(db, w, c, today)) throw new Refused(409, 'it was given, and its celebration is over');
+  db.update(t.claim).set({ state, givenOn: state === 'given' ? today : null, named: 0, updatedAt: ts() }).where(eq(t.claim.id, c.id)).run();
   return w;
 }
 
@@ -202,21 +229,21 @@ export function unclaimWish(db: Db, me: Person, wishId: string): void {
   db.delete(t.claim).where(eq(t.claim.id, c.id)).run();
 }
 
-/** After the celebration, a giver puts their name on what they gave (or takes it off): the person sees it to thank them. */
+/** Once its person has it, a giver puts their name on what they gave (or takes it off), so they can thank them. */
 export function setNamed(db: Db, me: Person, wishId: string, named: boolean, today: string): Wish {
   const w = giving(db, me, wishId);
   const g = groupOf(db, w.id);
-  const mine = g ? db.select().from(t.share).where(and(eq(t.share.wishId, w.id), eq(t.share.giverId, me.id))).get() : myClaim(db, me, w.id);
-  const dated = g ?? (mine as Claim | undefined);
-  if (!mine || !dated || !isOver(dated, today)) throw new Refused(409, 'only for a gift you gave, once its celebration is over');
+  const mine = g ? myShare(db, me, w.id) : myClaim(db, me, w.id);
+  const given: Given | undefined = g ?? (mine as Claim | undefined);
+  if (!mine || !given || !overNow(db, w, given, today)) throw new Refused(409, 'only for a gift you gave, once its celebration is over');
   const set = { named: named ? 1 : 0, updatedAt: ts() };
-  if (g) db.update(t.share).set(set).where(and(eq(t.share.wishId, w.id), eq(t.share.giverId, me.id))).run();
-  else db.update(t.claim).set(set).where(eq(t.claim.id, (mine as Claim).id)).run();
+  if (g) db.update(t.share).set(set).where(eq(t.share.id, mine.id)).run();
+  else db.update(t.claim).set(set).where(eq(t.claim.id, mine.id)).run();
   return w;
 }
 
 /** Makes a wish a group gift with a target (the household's currency first); not one somebody has claimed. */
-export function startGroup(db: Db, me: Person, wishId: string, targetMinor: number, today: string): Wish {
+export function startGroup(db: Db, me: Person, wishId: string, targetMinor: number): Wish {
   const w = giving(db, me, wishId);
   listed(w);
   if (!currency(db)) throw new Refused(409, 'the household has no currency yet: an admin sets it first');
@@ -224,7 +251,7 @@ export function startGroup(db: Db, me: Person, wishId: string, targetMinor: numb
     const tx = asDb(tx0);
     if (groupOf(tx, w.id)) throw new Refused(409, 'it is a group gift already');
     if (tx.select({ id: t.claim.id }).from(t.claim).where(eq(t.claim.wishId, w.id)).get()) throw new Refused(409, 'someone is getting it already');
-    tx.insert(t.groupGift).values({ wishId: w.id, organizerId: me.id, targetMinor, state: 'open', ...occasion(tx, w, today), createdAt: ts(), updatedAt: ts() }).run();
+    tx.insert(t.groupGift).values({ wishId: w.id, organizerId: me.id, targetMinor, state: 'open', createdAt: ts(), updatedAt: ts() }).run();
   });
   return w;
 }
@@ -232,21 +259,25 @@ export function startGroup(db: Db, me: Person, wishId: string, targetMinor: numb
 /** Whoever started it runs it; if they have left the household, anyone who chipped in. */
 export function managesGroup(db: Db, me: Pick<Person, 'id'>, g: GroupGift): boolean {
   if (g.organizerId) return g.organizerId === me.id;
-  return Boolean(db.select().from(t.share).where(and(eq(t.share.wishId, g.wishId), eq(t.share.giverId, me.id))).get());
+  return Boolean(myShare(db, me, g.wishId));
 }
+
+/** What is chipped in, without `except`'s own share. */
+const totalOf = (db: Db, wishId: string, except?: string) =>
+  db.select().from(t.share).where(eq(t.share.wishId, wishId)).all().filter((s) => !except || s.giverId !== except).reduce((n, s) => n + s.amountMinor, 0);
 
 export function editGroup(db: Db, me: Person, wishId: string, patch: { targetMinor?: number; state?: GroupState }, today: string): Wish {
   const w = giving(db, me, wishId);
   const g = mustGroup(db, w.id);
   if (!managesGroup(db, me, g)) throw new Refused(403, 'whoever started the group gift changes it');
   if (patch.targetMinor !== undefined && g.state !== 'open') throw new Refused(409, 'it is bought: the target stays');
+  if (patch.targetMinor !== undefined && patch.targetMinor < totalOf(db, w.id)) throw new Refused(409, 'the target cannot go below what is chipped in');
   const state = patch.state ?? g.state;
-  if (state !== g.state && isOver(g, today)) throw new Refused(409, 'it was given, and its celebration is over');
-  const dates = state === g.state ? {} : state === 'given' ? givenNow(db, w, g, today) : notGiven;
-  const named = state !== 'given' && g.state === 'given';
+  if (state !== g.state && overNow(db, w, g, today)) throw new Refused(409, 'it was given, and its celebration is over');
+  const givenOn = state === g.state ? g.givenOn : state === 'given' ? today : null;
   db.transaction((tx) => {
-    tx.update(t.groupGift).set({ targetMinor: patch.targetMinor ?? g.targetMinor, state, ...dates, updatedAt: ts() }).where(eq(t.groupGift.wishId, w.id)).run();
-    if (named) tx.update(t.share).set({ named: 0 }).where(eq(t.share.wishId, w.id)).run();
+    tx.update(t.groupGift).set({ targetMinor: patch.targetMinor ?? g.targetMinor, state, givenOn, updatedAt: ts() }).where(eq(t.groupGift.wishId, w.id)).run();
+    if (state !== g.state) tx.update(t.share).set({ named: 0 }).where(eq(t.share.wishId, w.id)).run();
   });
   return w;
 }
@@ -261,13 +292,15 @@ export function endGroup(db: Db, me: Person, wishId: string): void {
   db.delete(t.groupGift).where(eq(t.groupGift.wishId, w.id)).run();
 }
 
-/** Chips in (or changes your share) while the group gift is open. */
+/** Chips in (or changes your share) while the group gift is open, up to its target all together. */
 export function chipIn(db: Db, me: Person, wishId: string, amountMinor: number): Wish {
   const w = giving(db, me, wishId);
   const g = mustGroup(db, w.id);
   if (g.state !== 'open') throw new Refused(409, 'it is bought: shares stay as they are');
-  db.insert(t.share).values({ wishId: w.id, giverId: me.id, amountMinor, createdAt: ts(), updatedAt: ts() })
-    .onConflictDoUpdate({ target: [t.share.wishId, t.share.giverId], set: { amountMinor, updatedAt: ts() } }).run();
+  if (totalOf(db, w.id, me.id) + amountMinor > g.targetMinor) throw new Refused(409, 'that would go over the target');
+  const mine = myShare(db, me, w.id);
+  if (mine) db.update(t.share).set({ amountMinor, updatedAt: ts() }).where(eq(t.share.id, mine.id)).run();
+  else db.insert(t.share).values({ id: ulid(), wishId: w.id, giverId: me.id, amountMinor, createdAt: ts(), updatedAt: ts() }).run();
   return w;
 }
 
@@ -275,6 +308,7 @@ export function withdrawShare(db: Db, me: Person, wishId: string): void {
   const w = giving(db, me, wishId);
   const g = mustGroup(db, w.id);
   if (g.state !== 'open') throw new Refused(409, 'it is bought: shares stay as they are');
-  const r = db.delete(t.share).where(and(eq(t.share.wishId, w.id), eq(t.share.giverId, me.id))).run();
-  if (!r.changes) throw new Refused(404, 'you have not chipped in');
+  const mine = myShare(db, me, w.id);
+  if (!mine) throw new Refused(404, 'you have not chipped in');
+  db.delete(t.share).where(eq(t.share.id, mine.id)).run();
 }

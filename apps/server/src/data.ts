@@ -21,7 +21,7 @@ import {
   addPerson, editPerson, hasPasskey, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
   type Person, type PersonInput,
 } from './household/people';
-import { chipIn, claimWish, editGroup, endGroup, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
+import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
 import { setProfile, type ProfileInput } from './household/profile';
 import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
@@ -49,6 +49,13 @@ export function dataFor(cfg: Config, db: Db) {
     if (p.role !== 'admin') throw new Refused(403, 'admins only');
     return p;
   };
+  const day = () => today(cfg.timezone);
+  /**
+   * After a change to gifts, wishes, celebrations or people, what the household has received is rebuilt here, in the
+   * changing request (gifts/gifts.ts `revealed`): a person's reading requests then do the same work whatever is
+   * hidden from them.
+   */
+  const changed = <T>(v: T): T => { refreshRevealed(db, day()); return v; };
   const fresh = (r: Req, minutes?: number) => {
     const s = fastifyRequestOf(r).caller?.session;
     if (!s || !isFresh(s, new Date(), minutes)) throw new Refused(403, 'sign in again to do this');
@@ -58,7 +65,7 @@ export function dataFor(cfg: Config, db: Db) {
     /** The view layer for the request's person. One-off celebrations whose day has passed let go of their wishes first (ADR 0007). */
     view: (r: Req) => {
       const viewer = me(r);
-      settlePastCelebrations(db, today(cfg.timezone));
+      if (settlePastCelebrations(db, day())) changed(0);
       return viewFor(db, cfg, viewer, fastifyRequestOf(r));
     },
     /** Answers that need no viewer, built for this request. */
@@ -121,7 +128,7 @@ export function dataFor(cfg: Config, db: Db) {
     people: {
       add: (r: Req, i: PersonInput) => { admin(r); return addPerson(db, i).id; },
       edit: (r: Req, id: string, patch: Partial<PersonInput>) => { admin(r); editPerson(db, id, patch); },
-      remove: (r: Req, id: string) => removePerson(db, id, admin(r).id),
+      remove: (r: Req, id: string) => changed(removePerson(db, id, admin(r).id)),
       setManagers: (r: Req, kidId: string, ids: string[]) => { admin(r); setManagers(db, kidId, ids); },
       setCurrency: (r: Req, code: string | null) => { admin(r); setCurrency(db, code); },
       hasPasskey: (id: string) => hasPasskey(db, mustGetPerson(db, id).id),
@@ -130,29 +137,29 @@ export function dataFor(cfg: Config, db: Db) {
       setProfile: (r: Req, personId: string, i: ProfileInput) => { setProfile(db, me(r), personId, i); },
     },
     wishes: {
-      add: (r: Req, personId: string, i: WishInput) => addWish(db, me(r), personId, i).id,
-      edit: (r: Req, id: string, patch: Partial<WishInput>) => { editWish(db, me(r), id, patch); },
-      remove: (r: Req, id: string) => removeWish(db, me(r), id),
-      approve: (r: Req, id: string) => { approveWish(db, me(r), id); },
-      decline: (r: Req, id: string) => declineWish(db, me(r), id),
+      add: (r: Req, personId: string, i: WishInput) => changed(addWish(db, me(r), personId, i).id),
+      edit: (r: Req, id: string, patch: Partial<WishInput>) => { editWish(db, me(r), id, patch); changed(0); },
+      remove: (r: Req, id: string) => changed(removeWish(db, me(r), id)),
+      approve: (r: Req, id: string) => { approveWish(db, me(r), id); changed(0); },
+      decline: (r: Req, id: string) => changed(declineWish(db, me(r), id)),
       order: (r: Req, personId: string, ids: string[]) => orderWishes(db, me(r), personId, ids),
     },
     /** What givers do (gifts/gifts.ts), as the request's person: each returns the wish's id for the view layer. */
     gifts: {
-      claim: (r: Req, wishId: string, quantity: number) => claimWish(db, me(r), wishId, quantity, today(cfg.timezone)).id,
-      setState: (r: Req, wishId: string, state: ClaimState) => setClaimState(db, me(r), wishId, state, today(cfg.timezone)).id,
-      unclaim: (r: Req, wishId: string) => unclaimWish(db, me(r), wishId),
-      setNamed: (r: Req, wishId: string, named: boolean) => setNamed(db, me(r), wishId, named, today(cfg.timezone)).id,
-      startGroup: (r: Req, wishId: string, targetMinor: number) => startGroup(db, me(r), wishId, targetMinor, today(cfg.timezone)).id,
-      editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => editGroup(db, me(r), wishId, patch, today(cfg.timezone)).id,
-      endGroup: (r: Req, wishId: string) => endGroup(db, me(r), wishId),
-      chipIn: (r: Req, wishId: string, amountMinor: number) => chipIn(db, me(r), wishId, amountMinor).id,
-      withdraw: (r: Req, wishId: string) => withdrawShare(db, me(r), wishId),
+      claim: (r: Req, wishId: string, quantity: number) => changed(claimWish(db, me(r), wishId, quantity).id),
+      setState: (r: Req, wishId: string, state: ClaimState) => changed(setClaimState(db, me(r), wishId, state, day()).id),
+      unclaim: (r: Req, wishId: string) => changed(unclaimWish(db, me(r), wishId)),
+      setNamed: (r: Req, wishId: string, named: boolean) => changed(setNamed(db, me(r), wishId, named, day()).id),
+      startGroup: (r: Req, wishId: string, targetMinor: number) => changed(startGroup(db, me(r), wishId, targetMinor).id),
+      editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => changed(editGroup(db, me(r), wishId, patch, day()).id),
+      endGroup: (r: Req, wishId: string) => changed(endGroup(db, me(r), wishId)),
+      chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, me(r), wishId, amountMinor).id),
+      withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, me(r), wishId)),
     },
     celebrations: {
-      add: (r: Req, i: CelebrationInput) => addCelebration(db, me(r), i).id,
-      edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => { editCelebration(db, me(r), id, patch); },
-      remove: (r: Req, id: string) => removeCelebration(db, me(r), id),
+      add: (r: Req, i: CelebrationInput) => changed(addCelebration(db, me(r), i).id),
+      edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => { editCelebration(db, me(r), id, patch); changed(0); },
+      remove: (r: Req, id: string) => changed(removeCelebration(db, me(r), id)),
     },
   };
 }

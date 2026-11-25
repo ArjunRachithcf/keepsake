@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "63a09c14-a465-41cd-a802-a228721068ea",
+  "id": "29af34b9-f79b-4d00-bac9-dbf518ef3a06",
   "prevId": "017bd1a7-2327-47be-8435-42f1c23cdbcc",
   "tables": {
     "audit": {
@@ -239,7 +239,7 @@
           "name": "giver_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "quantity": {
@@ -254,20 +254,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "celebration_id": {
-          "name": "celebration_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "for_date": {
-          "name": "for_date",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "given_on": {
@@ -341,19 +327,6 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "claim_celebration_id_celebration_id_fk": {
-          "name": "claim_celebration_id_celebration_id_fk",
-          "tableFrom": "claim",
-          "tableTo": "celebration",
-          "columnsFrom": [
-            "celebration_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -372,6 +345,10 @@
         "claim_named": {
           "name": "claim_named",
           "value": "\"claim\".\"named\" IN (0, 1)"
+        },
+        "claim_given": {
+          "name": "claim_given",
+          "value": "(\"claim\".\"state\" = 'given') = (\"claim\".\"given_on\" IS NOT NULL)"
         }
       }
     },
@@ -404,20 +381,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "celebration_id": {
-          "name": "celebration_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "for_date": {
-          "name": "for_date",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "given_on": {
@@ -469,19 +432,6 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
-        },
-        "group_gift_celebration_id_celebration_id_fk": {
-          "name": "group_gift_celebration_id_celebration_id_fk",
-          "tableFrom": "group_gift",
-          "tableTo": "celebration",
-          "columnsFrom": [
-            "celebration_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -493,7 +443,11 @@
         },
         "group_gift_target": {
           "name": "group_gift_target",
-          "value": "\"group_gift\".\"target_minor\" > 0"
+          "value": "\"group_gift\".\"target_minor\" BETWEEN 1 AND 100000000"
+        },
+        "group_gift_given": {
+          "name": "group_gift_given",
+          "value": "(\"group_gift\".\"state\" = 'given') = (\"group_gift\".\"given_on\" IS NOT NULL)"
         }
       }
     },
@@ -1033,6 +987,13 @@
     "share": {
       "name": "share",
       "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
         "wish_id": {
           "name": "wish_id",
           "type": "text",
@@ -1044,7 +1005,7 @@
           "name": "giver_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "amount_minor": {
@@ -1078,6 +1039,14 @@
         }
       },
       "indexes": {
+        "share_wish_giver": {
+          "name": "share_wish_giver",
+          "columns": [
+            "wish_id",
+            "giver_id"
+          ],
+          "isUnique": true
+        },
         "share_giver": {
           "name": "share_giver",
           "columns": [
@@ -1110,24 +1079,16 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {
-        "share_wish_id_giver_id_pk": {
-          "columns": [
-            "wish_id",
-            "giver_id"
-          ],
-          "name": "share_wish_id_giver_id_pk"
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {
         "share_amount": {
           "name": "share_amount",
-          "value": "\"share\".\"amount_minor\" > 0"
+          "value": "\"share\".\"amount_minor\" BETWEEN 1 AND 100000000"
         },
         "share_named": {
           "name": "share_named",

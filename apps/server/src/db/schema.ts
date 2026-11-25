@@ -141,21 +141,21 @@ export const audit = sqliteTable('audit', {
 ]);
 
 // Gifts (spec §3, ADR 0003): claims and group gifts. The surprise: nothing here ever reaches the person a wish is for
-// (or a kid) except through the view layer's thank-yous after the celebration, for givers who chose to be named.
+// (or a kid) except through the view layer's thank-yous after the occasion, for givers who chose to be named. When a
+// gift reaches its person is never stored: it is computed when read, from the wish's current occasion and the day it
+// was given (gifts/gifts.ts), so moving a celebration or a wish moves the reveal with it.
 
 /**
- * "I'll get this": one giver's claim on a wish, for `quantity` of it; then bought, then given. `celebration_id` and
- * `for_date` are the occasion it is for (the wish's celebration, or the person's next one), set when it is claimed;
- * the person learns it was given only once that day is over. `named`: the giver puts their name on it (thank-yous).
+ * "I'll get this": one giver's claim on a wish, for `quantity` of it; then bought, then given (`given_on`). A removed
+ * giver's claim stays, without a giver and never named, so neither the wish nor a thank-you changes because of it.
+ * `named`: the giver puts their name on it (thank-yous).
  */
 export const claim = sqliteTable('claim', {
   id: text('id').primaryKey(),
   wishId: text('wish_id').notNull().references(() => wish.id, { onDelete: 'cascade' }),
-  giverId: text('giver_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  giverId: text('giver_id').references(() => person.id, { onDelete: 'set null' }),
   quantity: integer('quantity').notNull(),
   state: text('state', { enum: ['claimed', 'bought', 'given'] }).notNull(),
-  celebrationId: text('celebration_id').references(() => celebration.id, { onDelete: 'set null' }),
-  forDate: text('for_date'),
   givenOn: text('given_on'),
   named: integer('named').notNull().default(0),
   createdAt: text('created_at').notNull(),
@@ -166,35 +166,36 @@ export const claim = sqliteTable('claim', {
   check('claim_state', sql`${t.state} IN ('claimed', 'bought', 'given')`),
   check('claim_quantity', sql`${t.quantity} BETWEEN 1 AND 99`),
   check('claim_named', sql`${t.named} IN (0, 1)`),
+  check('claim_given', sql`(${t.state} = 'given') = (${t.givenOn} IS NOT NULL)`),
 ]);
 
-/** A wish several givers chip into: its organizer, a target, open → bought → given. The occasion as for a claim. */
+/** A wish several givers chip into: its organizer, a target, open → bought → given (`given_on`). */
 export const groupGift = sqliteTable('group_gift', {
   wishId: text('wish_id').primaryKey().references(() => wish.id, { onDelete: 'cascade' }),
   organizerId: text('organizer_id').references(() => person.id, { onDelete: 'set null' }),
   targetMinor: integer('target_minor').notNull(),
   state: text('state', { enum: ['open', 'bought', 'given'] }).notNull(),
-  celebrationId: text('celebration_id').references(() => celebration.id, { onDelete: 'set null' }),
-  forDate: text('for_date'),
   givenOn: text('given_on'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (t) => [
   check('group_gift_state', sql`${t.state} IN ('open', 'bought', 'given')`),
-  check('group_gift_target', sql`${t.targetMinor} > 0`),
+  check('group_gift_target', sql`${t.targetMinor} BETWEEN 1 AND 100000000`),
+  check('group_gift_given', sql`(${t.state} = 'given') = (${t.givenOn} IS NOT NULL)`),
 ]);
 
-/** One giver's share of a group gift; `named` as for a claim. */
+/** One giver's share of a group gift; `named` as for a claim; a removed giver's share stays, without a giver. */
 export const share = sqliteTable('share', {
+  id: text('id').primaryKey(),
   wishId: text('wish_id').notNull().references(() => groupGift.wishId, { onDelete: 'cascade' }),
-  giverId: text('giver_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  giverId: text('giver_id').references(() => person.id, { onDelete: 'set null' }),
   amountMinor: integer('amount_minor').notNull(),
   named: integer('named').notNull().default(0),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 }, (t) => [
-  primaryKey({ columns: [t.wishId, t.giverId] }),
+  uniqueIndex('share_wish_giver').on(t.wishId, t.giverId),
   index('share_giver').on(t.giverId),
-  check('share_amount', sql`${t.amountMinor} > 0`),
+  check('share_amount', sql`${t.amountMinor} BETWEEN 1 AND 100000000`),
   check('share_named', sql`${t.named} IN (0, 1)`),
 ]);

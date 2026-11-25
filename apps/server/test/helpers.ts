@@ -146,7 +146,7 @@ export function household(): Db {
   db.insert(t.manager).values({ kidId: 'p_mia', managerId: 'p_sam' }).run();
   for (const [id, label] of [['pk1', 'Laptop'], ['pk2', 'Phone']] as const) db.insert(t.passkey).values({ id, personId: 'p_alex', publicKey: Buffer.from([1]), label, createdAt: NOW }).run();
   db.insert(t.celebration).values([
-    { id: 'c_xmas', name: 'Christmas', date: '2026-12-24', poster: 'pine', recurrence: 'yearly', hostId: 'p_alex', createdAt: NOW },
+    { id: 'c_xmas', name: 'Christmas', date: '2024-12-24', poster: 'pine', recurrence: 'yearly', hostId: 'p_alex', createdAt: NOW },
     { id: 'c_mia', name: 'Mia\'s birthday', date: '2019-03-14', poster: 'berry', recurrence: 'yearly', hostId: 'p_sam', createdAt: NOW },
     { id: 'c_old', name: 'Old exchange', date: '2020-01-01', poster: 'night', recurrence: 'none', hostId: 'p_alex', createdAt: NOW },
   ]).run();
@@ -166,8 +166,8 @@ export function household(): Db {
     w('w_robin_scarf', 'p_robin', 'A wool scarf', 'listed'),
     w('w_sam_pan', 'p_sam', 'A cast-iron pan', 'listed', { position: 1 }),
   ]).run();
-  db.insert(t.claim).values({ id: 'cl_scarf', wishId: 'w_robin_scarf', giverId: 'p_alex', quantity: 1, state: 'given', celebrationId: 'c_xmas', forDate: '2025-12-24', givenOn: '2025-12-24', createdAt: NOW, updatedAt: NOW }).run();
-  db.insert(t.groupGift).values({ wishId: 'w_sam_pan', organizerId: 'p_alex', targetMinor: 8000, state: 'open', celebrationId: 'c_xmas', forDate: '2026-12-24', createdAt: NOW, updatedAt: NOW }).run();
+  db.insert(t.claim).values({ id: 'cl_scarf', wishId: 'w_robin_scarf', giverId: 'p_alex', quantity: 1, state: 'given', givenOn: '2025-12-24', createdAt: NOW, updatedAt: NOW }).run();
+  db.insert(t.groupGift).values({ wishId: 'w_sam_pan', organizerId: 'p_alex', targetMinor: 8000, state: 'open', createdAt: NOW, updatedAt: NOW }).run();
   return db;
 }
 

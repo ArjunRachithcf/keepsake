@@ -1,6 +1,6 @@
 # ADR 0003: The surprise holds on the server
 
-Status: **Proposed** · 2026-11-24 · revised 2026-11-25 (group gifts, questions, guests; M2: kids, the occasion, givers' shares)
+Status: **Proposed** · 2026-11-24 · revised 2026-11-25 (group gifts, questions, guests; M2: kids, the reveal, givers' shares, givers who leave)
 
 **Decision**: No response Keepsake sends to a person ever contains, for a wish meant for them: a claim, a share of a
 group gift, a "bought" or "given" mark, or an idea kept for them; nor who asked them a question (ADR 0008), nor an
@@ -29,10 +29,22 @@ assignment of a draw other than the one where they give (ADR 0004).
 - **No live stream of claims to the person**: updates to a person carry their own wishes only.
 - **After the celebration**: a giver who chose to put their name on a gift is shown to the person (thank-yous); the
   others stay hidden for good. A kid's thank-yous go to the kid and to the kid's parents (they help write them; decided
-  2026-11-25, PR #9), also only once the occasion is over. The name is off by default and can be put on only once the gift is given and its day
-  is over. "The celebration" is the occasion the gift was claimed for (the wish's celebration, else the person's next
-  one), kept with the claim: a claim more than a month past its day when it is marked given counts for the next one;
-  with no celebration at all, the day after it was given.
+  2026-11-25, PR #9), also only once the occasion is over. The name is off by default and can be put on only once
+  the gift has reached its person.
+- **When a given gift reaches its person** (decided 2026-11-25, PR #9 review; replaces an occasion stored with the
+  claim): computed when read, never stored. It is the day after the **later** of (a) the wish's current occasion and
+  (b) the day it was given. The occasion is the wish's celebration's day as it is now (a yearly one: the day the gift
+  counts for, the one up to 30 days before it was given, so a late gift is still for it, else the next); for an
+  any-time wish, or one whose celebration was removed, the person's next celebration on or after the day it was
+  given; with none, only (b). So it is never before the wish's current occasion: a postponed celebration or a wish
+  moved to a later one postpones it, and a late gift is revealed the next day, not the same day. Once it has reached
+  its person, a gift stays given.
+- **A giver who leaves** (removed from the household): their claims and shares stay, without a giver and never
+  named, so a received wish does not come back to its person, a thank-you does not go, and nobody buys a claimed
+  wish twice.
+- **The person's path does the same work**: what the household has received is rebuilt once a day and after every
+  change, in the request that makes the change; a person's reading requests only look it up, so their timing does not
+  follow what is hidden from them.
 - **The person's answers to gift routes** are a 403 decided from the wish and the caller alone, before any gift is
   read; nothing a giver does changes the wish's own row (its `updatedAt`, order, celebration).
 - **Tests**: for every route, a matrix of viewer × wish (person, manager, other adult, kid, admin, share-link guest,
