@@ -1,13 +1,20 @@
-// The seams (ADR 0003, ADR 0006), checked on the source and at run time:
-// - routes never touch database rows: no schema, no Drizzle, no SQLite in src/routes; they answer only with what the
-//   view layer built (`view(...)`), and the API refuses with a 500 any answer below 400 that it did not build;
+// The seams (ADR 0003, ADR 0006), on the source and at run time:
+// - routes never touch the database: they get the data facade (src/data.ts), never a Db; they import only the facade,
+//   the validators, errors and types; they cannot reach a query, the SQLite client, the raw reply or a hijack;
+// - every /api answer below 400 with a body is one the view layer built (a frozen, flagged object), whatever form the
+//   route tried to send instead (a string, a Buffer, a stream, a viewed answer with a field added);
 // - a wish's link is never fetched: nothing in the server opens a connection.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { dataFor } from '../src/data';
+import * as t from '../src/db/schema';
+import { installSeam } from '../src/seam';
 import { isViewed, publicView } from '../src/view/view';
-import { viewGuard } from '../src/app';
+import { household, standalone } from './helpers';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const files = (dir: string): string[] => readdirSync(dir).flatMap((f) => {
@@ -20,47 +27,116 @@ const routes = files(join(root, 'apps/server/src/routes'));
 const read = (f: string) => readFileSync(f, 'utf8');
 const rel = (f: string) => relative(root, f);
 
-describe('routes never serialize rows (ADR 0003)', () => {
-  it('there are routes to check', () => expect(routes.length).toBeGreaterThanOrEqual(4));
+/** What a route file may import: the facade, validators, errors, config and WebAuthn types, contracts, Fastify, ulid. */
+const ALLOWED_IMPORT = /^(?:\.\.\/(?:data|validate|errors|config|version|auth\/webauthn)(?:\.[jt]s)?|@keepsake\/contracts|fastify|ulid)$/;
+/** Ways around the facade and the view layer, each refused in a route file. */
+const FORBIDDEN: [string, RegExp][] = [
+  ['a database handle', /\bdb\b|\$client|\.query\.|\bprepare\(/],
+  ['a raw reply or a hijack', /\breply\.raw\b|\.hijack\(|\.serializer\(|\breq\.raw\b/],
+  ['bytes made by hand', /JSON\.stringify|\bBuffer\b|\bReadable\b|createReadStream|\.pipe\(/],
+  ['an answer built by hand', /return\s+\{|=>\s*\(\s*\{|\.send\((?!\)|\s*view\(|\s*data\.view\()|Object\.assign\(/],
+  ['a dynamic import or require', /\bimport\(|\brequire\(/],
+];
+const imports = (src: string) => [...src.matchAll(/(?:^|\n)\s*(?:import|export)\b[^'"]*?from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]!);
+const code = (src: string) => src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
 
-  it('no route imports the schema, Drizzle or SQLite', () => {
-    const re = /from\s+['"](?:\.\.\/db\/schema|drizzle-orm[^'"]*|better-sqlite3)['"]/;
-    expect(routes.filter((f) => re.test(read(f))).map(rel)).toEqual([]);
+describe('routes never touch rows (ADR 0003)', () => {
+  it('there are routes to check, and app.ts registers none itself', () => {
+    expect(routes.length).toBeGreaterThanOrEqual(5);
+    expect(/\b(?:api|app)\.(?:get|post|put|patch|delete|route)\(/.test(read(join(root, 'apps/server/src/app.ts')))).toBe(false);
   });
 
-  it('no route returns or sends an object it built itself: only the view layer\'s answers', () => {
-    // `return {`, `=> ({`, and `.send(` with anything but nothing or a view call.
-    const re = /return\s+\{|=>\s*\(\s*\{|\.send\((?!\)|\s*view\(|\s*viewFor\()/;
-    const hits = routes.flatMap((f) => read(f).split('\n').map((l, i) => [l, i] as const)
-      .filter(([l]) => re.test(l) && !/\/\//.test(l.split(re)[0]!)).map(([l, i]) => `${rel(f)}:${i + 1}: ${l.trim()}`));
-    expect(hits).toEqual([]);
+  it('a route file imports only the facade, the validators, errors and types', () => {
+    const bad = routes.flatMap((f) => imports(read(f)).filter((i) => !ALLOWED_IMPORT.test(i)).map((i) => `${rel(f)}: ${i}`));
+    expect(bad).toEqual([]);
   });
 
-  it('the rule catches what it should', () => {
-    const re = /return\s+\{|=>\s*\(\s*\{|\.send\((?!\)|\s*view\(|\s*viewFor\()/;
-    for (const bad of ['return { wish };', 'async () => ({ ok: true })', 'reply.code(201).send(row)', 'reply.send({ a: 1 })']) expect(re.test(bad), bad).toBe(true);
-    for (const ok of ['return reply.code(201).send(view(req).wish(w));', 'reply.code(204).send()', 'return view(req).home(f);']) expect(re.test(ok), ok).toBe(false);
+  it.each(FORBIDDEN)('no route uses %s', (_n, re) => {
+    expect(routes.filter((f) => re.test(code(read(f)))).map(rel)).toEqual([]);
   });
 
-  it('only the view layer marks answers; a plain object is refused at run time', async () => {
-    expect(isViewed({ ok: true })).toBe(false);
+  it('the rules catch each bypass the M1 review found', () => {
+    const offends = (src: string) => imports(src).some((i) => !ALLOWED_IMPORT.test(i)) || FORBIDDEN.some(([, re]) => re.test(code(src)));
+    for (const bad of [
+      "app.get('/x', async () => JSON.stringify(await db.query.wish.findMany()));",
+      "reply.type('application/json'); return Buffer.from(JSON.stringify(rows));",
+      "const rows = data.x.$client.prepare('select * from wish').all();",
+      "import * as t from '../db/schema.js';",
+      "import { openDb } from '../db/open';",
+      "import { wishesOf } from '../wishes/wishes';",
+      "import { sql } from 'drizzle-orm';",
+      'return Object.assign(view(req).household(), { extra: 1 });',
+      'reply.raw.end(body);',
+      'reply.hijack();',
+      "return reply.send(Readable.from(['x']));",
+      "const m = await import('../db/open');",
+      'reply.code(201).send(row)',
+    ]) expect(offends(bad), bad).toBe(true);
+    for (const ok of ["import { isFresh, type Data } from '../data';", 'return reply.code(201).send(view(req).wish(w));', 'reply.code(204).send()', 'return view(req).home(data.listFor(req.query));']) {
+      expect(offends(ok), ok).toBe(false);
+    }
+  });
+});
+
+describe('the seam at run time', () => {
+  let app: FastifyInstance;
+  const db = household();
+  const data = dataFor(standalone(), db);
+  const alex = data.people.get('p_alex');
+  const rows = () => db.$client.prepare('select * from wish').all();
+  beforeAll(async () => {
+    app = Fastify();
+    // Rogue routes behind the same seam the API uses: each tries a way past the view layer.
+    await app.register(async (api) => {
+      installSeam(api);
+      api.get('/viewed', async () => data.view(alex).household());
+      api.get('/string', async () => JSON.stringify(db.select().from(t.wish).all()));
+      api.get('/buffer', async (_req, reply) => { void reply.type('application/json'); return Buffer.from(JSON.stringify(rows())); });
+      api.get('/stream', async (_req, reply) => reply.type('application/json').send(Readable.from(['[{"id":"w_mia_slime"}]'])));
+      api.get('/object', async () => ({ wishes: rows() }));
+      api.get('/array', async () => rows());
+      api.get('/added', async () => Object.assign(data.view(alex).household(), { secret: 'w_mia_slime' }));
+      api.get('/nested', async () => { const h = data.view(alex).household(); (h.people as unknown[]).push({ id: 'w_mia_slime' }); return h; });
+      api.get('/error-with-rows', async (_req, reply) => reply.code(404).send({ error: 'no', rows: rows() }));
+      api.get('/empty', async (_req, reply) => reply.code(204).send());
+    }, { prefix: '/api' });
+    await app.ready();
+  });
+  afterAll(() => app.close());
+
+  it('a viewed answer goes out', async () => {
+    const r = await app.inject({ url: '/api/viewed' });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().me.name).toBe('Alex');
+  });
+  it.each(['/api/string', '/api/buffer', '/api/stream', '/api/object', '/api/array', '/api/added', '/api/nested'])('%s is refused with a 500 and no rows', async (url) => {
+    const r = await app.inject({ url });
+    expect(r.statusCode).toBe(500);
+    expect(r.json()).toEqual({ error: 'something went wrong' });
+    expect(r.body).not.toContain('w_mia_slime');
+  });
+  it('an error answer carries `{ error }` only', async () => {
+    const r = await app.inject({ url: '/api/error-with-rows' });
+    expect(r.statusCode).toBe(404);
+    expect(r.body).not.toContain('w_mia_slime');
+    expect(r.json()).toEqual({ error: 'something went wrong' });
+  });
+  it('an empty answer is fine', async () => expect((await app.inject({ url: '/api/empty' })).statusCode).toBe(204));
+  it('viewed answers are frozen all the way down; a copy is not viewed', () => {
+    const h = data.view(alex).household();
+    expect(isViewed(h)).toBe(true);
+    expect(Object.isFrozen(h) && Object.isFrozen(h.people) && Object.isFrozen(h.people[0])).toBe(true);
+    expect(isViewed({ ...h })).toBe(false);
     expect(isViewed(publicView.health({ mode: 'standalone' }, '0.0.0'))).toBe(true);
-    const log = { error: () => undefined };
-    const req = { log, routeOptions: { url: '/api/x' } } as never;
-    await expect(viewGuard(req, { statusCode: 200 } as never, { id: 'w1', name: 'row' })).rejects.toThrow(/unviewed/);
-    await expect(viewGuard(req, { statusCode: 200 } as never, [{ id: 'w1' }])).rejects.toThrow(/unviewed/);
-    await expect(viewGuard(req, { statusCode: 404 } as never, { error: 'no such wish' })).resolves.toEqual({ error: 'no such wish' });
-    const ok = publicView.health({ mode: 'standalone' }, '0.0.0');
-    await expect(viewGuard(req, { statusCode: 200 } as never, ok)).resolves.toBe(ok);
-    // `answer` (the marker) is the view module's own: nobody else imports it.
-    expect(server.filter((f) => !f.endsWith('view/view.ts') && /\banswer\s*\(/.test(read(f)) && /from\s+['"][^'"]*view\/view['"]/.test(read(f)) && /\{[^}]*\banswer\b[^}]*\}\s*from/.test(read(f))).map(rel)).toEqual([]);
   });
 });
 
 describe('links are never fetched (spec §8)', () => {
-  it('nothing in the server opens a connection: no fetch, http(s), net, tls or dgram client, no HTTP library', () => {
+  it('nothing in the server opens a connection: no fetch, http(s), tls or dgram client, no HTTP library', () => {
     expect(server.length).toBeGreaterThan(15);
-    const re = /\bfetch\s*\(|from\s+['"](?:node:)?(?:http|https|net|tls|http2|dgram)['"]|require\(\s*['"](?:node:)?(?:http|https|net|tls)['"]|from\s+['"](?:undici|axios|got|node-fetch)['"]|import\(\s*['"](?:node:)?(?:http|https|net|tls)['"]/;
+    const re = /\bfetch\s*\(|from\s+['"](?:node:)?(?:http|https|tls|http2|dgram)['"]|require\(\s*['"](?:node:)?(?:http|https|net|tls)['"]|from\s+['"](?:undici|axios|got|node-fetch)['"]|import\(\s*['"](?:node:)?(?:http|https|net|tls)['"]/;
     expect(server.filter((f) => re.test(read(f))).map(rel)).toEqual([]);
+    // node:net only for isIP (config.ts)
+    for (const f of server.filter((x) => /from\s+['"](?:node:)?net['"]/.test(read(x)))) expect(read(f), rel(f)).toMatch(/import\s+\{\s*isIP\s*\}\s+from\s+['"]node:net['"]/);
   });
 });

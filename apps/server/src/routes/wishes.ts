@@ -2,11 +2,9 @@
 // Who may do what is wishes/wishes.ts's; what comes back is the view layer's.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Config } from '../config';
-import type { Db } from '../db/open';
+import { MAX_WISHES, type Data, type WishInput } from '../data';
 import { Refused } from '../errors';
-import { approveWish, addWish, declineWish, editWish, orderWishes, removeWish, type WishInput } from '../wishes/wishes';
-import { bool, id, ids, int, link, listFor, nullableId, nullableInt, nullableText, object, text, type Body } from '../validate';
-import { viewFor } from '../view/view';
+import { bool, id, ids, int, link, nullableId, nullableInt, nullableText, object, text, type Body } from '../validate';
 
 type W = { Params: { wishId: string } };
 const FIELDS = ['name', 'link', 'priceMinor', 'quantity', 'note', 'mostWanted', 'celebrationId'] as const;
@@ -24,41 +22,41 @@ function fields(b: Body, required: boolean): Partial<WishInput> {
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined));
 }
 
-export async function wishRoutes(app: FastifyInstance, cfg: Config, db: Db) {
+export async function wishRoutes(app: FastifyInstance, _cfg: Config, data: Data) {
   const me = (req: FastifyRequest) => req.caller!.person;
-  const view = (req: FastifyRequest) => viewFor(db, cfg, me(req));
+  const view = (req: FastifyRequest) => data.view(me(req));
 
-  app.get('/home', async (req) => view(req).home(listFor(db, req.query)));
+  app.get('/home', async (req) => view(req).home(data.listFor(req.query)));
 
   app.post('/wishes', async (req, reply) => {
     const b = object(req.body, ['personId', ...FIELDS]);
     const personId = id(b, 'personId', { required: true })!;
     const f = fields(b, true);
-    const w = addWish(db, me(req), personId, {
+    const w = data.wishes.add(me(req), personId, {
       name: f.name!, link: f.link ?? null, priceMinor: f.priceMinor ?? null, quantity: f.quantity ?? 1, note: f.note ?? null,
       mostWanted: f.mostWanted ?? false, celebrationId: f.celebrationId ?? null,
     });
     return reply.code(201).send(view(req).wish(w));
   });
 
-  app.patch<W>('/wishes/:wishId', async (req) => view(req).wish(editWish(db, me(req), req.params.wishId, fields(object(req.body, FIELDS), false))));
+  app.patch<W>('/wishes/:wishId', async (req) => view(req).wish(data.wishes.edit(me(req), req.params.wishId, fields(object(req.body, FIELDS), false))));
 
   app.delete<W>('/wishes/:wishId', async (req, reply) => {
-    removeWish(db, me(req), req.params.wishId);
+    data.wishes.remove(me(req), req.params.wishId);
     return reply.code(204).send();
   });
 
-  app.post<W>('/wishes/:wishId/approve', async (req) => view(req).wish(approveWish(db, me(req), req.params.wishId)));
+  app.post<W>('/wishes/:wishId/approve', async (req) => view(req).wish(data.wishes.approve(me(req), req.params.wishId)));
 
   app.post<W>('/wishes/:wishId/decline', async (req, reply) => {
-    declineWish(db, me(req), req.params.wishId);
+    data.wishes.decline(me(req), req.params.wishId);
     return reply.code(204).send();
   });
 
   app.put<{ Params: { personId: string } }>('/people/:personId/wish-order', async (req, reply) => {
-    const list = ids(object(req.body, ['wishIds']), 'wishIds', { max: 500 });
+    const list = ids(object(req.body, ['wishIds']), 'wishIds', { max: MAX_WISHES });
     if (!list) throw new Refused(400, 'wishIds: required');
-    orderWishes(db, me(req), req.params.personId, list);
+    data.wishes.order(me(req), req.params.personId, list);
     return reply.code(204).send();
   });
 }

@@ -15,9 +15,16 @@ import { getProfile, type ProfileRow } from '../household/profile';
 import { allWaiting, canApprove, canEdit, canSee, wishesAddedBy, wishesOf, type Wish } from '../wishes/wishes';
 
 const VIEWED = new WeakSet<object>();
-/** Marks an answer as built by the view layer; only this module can. */
+function deepFreeze<T>(v: T): T {
+  if (v && typeof v === 'object' && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const x of Object.values(v)) deepFreeze(x);
+  }
+  return v;
+}
+/** Marks an answer as built by the view layer (only this module can) and freezes it: nothing can be added after. */
 function answer<T extends object>(body: T): T {
-  VIEWED.add(body);
+  VIEWED.add(deepFreeze(body));
   return body;
 }
 /** Whether a route's answer came from the view layer (checked for every /api answer below 400). */
@@ -100,6 +107,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
     person: (p: Person): api.Person => answer(person(p)),
     profile: (r: ProfileRow): api.Profile => answer(profile(r)),
     link: (url: string, expiresAt: Date): api.OneTimeLink => answer({ url, expiresAt: expiresAt.toISOString() }),
+    passkeys: (keys: api.Passkey[]): api.Passkeys => answer({ passkeys: keys.map((k) => ({ ...k })) }),
     /** One wish the viewer may see (the domain modules have checked; checked again here). */
     wish: (w: Wish): api.Wish => {
       if (!canSee(db, viewer, w)) throw new Error('view: a wish the viewer may not see');
@@ -114,7 +122,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
         wishes: listOf(viewer.id, f),
         suggestions: approvals.filter((w) => w.personId === viewer.id).sort(byPosition).map(wish),
         toApprove: approvals.filter((w) => w.personId !== viewer.id).sort(byPosition).map(wish),
-        suggested: wishes(wishesAddedBy(db, viewer.id, 'suggested').filter((w) => w.personId !== viewer.id)),
+        suggested: wishes(wishesAddedBy(db, viewer.id, 'suggested')).filter((w) => w.personId !== viewer.id),
       });
     },
     personPage: (p: Person, f: ListFor): api.PersonPage => answer({

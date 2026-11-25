@@ -1,9 +1,6 @@
 // Request bodies checked against what contracts/openapi.yaml declares (the contract tests send the spec's samples).
 // Each reader returns the value or throws Refused(400) with a message naming the field.
-import { getCelebration } from './celebrations/celebrations';
-import type { Db } from './db/open';
 import { Refused } from './errors';
-import type { ListFor } from './view/view';
 
 export type Body = Record<string, unknown>;
 
@@ -101,15 +98,6 @@ export function link(b: Body, field: string): string | null | undefined {
   return u.href.length > 2000 ? bad(field, 'up to 2000 characters') : u.href;
 }
 
-/** The `for` query: a celebration's list, `any`, or nothing (every wish). */
-export function listFor(db: Db, q: unknown): ListFor {
-  const v = (q as { for?: unknown } | undefined)?.for;
-  if (v === undefined) return null;
-  if (v === 'any') return 'any';
-  if (!isId(v) || !getCelebration(db, v)) throw new Refused(400, 'for: a celebration\'s id, or any');
-  return { celebration: v };
-}
-
 export function sizes(b: Body) {
   const v = b.sizes;
   if (v === undefined) return undefined;
@@ -120,3 +108,4 @@ export function sizes(b: Body) {
   if (!ok) throw new Refused(400, 'sizes: up to 30 { label, value } of 1 to 40 characters');
   return (v as { label: string; value: string }[]).map((s) => ({ label: s.label.trim(), value: s.value.trim() }));
 }
+export { isDate } from './celebrations/dates';
