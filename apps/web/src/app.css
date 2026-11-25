@@ -104,6 +104,7 @@ code { font-size: 0.9em; }
 .group { list-style: none; margin: 0; padding: 0; background: var(--surface); border-radius: var(--radius-card); overflow: hidden; }
 .row { display: grid; gap: 2px; min-height: var(--target); padding: 11px var(--gutter); position: relative; }
 .row + .row::before { content: ""; position: absolute; top: 0; left: var(--gutter); right: 0; border-top: 0.5px solid var(--separator); }
+.row-inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .row-title { margin: 0; font-size: var(--fs-body); overflow-wrap: anywhere; }
 .row-sub { margin: 0; color: var(--text-2); font-size: var(--fs-sub); overflow-wrap: anywhere; }
 .row-note { margin: 2px 0 0; font-size: var(--fs-sub); color: var(--text); overflow-wrap: anywhere; }
@@ -199,7 +200,7 @@ legend { padding: 0; margin-bottom: 6px; }
 .poster-gold { --base: #6B4E0F; --dot: #E2C275; --dot2: #C9A24A; }
 .poster-small { flex: none; width: 36px; height: 36px; padding: 0; border-radius: 9px; background:
   radial-gradient(circle at 74% 28%, var(--dot) 0 6px, transparent 7px), radial-gradient(circle at 36% 70%, var(--dot2) 0 4px, transparent 5px), var(--base); }
-.poster > * { position: relative; max-width: 70%; }
+.poster > * { position: relative; max-width: 60%; }
 .poster-title { margin: 28px 0 6px; font-size: var(--fs-large-title); line-height: 1.15; font-weight: 700; letter-spacing: -0.03em; overflow-wrap: anywhere; }
 .poster-sub { margin: 2px 0 0; font-size: var(--fs-sub); color: #FFFFFF; }
 .next-card { display: block; color: inherit; text-decoration: none; border-radius: var(--radius-poster); transition: transform var(--dur-snappy) var(--spring-snappy); }
@@ -244,6 +245,8 @@ legend { padding: 0; margin-bottom: 6px; }
 .tab:active { transform: scale(0.94); }
 .tab[aria-current="page"] { background: var(--accent-tint); color: var(--accent); font-weight: 600; }
 @media (min-width: 600px) { .tab { font-size: var(--fs-sub); padding: 0 20px; } }
+.tab { white-space: nowrap; }
+@media (max-width: 359px) { .tab { padding: 0 12px; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }

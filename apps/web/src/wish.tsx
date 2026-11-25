@@ -96,7 +96,7 @@ export function WishForm({ personId, wish, celebrations, initialFor, onDone }: {
     } catch (err) { setError(message(err)); } finally { setBusy(false); }
   };
   const remove = async () => {
-    if (!wish) return;
+    if (!wish || !confirm(`Remove “${wish.name}”? This cannot be undone.`)) return;
     setBusy(true); setError(null);
     try { await api(`/wishes/${wish.id}`, { method: 'DELETE' }); onDone(); } catch (err) { setError(message(err)); } finally { setBusy(false); }
   };

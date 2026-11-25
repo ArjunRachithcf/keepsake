@@ -1,12 +1,12 @@
 // Celebrations (spec §4): coming up (date, "2 to approve") and past ones; a celebration's page with its poster and
 // everyone's list for it; a new celebration (the host: poster, date, place, people). The draw comes with M3.
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { POSTERS } from '@keepsake/contracts';
 import { api, message, type Celebration, type CelebrationInput, type CelebrationPage, type Celebrations as List, type Wish } from '../api';
 import { celebrationLine, day, inDays } from '../format';
 import { useHousehold } from '../household';
 import { useGo } from '../router';
-import { Field, Group, Link, Loading, Notice, PageHead, POSTER_LABEL, Poster, Sheet, Switch } from '../ui';
+import { Field, Group, Link, Loading, Notice, PageHead, POSTER_LABEL, Poster, Sheet, Switch, usePageTitle } from '../ui';
 import { WishForm, WishRow } from '../wish';
 
 function CelebrationRow({ c }: { c: Celebration }) {
@@ -58,6 +58,8 @@ export function CelebrationView({ id }: { id: string }) {
   const [all, setAll] = useState<Celebration[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sheet, setSheet] = useState<{ wish?: Wish; personId: string } | 'edit' | null>(null);
+  const h1 = useRef<HTMLHeadingElement>(null);
+  usePageTitle(page?.celebration.name ?? 'Celebration', h1);
   const load = useCallback(async () => {
     try {
       setPage(await api<CelebrationPage>(`/celebrations/${id}`));
@@ -79,7 +81,7 @@ export function CelebrationView({ id }: { id: string }) {
     <>
       {back}
       <Poster poster={c.poster}>
-        <h1 className="poster-title">{c.name}</h1>
+        <h1 className="poster-title" ref={h1} tabIndex={-1}>{c.name}</h1>
         <p className="poster-sub">{c.upcoming ? `${day(c.nextDate)}, ${inDays(c.daysUntil)}` : day(c.nextDate)}</p>
         {c.place && <p className="poster-sub">{c.place}</p>}
         <p className="poster-sub">{c.recurrence === 'yearly' ? 'Every year' : 'Once'}{c.host ? ` · hosted by ${c.host.id === me.id ? 'you' : c.host.name}` : ''}</p>

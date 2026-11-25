@@ -59,6 +59,14 @@ export function Person({ id }: { id: string }) {
         )}
       </Group>
 
+      {page.keeps && !self && p.role === 'kid' && p.signsIn && (
+        <p className="section">
+          <button type="button" className="btn" onClick={() => { if (confirm(`Sign ${p.name} out on every device? Their passkeys stay.`)) api(`/people/${p.id}/sessions/end`, { method: 'POST' }).catch((e) => setError(message(e))); }}>
+            Sign {p.name} out on every device
+          </button>
+        </p>
+      )}
+
       <Sheet title={sheet === 'profile' ? 'Sizes and likes' : sheet?.wish ? 'Change the wish' : page.keeps ? 'New wish' : 'Suggest a wish'} open={sheet !== null} onClose={() => setSheet(null)}>
         {sheet === 'profile' && <ProfileForm personId={p.id} profile={pr} onDone={() => { setSheet(null); void load(); }} />}
         {sheet && sheet !== 'profile' && <WishForm personId={p.id} wish={sheet.wish} celebrations={all} initialFor={sheet.for} onDone={() => { setSheet(null); void load(); }} />}

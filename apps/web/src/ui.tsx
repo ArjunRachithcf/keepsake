@@ -1,16 +1,29 @@
 // Shared pieces in Keepsake's iOS look (spec §4): inset grouped lists, rows, chips, sheets, posters, notices. Every
 // control is a real button, link or form field, at least 44 px tall.
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
 import type { Poster as PosterName } from './api';
-import { useGo } from './router';
+import { takeMoved, useGo } from './router';
+
+/**
+ * A page's heading: names the browser tab, and after a move to this page takes the focus, so a screen reader says
+ * where the person is now (the page itself keeps its scroll at the top).
+ */
+export function usePageTitle(title: string, heading: RefObject<HTMLHeadingElement | null>) {
+  useEffect(() => {
+    document.title = `${title} · Keepsake`;
+    if (heading.current && takeMoved()) heading.current.focus({ preventScroll: true });
+  }, [title, heading]);
+}
 
 export function PageHead({ title, sub, eyebrow, action }: { title: string; sub?: ReactNode; eyebrow?: string; action?: ReactNode }) {
+  const h1 = useRef<HTMLHeadingElement>(null);
+  usePageTitle(title, h1);
   return (
     <header className="page-head">
       <div className="page-head-row">
         <div>
           {eyebrow && <p className="eyebrow">{eyebrow}</p>}
-          <h1 className="large-title">{title}</h1>
+          <h1 className="large-title" ref={h1} tabIndex={-1}>{title}</h1>
         </div>
         {action}
       </div>
@@ -72,7 +85,7 @@ export function Sheet({ title, open, onClose, children }: { title: string; open:
     if (!open && d.open) d.close();
   }, [open]);
   return (
-    <dialog ref={ref} className="sheet" aria-labelledby={id} onClose={onClose} onCancel={onClose}>
+    <dialog ref={ref} className="sheet" aria-labelledby={id} onClose={onClose}>
       <div className="sheet-head">
         <button type="button" className="btn-text" onClick={onClose}>Cancel</button>
         <h2 className="sheet-title" id={id}>{title}</h2>
@@ -104,8 +117,12 @@ export function Switch({ label, checked, onChange, hint }: { label: string; chec
   const id = useId();
   return (
     <div className="switch-row">
-      <label htmlFor={id} className="switch-label">{label}{hint && <span className="hint">{hint}</span>}</label>
-      <input id={id} type="checkbox" role="switch" className="switch" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span className="switch-label">
+        <label htmlFor={id}>{label}</label>
+        {hint && <span className="hint" id={`${id}-hint`}>{hint}</span>}
+      </span>
+      <input id={id} type="checkbox" role="switch" className="switch" checked={checked} onChange={(e) => onChange(e.target.checked)}
+        aria-describedby={hint ? `${id}-hint` : undefined} />
     </div>
   );
 }

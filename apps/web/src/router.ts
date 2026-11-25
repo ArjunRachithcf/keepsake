@@ -18,15 +18,20 @@ export function parse(path: string): Route {
   return { tab: 'wishes' };
 }
 
+/** Set when the person moved to another page (a link, Back): the next page's heading then takes the focus. */
+let moved = false;
+export const takeMoved = () => { const m = moved; moved = false; return m; };
+
 export function useRouter() {
   const [path, setPath] = useState(() => location.pathname);
   useEffect(() => {
-    const pop = () => setPath(location.pathname);
+    const pop = () => { moved = true; setPath(location.pathname); };
     addEventListener('popstate', pop);
     return () => removeEventListener('popstate', pop);
   }, []);
   const go = useCallback((to: string) => {
     if (to !== location.pathname) history.pushState(null, '', to);
+    moved = true;
     setPath(to);
     scrollTo({ top: 0 });
   }, []);

@@ -27,11 +27,6 @@ export function App() {
   const reload = useCallback(async () => setHousehold(await api<Household>('/household')), []);
   useEffect(() => { api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e))); }, []);
   useEffect(() => { if (session?.signedIn) reload().catch((e) => setError(message(e))); }, [session, reload]);
-  // The page's title follows the screen.
-  useEffect(() => {
-    const t = TABS.find((x) => x.tab === route.tab)?.label;
-    document.title = t ? `${t} · Keepsake` : 'Keepsake';
-  }, [route.tab]);
 
   const signedIn = (s: AuthSession) => { setSession(s); go('/'); };
   const signOut = async () => {

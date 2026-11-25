@@ -1,7 +1,7 @@
 // Family (spec §4): the grown-ups and the kids (with how many wishes wait for you); for admins, the household:
 // people, roles, kids' managers, one-time links and the currency.
 import { useEffect, useId, useState } from 'react';
-import { api, message, type Home, type OneTimeLink, type Person } from '../api';
+import { api, message, type Home, type OneTimeLink, type Passkeys, type Person } from '../api';
 import { roleLabel, useHousehold } from '../household';
 import { Field, Group, Link, Notice, PageHead, Sheet } from '../ui';
 
@@ -103,6 +103,11 @@ function ManageHousehold() {
                 Make a sign-in link<span className="sr-only"> for {p.name}</span>
               </button>
             )}
+            {standalone && p.id !== me.id && p.signsIn && (
+              <button type="button" className="btn btn-sm" onClick={() => { if (confirm(`Sign ${p.name} out on every device? Their passkeys stay.`)) void run(() => api(`/people/${p.id}/sessions/end`, { method: 'POST' })); }}>
+                Sign out their devices<span className="sr-only"> ({p.name})</span>
+              </button>
+            )}
             {standalone && p.id !== me.id && (
               <button type="button" className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Remove ${p.name} and all their wishes?`)) void run(() => api(`/people/${p.id}`, { method: 'DELETE' })); }}>
                 Remove<span className="sr-only"> {p.name}</span>
@@ -121,26 +126,43 @@ function ManageHousehold() {
   );
 }
 
-/** Standalone: your other devices (a one-time link of your own) and signing out. */
+/** Standalone: your passkeys (remove one: its sessions end; the last stays), another device, sign out, everywhere. */
 function You({ onSignOut }: { onSignOut: () => void }) {
   const [link, setLink] = useState<OneTimeLink | null>(null);
+  const [keys, setKeys] = useState<Passkeys['passkeys']>([]);
   const [error, setError] = useState<string | null>(null);
-  const make = async () => {
-    setError(null);
-    try { setLink(await api<OneTimeLink>('/me/passkeys/invite', { method: 'POST' })); } catch (e) { setError(message(e)); }
-  };
+  const load = () => api<Passkeys>('/me/passkeys').then((p) => setKeys(p.passkeys), (e) => setError(message(e)));
+  useEffect(() => { void load(); }, []);
+  const run = async (f: () => Promise<unknown>) => { setError(null); try { await f(); } catch (e) { setError(message(e)); } };
   return (
-    <section className="section stack" aria-label="You">
-      <h2 className="group-header">You</h2>
-      <button type="button" className="btn btn-block" onClick={make}>Sign in on another device</button>
-      {link && (
-        <Notice title="A one-time link for your other device">
-          <p>Open it there within 24 hours; it works once.</p>
-          <input className="input" readOnly value={link.url} aria-label="Your one-time link" onFocus={(e) => e.target.select()} />
-        </Notice>
-      )}
-      {error && <Notice kind="error">{error}</Notice>}
-      <button type="button" className="btn btn-block" onClick={onSignOut}>Sign out</button>
-    </section>
+    <>
+      <Group title="Your passkeys" footer="Removing one signs out the devices it signed in. Your last one stays.">
+        {keys.map((k) => (
+          <li className="row row-inline" key={k.id}>
+            <span className="row-text">
+              <span className="row-title">{k.label}</span>
+              <span className="row-sub">{[k.lastUsedAt ? `used ${new Date(k.lastUsedAt).toLocaleDateString()}` : 'not used yet', k.invitedBy ? `from ${k.invitedBy}’s invite` : null].filter(Boolean).join(' · ')}</span>
+            </span>
+            {keys.length > 1 && (
+              <button type="button" className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Remove the passkey “${k.label}”?`)) void run(async () => { await api(`/me/passkeys/${encodeURIComponent(k.id)}`, { method: 'DELETE' }); await load(); }); }}>
+                Remove<span className="sr-only"> {k.label}</span>
+              </button>
+            )}
+          </li>
+        ))}
+      </Group>
+      <section className="section stack" aria-label="Your devices">
+        <button type="button" className="btn btn-block" onClick={() => void run(async () => setLink(await api<OneTimeLink>('/me/passkeys/invite', { method: 'POST' })))}>Sign in on another device</button>
+        {link && (
+          <Notice title="A one-time link for your other device">
+            <p>Open it there within 24 hours; it works once.</p>
+            <input className="input" readOnly value={link.url} aria-label="Your one-time link" onFocus={(e) => e.target.select()} />
+          </Notice>
+        )}
+        {error && <Notice kind="error">{error}</Notice>}
+        <button type="button" className="btn btn-block" onClick={onSignOut}>Sign out</button>
+        <button type="button" className="btn btn-block btn-danger" onClick={() => { if (confirm('Sign out on every device, this one too?')) void run(async () => { await api('/me/sessions/end', { method: 'POST' }); onSignOut(); }); }}>Sign out everywhere</button>
+      </section>
+    </>
   );
 }
