@@ -28,11 +28,17 @@ audience: household                        # adults and kids (kids' wishes wait 
 guest_paths: [/guest, /assets/*, /api/guest, /api/guest/*]
 secrets:
   - { key: KEEPSAKE_SEALING_KEY, file: true, description: 'Key that seals the draw assignments (32 bytes, base64; outside the database and its backup, ADR 0004). Without it Keepsake runs but makes and opens no draw' }
+  - { key: KEEPSAKE_VAPID_KEY, file: true, description: 'Web Push key (a P-256 private scalar, 32 bytes, base64url; outside the database and its backup, ADR 0010). Without it Keepsake sends no push (the news still shows in the app)' }
 config:
   - { key: KEEPSAKE_TZ, optional: true, description: "The household's time zone (IANA, e.g. Europe/Berlin; default UTC): celebrations' days, the morning batch" }
   - { key: KEEPSAKE_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }
+  - { key: KEEPSAKE_SHOP_HOSTS, optional: true, description: 'Shops whose pages "Add from a link" may read (exact host names, comma separated; none by default: the feature is off). Each is egress (ADR 0011)' }
+  - { key: KEEPSAKE_VAPID_SUBJECT, optional: true, description: 'Who runs this Keepsake, for the push services (mailto: or https:; default KEEPSAKE_ORIGIN)' }
+  - { key: KEEPSAKE_EGRESS, optional: true, description: 'off: nothing leaves Keepsake (no push, no shop page); default on' }
 network:
-  # Nothing leaves Keepsake until M5's add-from-a-link, which goes through a hardened egress (spec §7).
-  egress: []
+  # One egress client (ADR 0011): https on 443 to these only, public addresses only. The Web Push services (ADR 0010),
+  # and the shops the household lists in KEEPSAKE_SHOP_HOSTS (none by default).
+  egress: [fcm.googleapis.com, updates.push.services.mozilla.com, web.push.apple.com, '*.notify.windows.com']
+  egress_from_config: [KEEPSAKE_SHOP_HOSTS]
 health: /api/health
 resources: { memory: 256Mi, cpu: 0.25 }

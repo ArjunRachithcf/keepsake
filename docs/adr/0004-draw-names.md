@@ -92,7 +92,8 @@ list the whole draw through the app. The host chooses a reveal date or never ("n
   - Free until someone has opened theirs. After that, only before the day, and not once a participant has marked a
     gift bought for another since the names were drawn. The caller's own wishes are left out of that check.
   - Changing who draws or the rules once drawn is a re-draw.
-  - "Everyone told" is in the app (`redrawnAt`: everyone opens theirs again); the push comes with M5 and names nobody.
+  - "Everyone told" is in the app (`redrawnAt`: everyone opens theirs again) and, since M5, as a notice to each person
+    in the draw but whoever drew, with its push that names nobody (ADR 0010).
   - Once the day has come, only the reveal date changes.
 - **Someone in a drawn draw leaves the household**:
   - Before its day, under the re-draw rules: they are taken out and the others are drawn again, everyone told if

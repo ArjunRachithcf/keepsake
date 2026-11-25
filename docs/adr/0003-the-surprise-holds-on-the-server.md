@@ -31,7 +31,8 @@ assignment of a draw other than the one where they give (ADR 0004).
   "fully claimed"/"gone" flag is computed, so neither a filter, the order, a count nor an empty slot gives one away.
   "Given once, gone everywhere" is applied to everyone **except** the person, who keeps seeing the wish until the
   celebration is over.
-- **No live stream of claims to the person**: updates to a person carry their own wishes only.
+- **No live stream of claims to the person**: updates to a person carry their own wishes only. Notices and pushes
+  (M5, ADR 0010) are made only from what their person may know, and the byte matrices read them too.
 - **After the celebration**: a giver who chose to put their name on a gift is shown to the person (thank-yous); the
   others stay hidden for good. A kid's thank-yous go to the kid and to the kid's parents (they help write them; decided
   2026-11-25, PR #9), also only once the occasion is over. The name is off by default and can be put on only once

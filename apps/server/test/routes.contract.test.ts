@@ -5,6 +5,7 @@ import { parse } from 'yaml';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { EDGE_IDENTITY } from '../src/config';
+import { PUSH_HOSTS } from '../src/net/egress';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { startGuestSession } from '../src/guests/guests';
@@ -91,6 +92,14 @@ describe('the HomersLab manifest', () => {
     expect(m.identity.edge).toBe(EDGE_IDENTITY);
     for (const k of ['KEEPSAKE_EDGE_IDENTITY', 'KEEPSAKE_TRUSTED_PROXY', 'KEEPSAKE_ORIGIN']) expect(Object.keys(m.env ?? {}), k).not.toContain(k);
     expect(m.audience).toBe('household');
+  });
+
+  it('names its egress: the push services the client allows, and the shops from KEEPSAKE_SHOP_HOSTS; the VAPID key as a secret file', () => {
+    const m = parse(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'));
+    expect(m.network.egress).toEqual(PUSH_HOSTS.map((h) => (typeof h === 'string' ? h : '*.notify.windows.com')));
+    expect(m.network.egress_from_config).toEqual(['KEEPSAKE_SHOP_HOSTS']);
+    expect(m.secrets.map((x: { key: string; file: boolean }) => [x.key, x.file])).toEqual([['KEEPSAKE_SEALING_KEY', true], ['KEEPSAKE_VAPID_KEY', true]]);
+    expect(Object.keys(m.env)).not.toContain('KEEPSAKE_VAPID_KEY');
   });
 });
 
