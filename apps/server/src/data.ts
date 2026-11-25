@@ -23,6 +23,8 @@ import {
 } from './household/people';
 import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
 import { setProfile, type ProfileInput } from './household/profile';
+import { checkPeopleChange, createDraw, dropLeavers, editDraw, openDraw, removeDraw, runDraw, type DrawInput } from './draws/draws';
+import { usableKey } from './draws/sealed';
 import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
 import { isId } from './validate';
@@ -32,6 +34,8 @@ import { addWish, approveWish, declineWish, editWish, orderWishes, removeWish, t
 export type { CelebrationInput } from './celebrations/celebrations';
 export type { WishInput } from './wishes/wishes';
 export type { ClaimState, GroupState } from './gifts/gifts';
+export type { DrawInput } from './draws/draws';
+export { MAX_EXCLUSIONS } from './draws/draws';
 export { MAX_WISHES } from './wishes/wishes';
 export { RESET_FRESH_MINUTES } from './auth/passkeys';
 
@@ -156,9 +160,23 @@ export function dataFor(cfg: Config, db: Db) {
       chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, me(r), wishId, amountMinor).id),
       withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, me(r), wishId)),
     },
+    /** A celebration's draw (draws/draws.ts), as the request's person: each returns the celebration's id for the view layer. */
+    draws: {
+      create: (r: Req, celebrationId: string, i: DrawInput) => createDraw(db, me(r), celebrationId, i, day()),
+      edit: (r: Req, celebrationId: string, patch: Partial<DrawInput>) => editDraw(db, me(r), celebrationId, patch, day(), usableKey(cfg)),
+      remove: (r: Req, celebrationId: string) => removeDraw(db, me(r), celebrationId, day()),
+      run: (r: Req, celebrationId: string) => runDraw(db, me(r), celebrationId, day(), usableKey(cfg)),
+      open: (r: Req, celebrationId: string) => openDraw(db, me(r), celebrationId, new Date(), usableKey(cfg)),
+    },
     celebrations: {
       add: (r: Req, i: CelebrationInput) => changed(addCelebration(db, me(r), i).id),
-      edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => { editCelebration(db, me(r), id, patch); changed(0); },
+      edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => {
+        // Someone in a drawn draw stays in the celebration until the draw changes; a draw not drawn yet lets them go.
+        if (patch.people) checkPeopleChange(db, id, patch.people, day());
+        editCelebration(db, me(r), id, patch);
+        if (patch.people) dropLeavers(db, id, patch.people);
+        changed(0);
+      },
       remove: (r: Req, id: string) => changed(removeCelebration(db, me(r), id)),
     },
   };

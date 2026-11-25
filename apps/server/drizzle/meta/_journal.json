@@ -15,6 +15,13 @@
       "when": 1795570312184,
       "tag": "0001_gifts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795571082919,
+      "tag": "0002_draws",
+      "breakpoints": true
     }
   ]
 }

@@ -22,6 +22,12 @@ import { currency, hasPasskey, household, keeps, managersOf, mustGetPerson, type
 import { getProfile, type ProfileRow } from '../household/profile';
 import { NO_GIFTS, calendarOf, fullyGiven, gaveBy, giftsOf, isOver, managesGroup, occasionOf, revealed, seesGifts, thanksFor, type Gifts } from '../gifts/gifts';
 import { allWaiting, canApprove, canEdit, canSee, getWish, seeWish, wishesAddedBy, wishesOf, type Wish } from '../wishes/wishes';
+import {
+  canRedraw, dayHasCome, exclusionsOf, isRevealed, latestDraw, latestDraws, managesDraw, occasionOf as drawDay, openAll, openOwn, opensNow, participantsOf,
+  type Participant,
+} from '../draws/draws';
+import { SealError, usableKey } from '../draws/sealed';
+import { Refused } from '../errors';
 
 /** Each answer with the request it was built for (the seam lets it out on that request only). */
 const VIEWED = new WeakMap<object, object>();
@@ -96,7 +102,7 @@ function requestOptions(o: PublicKeyCredentialRequestOptionsJSON): Record<string
 }
 
 /** Answers that need no viewer: the server's health, the sign-in steps, and the person a passkey has just signed in. */
-export function publicViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, owner: object) {
+export function publicViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealingKey'>, owner: object) {
   const answer = marker(owner);
   return {
     health: (version: string): Viewed<api.Health> => answer({ ok: true, version, mode: cfg.mode }),
@@ -111,9 +117,10 @@ export function publicViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, ow
 /** A one-time link, from what createInvite returned (data.ts hands it over; routes never get one to pass). */
 export const linkAnswer = (owner: object, i: { url: string; expiresAt: Date }): Viewed<api.OneTimeLink> => mark(owner, { url: str(i.url), expiresAt: i.expiresAt.toISOString() });
 
-export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: Person, owner: object) {
+export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealingKey'>, viewer: Person, owner: object) {
   const answer = marker(owner);
-  const now = today(cfg.timezone);
+  const instant = new Date();
+  const now = today(cfg.timezone, instant);
   // Read when the first answer is built, not when the view is made: a route may change things in between
   // (`view(req).wish(editWish(...))` makes the view first).
   const lazy = <T>(f: () => T) => { let v: T | undefined; return () => (v ??= f()); };
@@ -185,6 +192,35 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
   const listOf = (personId: string, f: ListFor) => onList(present(seen(wishesOf(db, [personId]))), f).sort(byPosition).map(wish);
 
   const celebrationPeople = lazy(() => peopleByCelebration(db));
+
+  // Draws (ADR 0004): what anyone may know of a draw is who is in it, its settings, and how many have opened theirs.
+  // Only `draw()` opens a sealed row: the viewer's own, once they opened it; every row only after the reveal.
+  const draws = lazy(() => latestDraws(db));
+  const drawPeople = lazy(() => {
+    const m = new Map<string, Participant[]>();
+    for (const p of participantsOf(db, [...draws().values()].map((d) => d.id))) m.set(p.drawId, [...(m.get(p.drawId) ?? []), p]);
+    return m;
+  });
+  const isMine = (p: Participant) => p.kind === 'person' && p.personId === viewer.id;
+  const drawSummary = (c: Celebration): api.DrawSummary | null => {
+    const d = draws().get(c.id);
+    if (!d) return null;
+    const ps = drawPeople().get(d.id) ?? [];
+    const mine = ps.find(isMine);
+    return {
+      year: d.year, on: drawDay(c, d), drawn: d.drawnAt !== null, opened: ps.filter((p) => p.openedAt).length, total: ps.length,
+      mine: !mine ? 'out' : mine.openedAt ? 'opened' : opensNow(d, instant) ? 'ready' : 'waiting',
+    };
+  };
+  const byName = (a: api.PersonRef | null, b: api.PersonRef | null) => (a?.name ?? '').localeCompare(b?.name ?? '') || (a?.id ?? '').localeCompare(b?.id ?? '');
+  const sealingKey = () => {
+    const k = usableKey(cfg);
+    if (!k) throw new Refused(409, 'draws need the sealing key on the server (KEEPSAKE_SEALING_KEY)');
+    return k;
+  };
+  const opening = <T>(f: () => T): T => {
+    try { return f(); } catch (e) { if (e instanceof SealError) throw new Refused(409, 'this draw does not open with the server\'s key'); throw e; }
+  };
   const waiting = () => seen(allWaiting(db)).filter(({ w }) => canApprove(db, viewer, w));
   const celebration = (c: Celebration, approvals = waiting()): api.Celebration => {
     const next = nextDate(c.date, c.recurrence, now);
@@ -194,6 +230,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
       poster: c.poster, recurrence: c.recurrence, host: ref(c.hostId), people: celebrationPeople().get(c.id) ?? [],
       toApprove: approvals.filter(({ w }) => w.celebrationId === c.id).length,
       canEdit: canChange(viewer, c),
+      draw: drawSummary(c),
     };
   };
   const celebrationNames = lazy(() => new Map(allCelebrations(db).map((c) => [c.id, c.name])));
@@ -268,6 +305,43 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
       });
     },
     celebration: (id: string): Viewed<api.Celebration> => answer(celebration(mustGetCelebration(db, id))),
+    /**
+     * A celebration's draw as the viewer may see it: who is in it, its settings, "4 of 6 opened"; the exclusions for
+     * its host only; the viewer's own receiver once they opened theirs; every pair, for the participants and the host,
+     * only from the reveal date on. Nothing in it depends on whom anyone else drew before that.
+     */
+    draw: (celebrationId: string): Viewed<api.Draw> => {
+      const c = mustGetCelebration(db, celebrationId);
+      const d = latestDraw(db, c.id);
+      if (!d) throw new Refused(404, 'this celebration has no draw');
+      const ps = participantsOf(db, [d.id]);
+      const byId = new Map(ps.map((p) => [p.id, p]));
+      const pref = (pid: string) => { const p = byId.get(pid); return p?.personId ? ref(p.personId) : null; };
+      const manages = managesDraw(viewer, c);
+      const mine = ps.find(isMine);
+      const revealed = isRevealed(c, d, now);
+      const receiver = mine?.openedAt && d.drawnAt ? opening(() => openOwn(db, sealingKey(), d, mine)) : null;
+      const pairs = revealed && d.drawnAt && (mine || manages)
+        ? [...opening(() => openAll(db, sealingKey(), d))].map(([g, r]) => ({ giver: pref(g), receiver: pref(r) })).sort((a, b) => byName(a.giver, b.giver))
+        : null;
+      return answer({
+        celebrationId: c.id, year: d.year, on: drawDay(c, d),
+        budgetMinor: d.budgetMinor, kidsDraw: d.kidsDraw === 1, notLastYear: d.notLastYear === 1,
+        drawTogetherAt: d.drawTogetherAt, revealOn: d.revealOn,
+        people: ps.filter((p) => p.kind === 'person').map((p) => ref(p.personId!)).filter((r): r is api.PersonRef => r !== null).sort(byName),
+        exclusions: manages
+          ? exclusionsOf(db, d.id).map((e) => [pref(e.a), pref(e.b)].sort(byName)).filter((x): x is [api.PersonRef, api.PersonRef] => x.every(Boolean))
+            .sort((x, y) => byName(x[0], y[0]) || byName(x[1], y[1]))
+          : null,
+        drawn: d.drawnAt !== null, redrawnAt: d.redrawnAt,
+        opened: ps.filter((p) => p.openedAt).length, total: ps.length,
+        over: dayHasCome(c, d, now), revealed,
+        canManage: manages,
+        canRedraw: manages && canRedraw(db, viewer, c, d, now),
+        mine: mine ? { opened: mine.openedAt !== null, canOpen: mine.openedAt === null && opensNow(d, instant), receiver: receiver ? pref(receiver) : null } : null,
+        pairs,
+      });
+    },
     celebrationPage: (id: string): Viewed<api.CelebrationPage> => {
       const view = celebration(mustGetCelebration(db, id));
       return answer({

@@ -1,7 +1,7 @@
 // Settings from the environment (contracts/homerslab-app.yaml, docker-compose.yml). Secrets are read here and
 // nowhere else, and never logged. Security settings live here only, never in an editable database row (spec §10).
 import { isIP } from 'node:net';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve, isAbsolute } from 'node:path';
 
 export type Mode = 'homerslab' | 'standalone';
 
@@ -25,7 +25,16 @@ export interface Config {
   /** The address people open (scheme, host, port): WebAuthn's origin, and the Origin every change must carry. */
   origin: string;
   rpId: string;
+  /**
+   * Where the key that seals the draws comes from (ADR 0004; never the database): KEEPSAKE_SEALING_KEY (base64, 32
+   * bytes) or KEEPSAKE_SEALING_KEY_FILE; standalone falls back to a file it makes once in KEEPSAKE_KEYS_DIR (default
+   * ./keys; /keys in the image), its own folder, never the data folder a backup copies. null: no key, so no draw is
+   * made or opened (homerslab mode without the secret). The value never reaches a log (`toJSON` hides it).
+   */
+  sealingKey: SealingKeySource | null;
 }
+
+export type SealingKeySource = { value: string } | { file: string; create: boolean };
 
 /**
  * What HomersLab's edge must promise before Keepsake trusts its identity headers (HomersLab #236): it deletes every
@@ -54,6 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   try { new Intl.DateTimeFormat('en', { timeZone: timezone }); } catch { throw new Error(`KEEPSAKE_TZ must be an IANA time zone, not ${timezone}`); }
   const dataDir = resolve(env.KEEPSAKE_DATA_DIR ?? './data');
   const origin = parseOrigin(env.KEEPSAKE_ORIGIN ?? `http://localhost:${port}`);
+  const sealingKey = keySource(env, mode, dataDir);
   return {
     mode,
     dataDir,
@@ -68,7 +78,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rateLimitProxy: proxy,
     origin: origin.origin,
     rpId: origin.hostname,
+    sealingKey,
   };
+}
+
+/** The sealing key's source; refuses a key file inside the data folder (a backup of it would carry the key). */
+function keySource(env: NodeJS.ProcessEnv, mode: Mode, dataDir: string): SealingKeySource | null {
+  const inside = (f: string) => { const r = relative(dataDir, resolve(f)); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
+  const hidden = <T extends object>(o: T, shown: object): T => Object.defineProperty(o, 'toJSON', { value: () => shown, enumerable: false });
+  if (env.KEEPSAKE_SEALING_KEY) return Object.freeze(hidden({ value: env.KEEPSAKE_SEALING_KEY }, { value: '[hidden]' }));
+  const file = env.KEEPSAKE_SEALING_KEY_FILE ? resolve(env.KEEPSAKE_SEALING_KEY_FILE)
+    : mode === 'standalone' ? join(resolve(env.KEEPSAKE_KEYS_DIR ?? './keys'), 'sealing.key') : null;
+  if (!file) return null;
+  if (inside(file)) throw new Error('the sealing key must not be in KEEPSAKE_DATA_DIR (a backup of the data would carry it): set KEEPSAKE_KEYS_DIR or KEEPSAKE_SEALING_KEY_FILE elsewhere');
+  return Object.freeze({ file, create: !env.KEEPSAKE_SEALING_KEY_FILE });
 }
 
 /** One spelling per address: IPv4-mapped IPv6 as IPv4, IPv6 compressed and lower case; null if it is not an IP. */

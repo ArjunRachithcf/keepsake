@@ -1,0 +1,516 @@
+// Draws (spec §3, ADR 0004), through the API:
+// - the rules: the host sets up, draws, re-draws and removes; kids only with "Kids draw too"; exclusions the host's
+//   only; an impossible set of rules refused naming the rule; draw together; the reveal; re-draw rules (freely until
+//   someone opened theirs; then only before the day, never once a gift is bought, everyone told); the key;
+// - the surprise, on the raw responses: for every viewer (the host and admin, adults in and out of the draw, a kid in
+//   it, a kid out of it) and every state before the reveal, each reading answer is byte for byte the same whoever the
+//   others drew, as long as the viewer's own person is the same: nothing anyone but the giver receives depends on
+//   their receiver;
+// - the database alone (a copy, a backup) says nothing about who drew whom: the raw tables of two households with
+//   different pairs differ only in the sealed bytes, every sealed row has one length, and nothing opens without the key.
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
+import { afterEach, describe, expect, it } from 'vitest';
+import { buildApp, type BuiltApp } from '../src/app';
+import type { Db } from '../src/db/open';
+import * as t from '../src/db/schema';
+import { RUNS_A_DAY, sealAssignments } from '../src/draws/draws';
+import { openReceiver, sealingKey } from '../src/draws/sealed';
+import { loadConfig } from '../src/config';
+import { ORIGIN, TEST_KEY, homerslab, household, inDays, sessionCookie, standalone, withDraws } from './helpers';
+
+const NOW = '2026-11-01T10:00:00.000Z';
+const KEY = Buffer.from(TEST_KEY, 'base64');
+const PEOPLE = ['alex', 'sam', 'robin', 'mia', 'leo', 'quinn', 'uma'] as const;
+type Who = (typeof PEOPLE)[number];
+
+let built: BuiltApp | undefined;
+afterEach(async () => { await built?.app.close(); built = undefined; });
+
+/**
+ * household() with draws, plus Quinn and Uma (adults). Christmas: Quinn joins it. The draw (Alex hosts): Alex, Sam,
+ * Robin, Quinn and, with kids drawing, Mia. Not in it: Leo (a kid), Uma (not in the celebration).
+ */
+function home(): Db {
+  const db = withDraws(household());
+  db.insert(t.person).values([
+    { id: 'p_quinn', name: 'Quinn', role: 'adult', createdAt: NOW },
+    { id: 'p_uma', name: 'Uma', role: 'adult', createdAt: NOW },
+  ]).run();
+  db.insert(t.celebrationPerson).values({ celebrationId: 'c_xmas', personId: 'p_quinn' }).run();
+  db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+  return db;
+}
+async function start(db: Db, cfg = standalone()) {
+  await built?.app.close();
+  built = await buildApp(cfg, db);
+  const cookies = Object.fromEntries(PEOPLE.map((p) => [p, sessionCookie(db, `p_${p}`)])) as Record<Who, string>;
+  const as = (who: Who) => ({
+    get: (url: string) => built!.app.inject({ url, headers: { cookie: cookies[who] } }),
+    send: (method: 'POST' | 'PATCH' | 'DELETE' | 'PUT', url: string, payload?: object) =>
+      built!.app.inject({ method, url, payload, headers: { cookie: cookies[who], origin: ORIGIN } }),
+  });
+  return as;
+}
+const DRAW = '/api/celebrations/c_xmas/draw';
+const IN = ['p_alex', 'p_sam', 'p_robin', 'p_quinn', 'p_mia'];
+const pid = (person: string) => `dp_${person.slice(2)}`;
+const audit = (db: Db) => db.select().from(t.audit).all();
+
+/** The draw's participants: Quinn and (kids drawing) Mia join Alex, Sam and Robin. */
+function fiveInDraw(db: Db) {
+  db.update(t.draw).set({ kidsDraw: 1 }).where(eq(t.draw.id, 'd_xmas')).run();
+  for (const p of ['quinn', 'mia']) db.insert(t.drawParticipant).values({ id: `dp_${p}`, drawId: 'd_xmas', kind: 'person', personId: `p_${p}`, createdAt: NOW }).run();
+}
+
+describe('setting up a draw', () => {
+  it('only the host (or an admin when there is none) sets it up; never a kid', async () => {
+    const db = home();
+    const as = await start(db);
+    const body = { people: ['p_alex', 'p_sam', 'p_robin'] };
+    expect((await as('sam').send('POST', '/api/celebrations/c_cousins/draw', body)).statusCode).toBe(403);
+    expect((await as('mia').send('POST', '/api/celebrations/c_cousins/draw', body)).statusCode).toBe(403);
+    const ok = await as('alex').send('POST', '/api/celebrations/c_cousins/draw', body);
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect(ok.json()).toMatchObject({ drawn: false, opened: 0, total: 3, canManage: true, revealOn: null, exclusions: [], mine: { opened: false, canOpen: false, receiver: null } });
+    expect((await as('alex').send('POST', '/api/celebrations/c_cousins/draw', body)).json()).toEqual({ error: 'this celebration has a draw already' });
+    // a celebration whose host left: the admins run it
+    db.update(t.celebration).set({ hostId: null }).where(eq(t.celebration.id, 'c_cousins')).run();
+    expect((await as('alex').send('PATCH', '/api/celebrations/c_cousins/draw', { budgetMinor: 3000 })).statusCode).toBe(200);
+    expect((await as('sam').send('PATCH', '/api/celebrations/c_cousins/draw', { budgetMinor: 3000 })).statusCode).toBe(403);
+    expect(audit(db).map((a) => a.action)).toEqual(['draw_created', 'draw_changed']);
+  });
+
+  it('checks who draws, the exclusions and the reveal date', async () => {
+    const db = home();
+    const as = await start(db);
+    const post = (b: object) => as('alex').send('POST', '/api/celebrations/c_cousins/draw', b);
+    expect((await post({ people: ['p_alex', 'p_uma'] })).json()).toEqual({ error: 'people: someone is not in the celebration' });
+    db.insert(t.celebrationPerson).values({ celebrationId: 'c_cousins', personId: 'p_mia' }).run();
+    expect((await post({ people: ['p_alex', 'p_mia'] })).json()).toEqual({ error: 'people: a kid draws only when kids draw too' });
+    expect((await post({ people: ['p_alex', 'p_sam'], exclusions: [['p_alex', 'p_robin']] })).json()).toEqual({ error: 'exclusions: two different people of the draw each' });
+    expect((await post({ people: ['p_alex', 'p_sam'], exclusions: [['p_alex', 'p_alex']] })).json()).toEqual({ error: 'exclusions: two different people of the draw each' });
+    expect((await post({ people: ['p_alex'], revealOn: inDays(10) })).json()).toEqual({ error: 'revealOn: a day after the celebration, or never' });
+    expect((await post({ people: ['p_alex'], drawTogetherAt: 'tomorrow' })).json()).toEqual({ error: 'drawTogetherAt: a date and time (ISO 8601 with a time zone), or null' });
+    expect((await post({ people: ['p_alex'], extra: 1 })).statusCode).toBe(400);
+    const ok = await post({ people: ['p_alex', 'p_mia', 'p_sam'], kidsDraw: true, revealOn: inDays(11), drawTogetherAt: '2030-01-01T18:00:00+01:00' });
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect(ok.json()).toMatchObject({ kidsDraw: true, revealOn: inDays(11), drawTogetherAt: '2030-01-01T17:00:00.000Z' });
+    // turning "kids draw too" off with a kid in it
+    expect((await as('alex').send('PATCH', '/api/celebrations/c_cousins/draw', { kidsDraw: false })).json()).toEqual({ error: 'people: a kid draws only when kids draw too' });
+  });
+
+  it('a budget needs the household\'s currency', async () => {
+    const db = home();
+    db.delete(t.setting).run();
+    const as = await start(db);
+    expect((await as('alex').send('PATCH', DRAW, { budgetMinor: 2500 })).json()).toEqual({ error: 'the household has no currency yet: an admin sets it first' });
+  });
+
+  it('exclusions are the host\'s only to see', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    const r = await as('alex').send('PATCH', DRAW, { exclusions: [['p_sam', 'p_robin']] });
+    expect(r.json().exclusions).toEqual([[{ id: 'p_robin', name: 'Robin' }, { id: 'p_sam', name: 'Sam' }]]);
+    for (const who of ['sam', 'robin', 'quinn', 'mia', 'leo', 'uma'] as const) {
+      const g = await as(who).get(DRAW);
+      expect(g.statusCode).toBe(200);
+      expect(g.json().exclusions, who).toBeNull();
+    }
+  });
+});
+
+describe('drawing the names', () => {
+  it('refuses an impossible set of rules naming the rule, audited without pairs', async () => {
+    const db = home();
+    const as = await start(db);
+    // three people, two of them a couple: one of the three can only draw... the couple's partner
+    await as('alex').send('PATCH', DRAW, { exclusions: [['p_sam', 'p_robin']] });
+    const r = await as('alex').send('POST', `${DRAW}/run`);
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'who shouldn\'t draw whom leaves someone nobody to draw: loosen it' });
+    await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam'], exclusions: [] });
+    expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'a draw needs at least 3 people' });
+    expect(db.select().from(t.drawAssignment).all()).toEqual([]);
+    const rows = audit(db);
+    expect(rows.filter((a) => a.action === 'draw_refused')).toHaveLength(2);
+    // the audit names who did what to which draw: nothing else
+    for (const a of rows) expect(Object.keys(a).sort()).toEqual(['action', 'actorId', 'at', 'id', 'subjectId']);
+    expect(new Set(rows.map((a) => a.subjectId))).toEqual(new Set(['d_xmas']));
+  });
+
+  it('draws, each giver opens their own, and only they learn their person', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    expect((await as('sam').send('POST', `${DRAW}/run`)).statusCode).toBe(403);
+    expect((await as('sam').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'the names are not drawn yet' });
+    const r = await as('alex').send('POST', `${DRAW}/run`);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ drawn: true, opened: 0, total: 5, mine: { opened: false, canOpen: true, receiver: null }, pairs: null });
+    expect((await as('leo').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'you are not in this draw' });
+    const received = new Set<string>();
+    for (const who of ['sam', 'robin', 'quinn', 'mia', 'alex'] as const) {
+      const o = await as(who).send('POST', `${DRAW}/open`);
+      expect(o.statusCode, o.body).toBe(200);
+      const mine = o.json().mine;
+      expect(mine.opened).toBe(true);
+      expect(mine.receiver.id).not.toBe(`p_${who}`);
+      received.add(mine.receiver.id);
+      // opening again changes nothing; GET says the same
+      expect((await as(who).get(DRAW)).json().mine).toEqual(mine);
+    }
+    expect(received).toEqual(new Set(IN));
+    expect((await as('uma').get(DRAW)).json()).toMatchObject({ opened: 5, total: 5, mine: null, pairs: null });
+    expect((await as('alex').get('/api/celebrations')).json().upcoming.find((c: { id: string }) => c.id === 'c_xmas').draw).toMatchObject({ drawn: true, opened: 5, total: 5, mine: 'opened' });
+    expect(audit(db).map((a) => a.action)).toEqual(['drawn']);
+  });
+
+  it('nobody opens theirs before the draw-together time', async () => {
+    const db = home();
+    const as = await start(db);
+    await as('alex').send('PATCH', DRAW, { drawTogetherAt: new Date(Date.now() + 3_600_000).toISOString() });
+    await as('alex').send('POST', `${DRAW}/run`);
+    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: false, canOpen: false, receiver: null });
+    expect((await as('sam').get('/api/home')).json().celebrations.find((c: { id: string }) => c.id === 'c_xmas').draw.mine).toBe('waiting');
+    expect((await as('sam').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'not yet: everyone opens together at the set time' });
+    await as('alex').send('PATCH', DRAW, { drawTogetherAt: new Date(Date.now() - 1000).toISOString() });
+    expect((await as('sam').get(DRAW)).json().mine.canOpen).toBe(true);
+    expect((await as('sam').send('POST', `${DRAW}/open`)).statusCode).toBe(200);
+  });
+
+  it('without the sealing key, no draw is made or opened', async () => {
+    const db = home();
+    await start(db, homerslab('127.0.0.1', { KEEPSAKE_SEALING_KEY: '' }));
+    const h = { 'x-homerslab-person': 'hl-alex', 'x-homerslab-name': 'Alex', 'x-homerslab-role': 'admin', origin: ORIGIN };
+    const r = await built!.app.inject({ method: 'POST', url: `${DRAW}/run`, headers: h, remoteAddress: '127.0.0.1' });
+    expect(r.json()).toEqual({ error: 'draws need the sealing key on the server (KEEPSAKE_SEALING_KEY)' });
+    expect(db.select().from(t.draw).get()!.drawnAt).toBeNull();
+  });
+
+  it('a key that is not 32 bytes of base64 is no key: draws are refused, and its value is in no answer or error', async () => {
+    const db = home();
+    const secret = 'not-a-key-but-secret-text';
+    const as = await start(db, standalone({ KEEPSAKE_SEALING_KEY: secret }));
+    const r = await as('alex').send('POST', `${DRAW}/run`);
+    expect(r.json()).toEqual({ error: 'draws need the sealing key on the server (KEEPSAKE_SEALING_KEY)' });
+    expect(JSON.stringify(standalone({ KEEPSAKE_SEALING_KEY: secret }))).not.toContain(secret);
+  });
+
+  it('is limited to a number of tries a day', async () => {
+    const db = home();
+    const as = await start(db);
+    for (let i = 0; i < RUNS_A_DAY; i++) expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'the names were drawn often today: try again tomorrow' });
+  });
+});
+
+describe('re-drawing', () => {
+  it('freely until someone opened theirs; then everyone opens theirs again', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    await as('alex').send('POST', `${DRAW}/run`);
+    const again = await as('alex').send('POST', `${DRAW}/run`);
+    expect(again.json()).toMatchObject({ drawn: true, redrawnAt: null, canRedraw: true });
+    await as('sam').send('POST', `${DRAW}/open`);
+    const third = await as('alex').send('POST', `${DRAW}/run`);
+    expect(third.statusCode).toBe(200);
+    expect(third.json().redrawnAt).not.toBeNull();
+    expect((await as('sam').get(DRAW)).json()).toMatchObject({ opened: 0, mine: { opened: false, canOpen: true, receiver: null } });
+    expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'redrawn', 'redrawn']);
+  });
+
+  it('a change of who draws, once drawn, draws again; a refused one leaves the rules as they were', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    await as('alex').send('POST', `${DRAW}/run`);
+    await as('sam').send('POST', `${DRAW}/open`);
+    const r = await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_quinn'] });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toMatchObject({ total: 4, opened: 0 });
+    expect(db.select().from(t.drawAssignment).all()).toHaveLength(4);
+    const bad = await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam'] });
+    expect(bad.json()).toEqual({ error: 'a draw needs at least 3 people' });
+    expect((await as('alex').get(DRAW)).json().total).toBe(4);
+    expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'draw_changed', 'redrawn', 'draw_refused']);
+  });
+
+  it('not once a participant has marked a gift bought for another, once someone opened theirs', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    await as('alex').send('POST', `${DRAW}/run`);
+    await as('sam').send('POST', `${DRAW}/open`);
+    // Quinn bought Sam's cookbook (a Christmas wish)
+    await as('quinn').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 });
+    expect((await as('alex').get(DRAW)).json().canRedraw).toBe(true);
+    await as('quinn').send('PATCH', '/api/wishes/w_sam_book/claim', { state: 'bought' });
+    expect((await as('alex').get(DRAW)).json().canRedraw).toBe(false);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'a gift is bought already: the draw stays as it is' });
+    expect((await as('alex').send('DELETE', DRAW)).json()).toEqual({ error: 'a gift is bought already: the draw stays as it is' });
+  });
+
+  it('a gift bought for the host is not the host\'s to learn: their own wishes are left out', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    await as('alex').send('POST', `${DRAW}/run`);
+    await as('sam').send('POST', `${DRAW}/open`);
+    await as('quinn').send('PUT', '/api/wishes/w_alex_tent/claim', { quantity: 1 });
+    await as('quinn').send('PATCH', '/api/wishes/w_alex_tent/claim', { state: 'bought' });
+    expect((await as('alex').get(DRAW)).json().canRedraw).toBe(true);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+  });
+
+  it('once its day has come, only the reveal date changes', async () => {
+    const db = home();
+    const as = await start(db);
+    await as('alex').send('POST', `${DRAW}/run`);
+    const last = db.select().from(t.draw).get()!;
+    db.update(t.draw).set({ year: last.year - 1 }).where(eq(t.draw.id, 'd_xmas')).run();
+    expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
+    expect((await as('alex').send('PATCH', DRAW, { budgetMinor: 100 })).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
+    expect((await as('alex').send('DELETE', DRAW)).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
+    const r = await as('alex').send('PATCH', DRAW, { revealOn: inDays(0) });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'draw_changed', 'reveal_set']);
+  });
+
+  it('someone in a drawn draw stays in the celebration until the draw changes; before it is drawn they just leave it', async () => {
+    const db = home();
+    const as = await start(db);
+    const people = ['p_alex', 'p_sam', 'p_mia', 'p_leo', 'p_quinn'];
+    const out = await as('alex').send('PATCH', '/api/celebrations/c_xmas', { people });
+    expect(out.statusCode).toBe(200);
+    expect((await as('alex').get(DRAW)).json().people.map((p: { id: string }) => p.id)).toEqual(['p_alex', 'p_sam']);
+    await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_quinn'] });
+    await as('alex').send('POST', `${DRAW}/run`);
+    expect((await as('alex').send('PATCH', '/api/celebrations/c_xmas', { people: ['p_alex', 'p_sam', 'p_mia'] })).json())
+      .toEqual({ error: 'they are in the draw: take them out of the draw first' });
+  });
+});
+
+describe('not last year\'s person', () => {
+  async function lastYear(pairs: [string, string][]) {
+    const db = home();
+    const year = db.select().from(t.draw).get()!.year;
+    db.insert(t.draw).values({ id: 'd_last', celebrationId: 'c_xmas', year: year - 1, rulesVersion: 1, drawnAt: NOW, createdAt: NOW, updatedAt: NOW }).run();
+    for (const p of ['alex', 'sam', 'robin', 'quinn']) db.insert(t.drawParticipant).values({ id: `dl_${p}`, drawId: 'd_last', kind: 'person', personId: `p_${p}`, createdAt: NOW }).run();
+    sealAssignments(db, KEY, 'd_last', new Map(pairs.map(([g, r]) => [`dl_${g}`, `dl_${r}`])));
+    db.insert(t.drawParticipant).values({ id: 'dp_quinn', drawId: 'd_xmas', kind: 'person', personId: 'p_quinn', createdAt: NOW }).run();
+    db.update(t.draw).set({ notLastYear: 1 }).where(eq(t.draw.id, 'd_xmas')).run();
+    return { db, as: await start(db) };
+  }
+
+  it('nobody draws last year\'s person again', async () => {
+    const last: [string, string][] = [['alex', 'sam'], ['sam', 'robin'], ['robin', 'quinn'], ['quinn', 'alex']];
+    const { db, as } = await lastYear(last);
+    for (let i = 0; i < 15; i++) {
+      expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+      for (const row of db.select().from(t.drawAssignment).where(eq(t.drawAssignment.drawId, 'd_xmas')).all()) {
+        const r = openReceiver(KEY, 'd_xmas', row.giverId, row.sealed);
+        expect(last.map(([g, x]) => `dp_${g}>dp_${x}`)).not.toContain(`${row.giverId}>${r}`);
+      }
+    }
+  });
+
+  it('refused naming the rule when it leaves no way', async () => {
+    // Alex kept apart from Sam and Robin can only draw Quinn, who drew Alex last year: no way left for Quinn and the rest
+    const { as } = await lastYear([['alex', 'sam'], ['sam', 'robin'], ['robin', 'quinn'], ['quinn', 'alex']]);
+    await as('alex').send('PATCH', DRAW, { exclusions: [['p_alex', 'p_sam'], ['p_alex', 'p_robin']] });
+    expect((await as('alex').send('POST', `${DRAW}/run`)).json())
+      .toEqual({ error: 'not last year\'s person leaves no way to draw: turn it off or loosen who shouldn\'t draw whom' });
+    await as('alex').send('PATCH', DRAW, { notLastYear: false });
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+  });
+});
+
+describe('the reveal', () => {
+  /** A drawn draw whose day has passed (last year's), with a reveal date. */
+  async function past(revealOn: string | null) {
+    const db = home();
+    fiveInDraw(db);
+    const year = db.select().from(t.draw).get()!.year - 1;
+    db.update(t.draw).set({ year, drawnAt: NOW, revealOn }).where(eq(t.draw.id, 'd_xmas')).run();
+    sealAssignments(db, KEY, 'd_xmas', new Map(IN.map((p, i) => [pid(p), pid(IN[(i + 1) % IN.length]!)])));
+    return { db, as: await start(db) };
+  }
+
+  it('from the reveal date on, the participants and the host see every pair; nobody else does', async () => {
+    const { as } = await past(inDays(-1));
+    for (const who of ['alex', 'sam', 'robin', 'quinn', 'mia'] as const) {
+      const pairs = (await as(who).get(DRAW)).json().pairs as { giver: { id: string }; receiver: { id: string } }[];
+      expect(pairs.map((p) => `${p.giver.id}>${p.receiver.id}`).sort(), who).toEqual(IN.map((p, i) => `${p}>${IN[(i + 1) % IN.length]}`).sort());
+    }
+    for (const who of ['leo', 'uma'] as const) expect((await as(who).get(DRAW)).json()).toMatchObject({ revealed: true, pairs: null });
+  });
+
+  it('never by default, and not before its date', async () => {
+    for (const revealOn of [null, inDays(1)]) {
+      const { as } = await past(revealOn);
+      for (const who of PEOPLE) expect((await as(who).get(DRAW)).json(), `${who} ${revealOn}`).toMatchObject({ revealed: false, pairs: null });
+    }
+  });
+});
+
+// --- The surprise on the raw responses ------------------------------------------------------------------------------
+
+const READS = ['/api/home', '/api/home?for=c_xmas', '/api/celebrations', '/api/celebrations/c_xmas', '/api/celebrations/c_cousins',
+  DRAW, '/api/household', '/api/auth/session', '/api/me/passkeys',
+  ...['alex', 'sam', 'robin', 'mia', 'leo', 'quinn'].flatMap((p) => [`/api/people/p_${p}`, `/api/people/p_${p}?for=c_xmas`])];
+
+/** Every derangement of the five. */
+function derangements(xs: string[]): Map<string, string>[] {
+  const out: Map<string, string>[] = [];
+  const go = (i: number, used: Set<string>, m: Map<string, string>) => {
+    if (i === xs.length) { out.push(new Map(m)); return; }
+    for (const r of xs) {
+      if (r === xs[i] || used.has(r)) continue;
+      used.add(r); m.set(xs[i]!, r);
+      go(i + 1, used, m);
+      used.delete(r); m.delete(xs[i]!);
+    }
+  };
+  go(0, new Set(), new Map());
+  return out;
+}
+const ALL = derangements(IN);
+/** Two assignments that agree on the viewer's own person (if they draw) and differ for everyone else's. */
+function twins(viewer: string): [Map<string, string>, Map<string, string>] {
+  for (const a of ALL) {
+    for (const b of ALL) {
+      if (a === b || (IN.includes(viewer) && a.get(viewer) !== b.get(viewer))) continue;
+      // differ for every other giver if possible (else as many as can)
+      if (IN.filter((g) => g !== viewer).every((g) => a.get(g) !== b.get(g))) return [a, b];
+    }
+  }
+  throw new Error('no twins');
+}
+
+interface State { opened: (viewer: string) => string[]; together?: 'later'; revealOn?: 'after'; redrawn?: true }
+const STATES: Record<string, State> = {
+  'drawn, nobody opened': { opened: () => [] },
+  'drawn, the viewer opened': { opened: (v) => IN.filter((p) => p === v) },
+  'drawn, everyone opened': { opened: () => IN },
+  'everyone but the viewer opened': { opened: (v) => IN.filter((p) => p !== v) },
+  'draw together later': { opened: () => [], together: 'later' },
+  'a reveal date set, not reached': { opened: () => IN, revealOn: 'after' },
+  'drawn again after some opened': { opened: (v) => IN.filter((p) => p !== v).slice(0, 2), redrawn: true },
+};
+
+async function answers(viewer: Who, assignment: Map<string, string>, s: State): Promise<Record<string, string>> {
+  const db = home();
+  fiveInDraw(db);
+  db.update(t.draw).set({
+    drawnAt: NOW, drawTogetherAt: s.together ? '2099-01-01T00:00:00.000Z' : null, revealOn: s.revealOn ? '2099-01-01' : null,
+    redrawnAt: s.redrawn ? NOW : null,
+  }).where(eq(t.draw.id, 'd_xmas')).run();
+  sealAssignments(db, KEY, 'd_xmas', new Map([...assignment].map(([g, r]) => [pid(g), pid(r)])));
+  for (const p of s.opened(`p_${viewer}`)) db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, pid(p))).run();
+  const as = await start(db);
+  const out: Record<string, string> = {};
+  for (const u of READS) {
+    const r = await as(viewer).get(u);
+    expect(r.statusCode, `${viewer} ${u}: ${r.body}`).toBe(200);
+    out[u] = `${r.body}\n${JSON.stringify(Object.entries(r.headers).filter(([k]) => k !== 'date').sort())}`;
+  }
+  return out;
+}
+
+describe.each(Object.keys(STATES))('the surprise when %s: each viewer\'s answers do not depend on whom the others drew', (state) => {
+  it.each(PEOPLE)('%s', async (who) => {
+    const [a, b] = twins(`p_${who}`);
+    const one = await answers(who, a, STATES[state]!);
+    const two = await answers(who, b, STATES[state]!);
+    expect(two).toEqual(one);
+    // and the viewer's own person is in their draw answer only once they opened theirs
+    const own = JSON.parse(one[DRAW]!.split('\n')[0]!).mine as { receiver: { id: string } | null } | null;
+    const opened = STATES[state]!.opened(`p_${who}`).includes(`p_${who}`);
+    if (IN.includes(`p_${who}`)) expect(own?.receiver?.id ?? null).toBe(opened ? a.get(`p_${who}`) : null);
+    else expect(own).toBeNull();
+  });
+});
+
+describe('the database alone says nothing about who drew whom', () => {
+  /** Every row of every table, as stored: sealed bytes as hex. */
+  const dump = (db: Db) => {
+    const tables = (db.$client.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%' ORDER BY name").all() as { name: string }[]).map((x) => x.name);
+    return Object.fromEntries(tables.map((n) => [n, (db.$client.prepare(`SELECT rowid AS _rowid, * FROM "${n}" ORDER BY rowid`).all() as Record<string, unknown>[])
+      .map((row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, Buffer.isBuffer(v) ? v.toString('hex') : v])))]));
+  };
+  async function drawn(assignment: Map<string, string>) {
+    const db = home();
+    fiveInDraw(db);
+    db.update(t.draw).set({ drawnAt: NOW }).where(eq(t.draw.id, 'd_xmas')).run();
+    sealAssignments(db, KEY, 'd_xmas', new Map([...assignment].map(([g, r]) => [pid(g), pid(r)])));
+    return db;
+  }
+
+  it('two households with different pairs differ only in the sealed bytes', async () => {
+    const [a, b] = twins('nobody');
+    const one = dump(await drawn(a)), two = dump(await drawn(b));
+    const blank = (d: ReturnType<typeof dump>) => ({ ...d, draw_assignment: d.draw_assignment!.map((r) => ({ ...r, sealed: '…' })), session: [] });
+    expect(blank(two)).toEqual(blank(one));
+    expect(two.draw_assignment).not.toEqual(one.draw_assignment);
+  });
+
+  it('every sealed row has one length and holds no id in the clear; it opens only with the key, for its own giver', async () => {
+    const [a] = twins('nobody');
+    const db = await drawn(a);
+    const rows = db.select().from(t.drawAssignment).all();
+    expect(rows).toHaveLength(5);
+    expect(new Set(rows.map((r) => r.sealed.length)).size).toBe(1);
+    for (const p of [...IN, ...IN.map(pid)]) {
+      for (const form of [p, Buffer.from(p).toString('hex'), Buffer.from(p).toString('base64').replace(/=+$/, '')]) {
+        // the giver column names the giver (who is in the draw is no secret); the sealed bytes name nobody
+        expect(rows.map((r) => r.sealed.toString('latin1')).join(), form).not.toContain(form);
+      }
+    }
+    // the key: not in the database; a wrong key opens nothing; a row moved to another giver does not open
+    expect(JSON.stringify(dump(db))).not.toContain(TEST_KEY);
+    expect(JSON.stringify(dump(db))).not.toContain(KEY.toString('hex'));
+    const other = Buffer.alloc(32, 9);
+    for (const r of rows) {
+      expect(() => openReceiver(other, 'd_xmas', r.giverId, r.sealed)).toThrow();
+      expect(openReceiver(KEY, 'd_xmas', r.giverId, r.sealed)).toBe(pid(a.get(`p_${r.giverId.slice(3)}`)!));
+    }
+    expect(() => openReceiver(KEY, 'd_xmas', rows[1]!.giverId, rows[0]!.sealed)).toThrow();
+    expect(() => openReceiver(KEY, 'd_other', rows[0]!.giverId, rows[0]!.sealed)).toThrow();
+  });
+
+  it('a row swapped into another giver\'s place is refused, not shown', async () => {
+    const [a] = twins('nobody');
+    const db = await drawn(a);
+    const rows = db.select().from(t.drawAssignment).all();
+    const robin = rows.find((r) => r.giverId === 'dp_robin')!;
+    db.update(t.drawAssignment).set({ sealed: robin.sealed }).where(eq(t.drawAssignment.giverId, 'dp_sam')).run();
+    db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, 'dp_sam')).run();
+    const as = await start(db);
+    const r = await as('sam').get(DRAW);
+    expect(r.json()).toEqual({ error: 'this draw does not open with the server\'s key' });
+  });
+});
+
+describe('the sealing key', () => {
+  it('standalone makes it once in its keys folder (0600), never inside the data folder', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'keepsake-keys-'));
+    try {
+      const cfg = loadConfig({ KEEPSAKE_DATA_DIR: join(dir, 'data'), KEEPSAKE_KEYS_DIR: join(dir, 'keys') });
+      const key = sealingKey(cfg)!;
+      expect(key).toHaveLength(32);
+      const file = join(dir, 'keys', 'sealing.key');
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(sealingKey(loadConfig({ KEEPSAKE_DATA_DIR: join(dir, 'data'), KEEPSAKE_KEYS_DIR: join(dir, 'keys') }))).toEqual(key);
+      expect(Buffer.from(readFileSync(file, 'utf8').trim(), 'base64')).toEqual(key);
+      expect(() => loadConfig({ KEEPSAKE_DATA_DIR: dir, KEEPSAKE_KEYS_DIR: join(dir, 'k') })).toThrow(/must not be in KEEPSAKE_DATA_DIR/);
+      expect(() => loadConfig({ KEEPSAKE_DATA_DIR: dir, KEEPSAKE_SEALING_KEY_FILE: join(dir, 'x.key') })).toThrow(/must not be in KEEPSAKE_DATA_DIR/);
+      // homerslab mode makes none: HomersLab gives it, or draws stay off
+      expect(loadConfig({ KEEPSAKE_MODE: 'homerslab', KEEPSAKE_EDGE_IDENTITY: 'homerslab-v1', KEEPSAKE_TRUSTED_PROXY: '10.0.0.2', KEEPSAKE_ORIGIN: 'https://k.example', KEEPSAKE_DATA_DIR: dir }).sealingKey).toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});

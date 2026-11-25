@@ -133,16 +133,21 @@ export const profile = sqliteTable('profile', {
   pleaseNoUpdatedAt: text('please_no_updated_at'),
 });
 
-/** What an admin did to someone else's sign-in (an admin's passkey reset). Kept when either person is removed. */
+/**
+ * What an admin did to someone else's sign-in (an admin's passkey reset), and what a host did to a draw (ADR 0004:
+ * who created, changed, drew, re-drew, removed it or set its reveal, and refused tries; never the pairs). Kept when a
+ * person or the draw is removed.
+ */
+export const AUDIT_ACTIONS = ['passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed'] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
   at: text('at').notNull(),
   actorId: text('actor_id').notNull(),
-  action: text('action', { enum: ['passkeys_reset'] }).notNull(),
+  action: text('action', { enum: AUDIT_ACTIONS }).notNull(),
   subjectId: text('subject_id').notNull(),
 }, (t) => [
   index('audit_subject').on(t.subjectId),
-  check('audit_action', sql`${t.action} IN ('passkeys_reset')`),
+  check('audit_action', sql.raw(`action IN (${AUDIT_ACTIONS.map((a) => `'${a}'`).join(', ')})`)),
 ]);
 
 // Gifts (spec §3, ADR 0003): claims and group gifts. The surprise: nothing here ever reaches the person a wish is for
@@ -211,3 +216,70 @@ export const share = sqliteTable('share', {
   check('share_amount', sql`${t.amountMinor} BETWEEN 1 AND 100000000`),
   check('share_named', sql`${t.named} IN (0, 1)`),
 ]);
+
+// Draws (spec §3, ADR 0004): one per celebration and year. Who draws whom is only ever in draw_assignment, sealed per
+// giver with AES-256-GCM under a key that is not in the database (draws/sealed.ts); nothing else here depends on it.
+
+/**
+ * A celebration's draw for one year (its occasion: the celebration's day that year, read from the celebration, so a
+ * postponed day moves it). Rules: kids draw only with kids_draw; not_last_year keeps everyone from last year's person.
+ * draw_together_at: nobody opens before it. reveal_on: from that day (and only after the occasion) the participants
+ * see every pair; null is never.
+ */
+export const draw = sqliteTable('draw', {
+  id: text('id').primaryKey(),
+  celebrationId: text('celebration_id').notNull().references(() => celebration.id, { onDelete: 'cascade' }),
+  year: integer('year').notNull(),
+  rulesVersion: integer('rules_version').notNull(),
+  budgetMinor: integer('budget_minor'),
+  kidsDraw: integer('kids_draw').notNull().default(0),
+  notLastYear: integer('not_last_year').notNull().default(0),
+  drawTogetherAt: text('draw_together_at'),
+  revealOn: text('reveal_on'),
+  drawnAt: text('drawn_at'),
+  /** Set when the names were drawn again after someone had opened theirs: everyone is told to open theirs again. */
+  redrawnAt: text('redrawn_at'),
+  createdBy: text('created_by').references(() => person.id, { onDelete: 'set null' }),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [
+  uniqueIndex('draw_celebration_year').on(t.celebrationId, t.year),
+  check('draw_budget', sql`${t.budgetMinor} IS NULL OR ${t.budgetMinor} BETWEEN 1 AND 100000000`),
+  check('draw_flags', sql`${t.kidsDraw} IN (0, 1) AND ${t.notLastYear} IN (0, 1)`),
+]);
+
+/**
+ * Who is in a draw. kind 'person': someone of the household; 'guest' is M4's (a personal draw link, ADR 0009) and has
+ * no rows yet. opened_at: when they first opened theirs (counted for "4 of 6 opened", never shown per person).
+ */
+export const drawParticipant = sqliteTable('draw_participant', {
+  id: text('id').primaryKey(),
+  drawId: text('draw_id').notNull().references(() => draw.id, { onDelete: 'cascade' }),
+  kind: text('kind', { enum: ['person', 'guest'] }).notNull(),
+  personId: text('person_id').references(() => person.id, { onDelete: 'cascade' }),
+  openedAt: text('opened_at'),
+  createdAt: text('created_at').notNull(),
+}, (t) => [
+  uniqueIndex('draw_participant_person').on(t.drawId, t.personId),
+  check('draw_participant_kind', sql`${t.kind} IN ('person', 'guest')`),
+  check('draw_participant_has_person', sql`${t.kind} <> 'person' OR ${t.personId} IS NOT NULL`),
+]);
+
+/** Two participants who never draw each other, either way (the host's to see and change). */
+export const drawExclusion = sqliteTable('draw_exclusion', {
+  drawId: text('draw_id').notNull().references(() => draw.id, { onDelete: 'cascade' }),
+  a: text('a').notNull().references(() => drawParticipant.id, { onDelete: 'cascade' }),
+  b: text('b').notNull().references(() => drawParticipant.id, { onDelete: 'cascade' }),
+}, (t) => [primaryKey({ columns: [t.drawId, t.a, t.b] }), check('draw_exclusion_order', sql`${t.a} < ${t.b}`)]);
+
+/**
+ * One giver's receiver, sealed (AES-256-GCM, its own IV, the draw and the giver bound in as associated data, a padded
+ * plaintext so every row is the same length). Written in the givers' order, so neither the order of rows nor their
+ * size says anything about who drew whom. key_id: which key sealed it (a short hash, not the key).
+ */
+export const drawAssignment = sqliteTable('draw_assignment', {
+  drawId: text('draw_id').notNull().references(() => draw.id, { onDelete: 'cascade' }),
+  giverId: text('giver_id').notNull().references(() => drawParticipant.id, { onDelete: 'cascade' }),
+  sealed: blob('sealed', { mode: 'buffer' }).notNull(),
+  keyId: text('key_id').notNull(),
+}, (t) => [primaryKey({ columns: [t.drawId, t.giverId] })]);

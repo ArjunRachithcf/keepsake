@@ -578,6 +578,66 @@ export interface paths {
         patch: operations["editCelebration"];
         trace?: never;
     };
+    "/celebrations/{celebrationId}/draw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        /** The celebration's draw as the caller may see it: who is in it, its settings, how many opened theirs; the exclusions for its host only; the caller's own person once they opened theirs; every pair only from the reveal date on */
+        get: operations["getDraw"];
+        put?: never;
+        /** Draw names for the celebration's next day (its host; an admin when it has none). The names are drawn with `run` */
+        post: operations["createDraw"];
+        /** Removes the draw (its host), when who draws whom may still change */
+        delete: operations["removeDraw"];
+        options?: never;
+        head?: never;
+        /** Changes the draw (its host). Once drawn, a change to who draws or the rules draws the names again under the re-draw rules; once its day has come, only the reveal date changes */
+        patch: operations["editDraw"];
+        trace?: never;
+    };
+    "/celebrations/{celebrationId}/draw/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Draws the names, or draws them again (its host): freely until someone opened theirs; after that only before the day, never once a gift is bought, and everyone opens theirs again. An impossible set of rules is a 409 naming the rule */
+        post: operations["runDraw"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/celebrations/{celebrationId}/draw/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A giver opens theirs (from the draw-together time on); the answer then names their person. Hiding it again is the browser's */
+        post: operations["openDraw"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -866,7 +926,87 @@ export interface components {
             /** @description Wishes for it waiting for the caller's yes */
             toApprove: number;
             canEdit: boolean;
+            /** @description Its latest draw, in short (no pairs), or none */
+            draw?: components["schemas"]["DrawSummary"] | null;
         };
+        DrawSummary: {
+            year: number;
+            on: components["schemas"]["Day"];
+            drawn: boolean;
+            /** @description How many have opened theirs (never who) */
+            opened: number;
+            total: number;
+            /**
+             * @description out: not in it; waiting: not drawn yet, or before the draw-together time; ready: to open
+             * @enum {unknown}
+             */
+            mine: "out" | "waiting" | "ready" | "opened";
+        };
+        Draw: {
+            celebrationId: components["schemas"]["Id"];
+            year: number;
+            /** @description Its day: the celebration's day that year */
+            on: components["schemas"]["Day"];
+            /** @description In minor units of the household's currency */
+            budgetMinor: number | null;
+            kidsDraw: boolean;
+            notLastYear: boolean;
+            /** @description Nobody opens theirs before it */
+            drawTogetherAt: components["schemas"]["DateTime"] | null;
+            /** @description From this day on (always after the celebration) the participants see every pair; null: never */
+            revealOn: components["schemas"]["Day"] | null;
+            /** @description Who draws (guests by link join in M4) */
+            people: components["schemas"]["PersonRef"][];
+            /** @description Who shouldn't draw whom (both ways): for its host only, null for everyone else */
+            exclusions: components["schemas"]["PersonRef"][][] | null;
+            drawn: boolean;
+            /** @description Set when the names were drawn again after someone had opened theirs: everyone opens theirs again */
+            redrawnAt: components["schemas"]["DateTime"] | null;
+            /** @description How many have opened theirs (never who) */
+            opened: number;
+            total: number;
+            /** @description Its day has come: only the reveal date changes now */
+            over: boolean;
+            revealed: boolean;
+            canManage: boolean;
+            /** @description For its host: whether the names may be drawn (again) or the rules changed now */
+            canRedraw: boolean;
+            /** @description The caller's own part, if they are in it: their person only once they opened theirs */
+            mine: {
+                opened: boolean;
+                canOpen: boolean;
+                receiver: components["schemas"]["PersonRef"] | null;
+            } | null;
+            /** @description Every giver and their person: only after the reveal date, only for the participants and the host */
+            pairs: {
+                giver: components["schemas"]["PersonRef"] | null;
+                receiver: components["schemas"]["PersonRef"] | null;
+            }[] | null;
+        };
+        DrawInput: {
+            /** @description Who draws: the celebration's people (kids only with kidsDraw) */
+            people: components["schemas"]["Id"][];
+            exclusions?: components["schemas"]["Exclusions"];
+            /** @default false */
+            kidsDraw: boolean;
+            /** @default false */
+            notLastYear: boolean;
+            budgetMinor?: number | null;
+            drawTogetherAt?: components["schemas"]["DateTime"] | null;
+            /** @description A day after the celebration, or null (never, the default) */
+            revealOn?: components["schemas"]["Day"] | null;
+        };
+        DrawPatch: {
+            people?: components["schemas"]["Id"][];
+            exclusions?: components["schemas"]["Exclusions"];
+            kidsDraw?: boolean;
+            notLastYear?: boolean;
+            budgetMinor?: number | null;
+            drawTogetherAt?: components["schemas"]["DateTime"] | null;
+            revealOn?: components["schemas"]["Day"] | null;
+        };
+        /** @description Pairs of people of the draw who never draw each other, either way */
+        Exclusions: components["schemas"]["Id"][][];
         CelebrationInput: {
             name: string;
             date: components["schemas"]["Day"];
@@ -978,6 +1118,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["Wish"];
+            };
+        };
+        /** @description The draw as the caller may see it now */
+        DrawAnswer: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Draw"];
             };
         };
         /** @description Too many tries; wait a minute */
@@ -2079,6 +2228,130 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getDraw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["DrawAnswer"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    createDraw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrawInput"];
+            };
+        };
+        responses: {
+            201: components["responses"]["DrawAnswer"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    removeDraw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    editDraw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrawPatch"];
+            };
+        };
+        responses: {
+            200: components["responses"]["DrawAnswer"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    runDraw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["DrawAnswer"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    openDraw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                celebrationId: components["parameters"]["celebrationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["DrawAnswer"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
 }
