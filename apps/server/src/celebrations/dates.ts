@@ -18,7 +18,8 @@ export const isDate = (v: unknown): v is string => {
 const isLeap = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 const pad = (n: number) => String(n).padStart(2, '0');
 
-function onYear(date: string, year: number): string {
+/** A yearly date on a given year (29 February on 28 February in other years). */
+export function onYear(date: string, year: number): string {
   const [, m, d] = date.split('-').map(Number) as [number, number, number];
   const day = m === 2 && d === 29 && !isLeap(year) ? 28 : d;
   return `${year}-${pad(m)}-${pad(day)}`;

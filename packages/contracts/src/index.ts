@@ -40,6 +40,10 @@ export type MyGift = S['MyGift'];
 export type CelebrationRef = S['CelebrationRef'];
 export type Thanks = S['Thanks'];
 export type Gave = S['Gave'];
+export type DrawSummary = S['DrawSummary'];
+export type Draw = S['Draw'];
+export type DrawInput = S['DrawInput'];
+export type DrawPatch = S['DrawPatch'];
 
 export const MODES = ['homerslab', 'standalone'] as const satisfies readonly Health['mode'][];
 export const ROLES = ['admin', 'adult', 'kid'] as const satisfies readonly Role[];

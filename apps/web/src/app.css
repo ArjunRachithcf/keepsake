@@ -281,3 +281,33 @@ legend { padding: 0; margin-bottom: 6px; }
 .pill:disabled { opacity: 0.5; cursor: default; }
 .gift-bar { height: 6px; margin-top: 4px; border-radius: 3px; background: var(--fill); overflow: hidden; }
 .gift-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent-fill); transition: width var(--dur-snappy) var(--spring-snappy); }
+
+/* The draw (spec §4): a sealed card on the celebration's colours; opening it springs it up and over. */
+.draw-card {
+  position: relative; display: grid; gap: 6px; justify-items: start; min-height: 168px; padding: 20px var(--gutter);
+  border-radius: var(--radius-poster); background: #1C2A4A; color: #FFFFFF; overflow: hidden;
+  transform-origin: 50% 60%;
+}
+.draw-card::after { content: ""; position: absolute; right: -36px; top: -36px; width: 140px; height: 140px; border-radius: 50%; background: #8B9BC4; opacity: 0.35; pointer-events: none; }
+.draw-card > * { position: relative; z-index: 1; }
+.draw-card-open { background: #0F3B34; }
+.draw-card-open::after { background: #D9A33B; }
+.draw-card-reveal { animation: draw-reveal 640ms var(--spring-snappy); }
+@keyframes draw-reveal {
+  0% { transform: perspective(800px) rotateX(70deg) scale(0.9); opacity: 0.2; }
+  60% { transform: perspective(800px) rotateX(-6deg) scale(1.02); opacity: 1; }
+  100% { transform: none; }
+}
+.draw-eyebrow { margin: 0; font-size: var(--fs-foot); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #FFFFFF; }
+.draw-title { margin: 8px 0 4px; font-size: var(--fs-large-title); line-height: 1.15; font-weight: 700; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+.draw-sub { margin: 0; font-size: var(--fs-sub); color: #FFFFFF; }
+.btn-on-poster { margin-top: 8px; background: #FFFFFF; color: #1C2A4A; }
+.btn-text-on-poster { color: #FFFFFF; text-decoration: underline; }
+.draw-actions { margin-top: 12px; align-items: center; }
+.draw-actions .hint { flex-basis: 100%; }
+.next-draw { font-weight: 600; }
+.exclusions:empty { display: none; }
+.exclusions { margin-bottom: 8px; }
+.pair-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pair-pick .input { flex: 1 1 8em; width: auto; }
+@media (prefers-reduced-motion: reduce) { .draw-card-reveal { animation: none; } }

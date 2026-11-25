@@ -7,14 +7,14 @@ import { buildApp, type BuiltApp } from '../src/app';
 import { EDGE_IDENTITY } from '../src/config';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
-import { ORIGIN, expectValid, fakeWebAuthn, hl, homerslab, household, isPublic, ops, request, sessionCookie, spec, standalone } from './helpers';
+import { ORIGIN, expectValid, fakeWebAuthn, hl, homerslab, household, withDraws, isPublic, ops, request, sessionCookie, spec, standalone } from './helpers';
 
 describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)', (mode) => {
   let built: BuiltApp;
   let db: Db;
   let auth: Record<string, string>;
   beforeAll(async () => {
-    db = household();
+    db = withDraws(household());
     auth = mode === 'standalone' ? { cookie: sessionCookie(db, 'p_alex') } : hl('hl-alex', 'Alex', 'admin');
     built = await buildApp(mode === 'standalone' ? standalone() : homerslab(), db, { webauthn: fakeWebAuthn() });
     await built.app.ready();

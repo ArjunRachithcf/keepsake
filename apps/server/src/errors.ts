@@ -38,6 +38,22 @@ export const MESSAGES = [
   'others have chipped in: they take their share back first', 'it is bought: shares stay as they are',
   'you have not chipped in', 'targetMinor or state: one of them', 'that would go over the target',
   'the target cannot go below what is chipped in',
+  // draws (M3): a refusal names a rule, never who drew whom (ADR 0004)
+  'this celebration has no draw', 'only the celebration\'s host runs its draw', 'people: someone is not in the celebration',
+  'people: a kid draws only when kids draw too', 'exclusions: two different people of the draw each',
+  'revealOn: a day after the celebration, or never', 'its day has come: the draw stays as it is',
+  'this celebration has a draw already', 'a gift is bought already: the draw stays as it is',
+  'a draw needs at least 4 people', 'a draw holds at most 100 people',
+  'with not last year\'s person on, everyone needs more people they may draw: loosen who shouldn\'t draw whom',
+  'these rules let someone work out another\'s person: add people or loosen who shouldn\'t draw whom',
+  'it is revealed: it stays revealed', 'the names are drawn: its celebration can only move later',
+  'they are in a draw that can no longer change: remove them after its celebration',
+  'who shouldn\'t draw whom leaves someone nobody to draw: loosen it',
+  'the rules leave too few ways to draw in time: loosen who shouldn\'t draw whom',
+  'with not last year\'s person on, a draw needs at least 5 people',
+  'the names were drawn often today: try again tomorrow', 'draws need the sealing key on the server (KEEPSAKE_SEALING_KEY)',
+'you are not in this draw', 'the names are not drawn yet',
+  'not yet: everyone opens together at the set time', 'they are in the draw: take them out of the draw first',
 ] as const;
 export type Message = (typeof MESSAGES)[number];
 
@@ -46,6 +62,7 @@ export const FIELDS = [
   'name', 'role', 'currency', 'managerIds', 'sizes', 'likes', 'pleaseNo', 'wishIds', 'personId', 'link', 'priceMinor',
   'quantity', 'note', 'mostWanted', 'celebrationId', 'date', 'place', 'poster', 'recurrence', 'people', 'token', 'label',
   'targetMinor', 'amountMinor', 'state', 'named',
+  'exclusions', 'kidsDraw', 'notLastYear', 'budgetMinor', 'drawTogetherAt', 'revealOn',
 ] as const;
 export type Field = (typeof FIELDS)[number];
 
@@ -55,6 +72,7 @@ export const TEMPLATES = [
   'a whole number from # to #', 'true or false', 'an id', 'an id, or null', '# to # ids', 'up to # texts of 1 to # characters',
   'a web address (http or https) of up to # characters', 'a web address (http or https)',
   'a web address (http or https) without a user name or password', 'one of @',
+  'up to # pairs of two ids', 'a date and time (ISO 8601 with a time zone), or null', 'a day (YYYY-MM-DD), or null',
 ] as const;
 export type Template = (typeof TEMPLATES)[number];
 

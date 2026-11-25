@@ -17,6 +17,7 @@ tags:
   - { name: wishes }
   - { name: gifts, description: 'Claims and group gifts: givers only (not the wish''s person, not a kid; ADR 0003)' }
   - { name: celebrations }
+  - { name: draws, description: 'Draw names (ADR 0004): each giver learns only their own person, every pair only after the host''s reveal date' }
 
 paths:
   /health:
@@ -734,6 +735,90 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /celebrations/{celebrationId}/draw:
+    parameters:
+      - { $ref: '#/components/parameters/celebrationId' }
+    get:
+      tags: [draws]
+      operationId: getDraw
+      summary: 'The celebration''s draw as the caller may see it: who is in it, its settings, how many opened theirs; the exclusions for its host only; the caller''s own person once they opened theirs; every pair only from the reveal date on'
+      responses:
+        '200': { $ref: '#/components/responses/DrawAnswer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [draws]
+      operationId: createDraw
+      summary: 'Draw names for the celebration''s next day (its host; an admin when it has none). The names are drawn with `run`'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DrawInput' }
+      responses:
+        '201': { $ref: '#/components/responses/DrawAnswer' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [draws]
+      operationId: editDraw
+      summary: 'Changes the draw (its host). Once drawn, a change to who draws or the rules draws the names again under the re-draw rules; once its day has come, only the reveal date changes'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DrawPatch' }
+      responses:
+        '200': { $ref: '#/components/responses/DrawAnswer' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [draws]
+      operationId: removeDraw
+      summary: Removes the draw (its host), when who draws whom may still change
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /celebrations/{celebrationId}/draw/run:
+    parameters:
+      - { $ref: '#/components/parameters/celebrationId' }
+    post:
+      tags: [draws]
+      operationId: runDraw
+      summary: 'Draws the names, or draws them again (its host): freely until someone opened theirs; after that only before the day, never once a gift is bought since the draw, and everyone opens theirs again. Rules that cannot be drawn, or that would let someone work out another''s person, are a 409 naming the rule'
+      responses:
+        '200': { $ref: '#/components/responses/DrawAnswer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /celebrations/{celebrationId}/draw/open:
+    parameters:
+      - { $ref: '#/components/parameters/celebrationId' }
+    post:
+      tags: [draws]
+      operationId: openDraw
+      summary: 'A giver opens theirs (from the draw-together time on); the answer then names their person. Hiding it again is the browser''s'
+      responses:
+        '200': { $ref: '#/components/responses/DrawAnswer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
 components:
   securitySchemes:
     homerslabPerson:
@@ -794,6 +879,9 @@ components:
     GiverWish:
       description: The wish as the giver sees it now (with its gifts)
       content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } }
+    DrawAnswer:
+      description: The draw as the caller may see it now
+      content: { application/json: { schema: { $ref: '#/components/schemas/Draw' } } }
     TooMany:
       description: Too many tries; wait a minute
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -1217,6 +1305,104 @@ components:
         people: { type: array, items: { $ref: '#/components/schemas/Id' } }
         toApprove: { type: integer, description: 'Wishes for it waiting for the caller''s yes' }
         canEdit: { type: boolean }
+        draw:
+          description: Its latest draw, in short (no pairs), or none
+          anyOf: [{ $ref: '#/components/schemas/DrawSummary' }, { type: 'null' }]
+
+    DrawSummary:
+      type: object
+      additionalProperties: false
+      required: [year, on, drawn, opened, total, mine]
+      properties:
+        year: { type: integer }
+        on: { $ref: '#/components/schemas/Day' }
+        drawn: { type: boolean }
+        opened: { type: integer, description: 'How many have opened theirs (never who)' }
+        total: { type: integer }
+        mine: { enum: [out, waiting, ready, opened], description: 'out: not in it; waiting: not drawn yet, or before the draw-together time; ready: to open' }
+
+    Draw:
+      type: object
+      additionalProperties: false
+      required: [celebrationId, year, on, budgetMinor, kidsDraw, notLastYear, drawTogetherAt, revealOn, people, exclusions, drawn, redrawnAt, opened, total, over, revealed, canManage, canRedraw, mine, pairs]
+      properties:
+        celebrationId: { $ref: '#/components/schemas/Id' }
+        year: { type: integer }
+        on: { $ref: '#/components/schemas/Day', description: 'Its day: the celebration''s day that year' }
+        budgetMinor: { type: [integer, 'null'], description: 'In minor units of the household''s currency' }
+        kidsDraw: { type: boolean }
+        notLastYear: { type: boolean }
+        drawTogetherAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }], description: 'Nobody opens theirs before it' }
+        revealOn: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }], description: 'From this day on (always after the celebration) the participants see every pair; null: never' }
+        people: { type: array, description: 'Who draws (guests by link join in M4)', items: { $ref: '#/components/schemas/PersonRef' } }
+        exclusions:
+          description: 'Who shouldn''t draw whom (both ways): for its host only, null for everyone else'
+          anyOf:
+            - { type: array, items: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/PersonRef' } } }
+            - { type: 'null' }
+        drawn: { type: boolean }
+        redrawnAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }], description: 'Set when the names were drawn again after someone had opened theirs: everyone opens theirs again' }
+        opened: { type: integer, description: 'How many have opened theirs (never who)' }
+        total: { type: integer }
+        over: { type: boolean, description: 'Its day has come: only the reveal date changes now' }
+        revealed: { type: boolean }
+        canManage: { type: boolean }
+        canRedraw: { type: boolean, description: 'For its host: whether the names may be drawn (again) or the rules changed now' }
+        mine:
+          description: 'The caller''s own part, if they are in it: their person only once they opened theirs'
+          anyOf:
+            - type: object
+              additionalProperties: false
+              required: [opened, canOpen, receiver, unreadable]
+              properties:
+                opened: { type: boolean }
+                canOpen: { type: boolean }
+                receiver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+                unreadable: { type: boolean, description: 'Their row does not open with the keys on the server (a lost key): the host draws again' }
+            - { type: 'null' }
+        pairs:
+          description: 'Every giver and their person: only after the reveal date, only for the participants and the host'
+          anyOf:
+            - type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [giver, receiver]
+                properties:
+                  giver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+                  receiver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+            - { type: 'null' }
+
+    DrawInput:
+      type: object
+      additionalProperties: false
+      required: [people]
+      properties:
+        people: { type: array, maxItems: 100, description: 'Who draws: the celebration''s people (kids only with kidsDraw)', items: { $ref: '#/components/schemas/Id' } }
+        exclusions: { $ref: '#/components/schemas/Exclusions' }
+        kidsDraw: { type: boolean, default: false }
+        notLastYear: { type: boolean, default: false }
+        budgetMinor: { type: [integer, 'null'], minimum: 1, maximum: 100000000 }
+        drawTogetherAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        revealOn: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }], description: 'A day after the celebration, or null (never, the default)' }
+
+    DrawPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        people: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/Id' } }
+        exclusions: { $ref: '#/components/schemas/Exclusions' }
+        kidsDraw: { type: boolean }
+        notLastYear: { type: boolean }
+        budgetMinor: { type: [integer, 'null'], minimum: 1, maximum: 100000000 }
+        drawTogetherAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
+        revealOn: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+
+    Exclusions:
+      type: array
+      maxItems: 200
+      description: 'Pairs of people of the draw who never draw each other, either way'
+      items: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/Id' } }
 
     CelebrationInput:
       type: object

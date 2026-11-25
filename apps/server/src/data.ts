@@ -23,6 +23,12 @@ import {
 } from './household/people';
 import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
 import { setProfile, type ProfileInput } from './household/profile';
+import {
+  auditMoves, beforePersonRemoved, veilCelebration, checkCelebrationMove, checkCelebrationRemoval, checkPeopleChange, createDraw, dropLeavers, editDraw, openDraw,
+  removeDraw, runDraw, type DrawInput,
+} from './draws/draws';
+import { keyring } from './draws/sealed';
+import { asDb } from './db/open';
 import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
 import { isId } from './validate';
@@ -32,6 +38,8 @@ import { addWish, approveWish, declineWish, editWish, orderWishes, removeWish, t
 export type { CelebrationInput } from './celebrations/celebrations';
 export type { WishInput } from './wishes/wishes';
 export type { ClaimState, GroupState } from './gifts/gifts';
+export type { DrawInput } from './draws/draws';
+export { MAX_EXCLUSIONS } from './draws/draws';
 export { MAX_WISHES } from './wishes/wishes';
 export { RESET_FRESH_MINUTES } from './auth/passkeys';
 
@@ -128,7 +136,15 @@ export function dataFor(cfg: Config, db: Db) {
     people: {
       add: (r: Req, i: PersonInput) => { admin(r); return addPerson(db, i).id; },
       edit: (r: Req, id: string, patch: Partial<PersonInput>) => { admin(r); editPerson(db, id, patch); },
-      remove: (r: Req, id: string) => changed(removePerson(db, id, admin(r).id)),
+      /** Someone in a drawn draw leaves it first, under the re-draw rules (draws/draws.ts), in the same transaction. */
+      remove: (r: Req, id: string) => {
+        const by = admin(r);
+        db.transaction((tx) => {
+          beforePersonRemoved(asDb(tx), by, id, day(), keyring(cfg));
+          removePerson(asDb(tx), id, by.id);
+        });
+        changed(0);
+      },
       setManagers: (r: Req, kidId: string, ids: string[]) => { admin(r); setManagers(db, kidId, ids); },
       setCurrency: (r: Req, code: string | null) => { admin(r); setCurrency(db, code); },
       hasPasskey: (id: string) => hasPasskey(db, mustGetPerson(db, id).id),
@@ -156,10 +172,33 @@ export function dataFor(cfg: Config, db: Db) {
       chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, me(r), wishId, amountMinor).id),
       withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, me(r), wishId)),
     },
+    /** A celebration's draw (draws/draws.ts), as the request's person: each returns the celebration's id for the view layer. */
+    draws: {
+      create: (r: Req, celebrationId: string, i: DrawInput) => createDraw(db, me(r), celebrationId, i, day()),
+      edit: (r: Req, celebrationId: string, patch: Partial<DrawInput>) => editDraw(db, me(r), celebrationId, patch, day(), keyring(cfg)),
+      remove: (r: Req, celebrationId: string) => removeDraw(db, me(r), celebrationId, day()),
+      run: (r: Req, celebrationId: string) => runDraw(db, me(r), celebrationId, day(), keyring(cfg)),
+      open: (r: Req, celebrationId: string) => openDraw(db, me(r), celebrationId, new Date(), keyring(cfg)),
+    },
     celebrations: {
       add: (r: Req, i: CelebrationInput) => changed(addCelebration(db, me(r), i).id),
-      edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => { editCelebration(db, me(r), id, patch); changed(0); },
-      remove: (r: Req, id: string) => changed(removeCelebration(db, me(r), id)),
+      edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => {
+        // Someone in a drawn draw stays in the celebration until the draw changes; a draw not drawn yet lets them go.
+        if (patch.people) checkPeopleChange(db, id, patch.people, day());
+        // A drawn draw's day only moves later (review H2); a move is audited.
+        const moved = checkCelebrationMove(db, me(r), id, patch, day());
+        editCelebration(db, me(r), id, patch);
+        auditMoves(db, me(r), moved);
+        if (patch.people) dropLeavers(db, id, patch.people);
+        changed(0);
+      },
+      /** A drawn draw before its day goes only under the re-draw rules. */
+      remove: (r: Req, id: string) => {
+        checkCelebrationRemoval(db, me(r), id, day());
+        // Its draws go, but a veil of each secret one stays, so gifts made under it stay unnamed (ADR 0004).
+        db.transaction((tx) => { veilCelebration(asDb(tx), id, day()); removeCelebration(asDb(tx), me(r), id); });
+        return changed(undefined);
+      },
     },
   };
 }

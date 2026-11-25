@@ -7,7 +7,7 @@ icon: icon.svg
 version: 0.1.0
 image: ghcr.io/<owner>/keepsake:0.1.0@sha256:<digest>   # placeholders until the first release; scripts/check-release.sh refuses them
 ports: [{ container: 8080, protocol: http, public: false }]
-volumes: [{ name: data, mount: /data, backup: true, description: 'SQLite database (keepsake.sqlite: household, wishes, celebrations, profiles; sealed draws from M3)' }]
+volumes: [{ name: data, mount: /data, backup: true, description: 'SQLite database (keepsake.sqlite: household, wishes, celebrations, profiles; sealed draws, which open only with KEEPSAKE_SEALING_KEY)' }]
 env:
   KEEPSAKE_MODE: homerslab
   KEEPSAKE_DATA_DIR: /data
@@ -24,7 +24,7 @@ identity:
   household_api: true                      # later: who manages which kid (until then Keepsake's admins set kids' parents)
 audience: household                        # adults and kids (kids' wishes wait for a parent, spec §2)
 secrets:
-  - { key: KEEPSAKE_SEALING_KEY, file: true, description: 'Key that seals the draw assignments (outside the database, ADR 0004); from M3' }
+  - { key: KEEPSAKE_SEALING_KEY, file: true, description: 'Key that seals the draw assignments (32 bytes, base64; outside the database and its backup, ADR 0004). Without it Keepsake runs but makes and opens no draw' }
 config:
   - { key: KEEPSAKE_TZ, optional: true, description: "The household's time zone (IANA, e.g. Europe/Berlin; default UTC): celebrations' days, the morning batch" }
   - { key: KEEPSAKE_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }

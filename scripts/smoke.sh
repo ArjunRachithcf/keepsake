@@ -2,8 +2,9 @@
 # Builds the image and starts it both ways: standalone with docker-compose.yml, and with the environment of the
 # HomersLab manifest (contracts/homerslab-app.yaml). Each must answer /api/health in its mode with the security headers,
 # let nobody in without a person (a forged X-HomersLab-* from anywhere but the trusted proxy included), and standalone
-# must write its one-time setup link to the data folder (0600) instead of making the first visitor admin. homerslab
-# mode must refuse to start without its three settings.
+# must write its one-time setup link to the data folder (0600) instead of making the first visitor admin, and make the
+# key that seals the draws in keys/ (0600), never in data/ and never in the log. homerslab mode must refuse to start
+# without its three settings, and run without a sealing key (draws off).
 # Uses its own compose project (keepsake-m1test-*, or $KEEPSAKE_SMOKE_PROJECT) and removes everything it started.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -16,7 +17,7 @@ hl="$project-hl"
 dc() { KEEPSAKE_IMAGE="$tag" docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" "$@"; }
 cleanup() {
   dc down -v --remove-orphans >/dev/null 2>&1 || true
-  docker rm -f "$hl" "$hl-bare" >/dev/null 2>&1 || true
+  docker rm -fv "$hl" "$hl-bare" >/dev/null 2>&1 || true
   docker volume rm "$hl-data" >/dev/null 2>&1 || true
   docker image rm "$tag" >/dev/null 2>&1 || true
   rm -rf "$work"
@@ -48,8 +49,8 @@ status() { # url [headers as a JS object] [method]: the HTTP status from this ho
 FORGED="{'x-homerslab-person':'hl-someone','x-homerslab-name':'Someone','x-homerslab-role':'admin'}"
 
 # 1. Standalone, as a household would run it.
-mkdir -p "$work/data"
-chmod 755 "$work/data" # as `mkdir data` would make it
+mkdir -p "$work/data" "$work/keys"
+chmod 755 "$work/data" "$work/keys" # as `mkdir data keys` would make them
 port=$((20000 + $$ % 20000))
 KEEPSAKE_PORT="$port" KEEPSAKE_UID="$(id -u)" KEEPSAKE_GID="$(id -g)" dc up -d --no-build
 wait_health "http://127.0.0.1:$port/api/health" standalone
@@ -70,6 +71,12 @@ done
 [ "$(status "http://127.0.0.1:$port/api/household")" = 401 ] || { echo "standalone lets someone in without a passkey" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port/api/household" "$FORGED")" = 401 ] || { echo "standalone believes a HomersLab header" >&2; exit 1; }
 dc logs keepsake 2>&1 | grep -q '/setup#' && { echo "the setup link reached the log" >&2; exit 1; }
+# the draws' key: made once in keys/ for Keepsake's user only, 32 bytes, not in data/, not in the log
+[ "$(stat -c %a "$work/keys/sealing.key")" = 600 ] || { echo "no private sealing key in keys/" >&2; exit 1; }
+[ "$(stat -c %a "$work/keys")" = 700 ] || { echo "keys/ is not 0700" >&2; exit 1; }
+[ "$(base64 -d "$work/keys/sealing.key" | wc -c)" = 32 ] || { echo "the sealing key is not 32 bytes" >&2; exit 1; }
+grep -rqF "$(cat "$work/keys/sealing.key")" "$work/data" && { echo "the sealing key is in data/" >&2; exit 1; }
+dc logs keepsake 2>&1 | grep -qF "$(cat "$work/keys/sealing.key")" && { echo "the sealing key reached the log" >&2; exit 1; }
 
 # 2. HomersLab: the manifest's image settings (port, volume, env).
 env_args=()
@@ -88,6 +95,7 @@ docker run -d --name "$hl" "${env_args[@]}" -e KEEPSAKE_EDGE_IDENTITY=homerslab-
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
   -v "$hl-data:/data" -p "127.0.0.1:$port2:8080" "$tag" >/dev/null
 wait_health "http://127.0.0.1:$port2/api/health" homerslab
+docker logs "$hl" 2>&1 | grep -q 'no sealing key' || { echo "homerslab mode without a sealing key did not say draws are off" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/household" "$FORGED")" = 401 ] || { echo "homerslab believes a header from outside the proxy" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/auth/sign-in/options" null POST)" = 403 ] || { echo "a change without Origin was not refused" >&2; exit 1; }
 echo "smoke: both modes healthy, nobody let in"

@@ -22,6 +22,9 @@ assignment of a draw other than the one where they give (ADR 0004).
 - **Kids see no gifts at all** (decided 2026-11-25, PR #8): not on anyone's wishes, so nothing spoils through a kid. A
   kid sees every list as its person does, and claims and chips in from M5 at the earliest, if ever.
 - **Givers' shares**: other givers see who chipped in and the total, not each other's amounts.
+- **Givers in a draw** (M3, PR #10 review): while a draw is drawn and not revealed, a claim, share or group gift by one of
+  its people for another (made up to its day) names no giver to anyone but the giver, so a gift never says who drew
+  whom (ADR 0004). The counts stay.
 - **Before filtering and sorting**: claims and shares are removed before any filter, count, sort, celebration list or
   "fully claimed"/"gone" flag is computed, so neither a filter, the order, a count nor an empty slot gives one away.
   "Given once, gone everywhere" is applied to everyone **except** the person, who keeps seeing the wish until the

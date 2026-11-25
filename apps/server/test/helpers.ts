@@ -11,11 +11,15 @@ import type { WebAuthn } from '../src/auth/webauthn';
 import { loadConfig } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
 import * as t from '../src/db/schema';
+import { nextDate } from '../src/celebrations/dates';
 
 export const ORIGIN = 'http://localhost:8080';
-export const standalone = () => loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: '/nonexistent' });
-export const homerslab = (proxy = '127.0.0.1') => loadConfig({
+/** The tests' sealing key (made up for them; never a real one). */
+export const TEST_KEY = Buffer.alloc(32, 7).toString('base64');
+export const standalone = (env: NodeJS.ProcessEnv = {}) => loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: '/nonexistent', KEEPSAKE_SEALING_KEY: TEST_KEY, ...env });
+export const homerslab = (proxy = '127.0.0.1', env: NodeJS.ProcessEnv = {}) => loadConfig({
   KEEPSAKE_MODE: 'homerslab', KEEPSAKE_EDGE_IDENTITY: 'homerslab-v1', KEEPSAKE_TRUSTED_PROXY: proxy, KEEPSAKE_ORIGIN: ORIGIN, KEEPSAKE_DATA_DIR: '/nonexistent',
+  KEEPSAKE_SEALING_KEY: TEST_KEY, ...env,
 });
 
 export interface Schema { type?: string | string[]; enum?: unknown[]; pattern?: string; required?: string[]; properties?: Record<string, Schema>; items?: Schema; $ref?: string; allOf?: Schema[]; anyOf?: Schema[]; minItems?: number }
@@ -72,6 +76,9 @@ const PARAMS: Record<string, Record<string, string>> = {
   startGroupGift: { wishId: 'w_mia_bike' }, editGroupGift: { wishId: 'w_mia_bike' }, endGroupGift: { wishId: 'w_mia_bike' },
   chipIn: { wishId: 'w_sam_pan' }, withdrawShare: { wishId: 'w_sam_pan' },
   getCelebration: { celebrationId: 'c_xmas' }, editCelebration: { celebrationId: 'c_xmas' }, removeCelebration: { celebrationId: 'c_old' },
+  // withDraws(): Christmas has a draw (Alex hosts it; Alex, Sam, Robin, Mia); the cousins' exchange has none yet
+  getDraw: { celebrationId: 'c_xmas' }, createDraw: { celebrationId: 'c_cousins' }, editDraw: { celebrationId: 'c_xmas' },
+  removeDraw: { celebrationId: 'c_cousins' }, runDraw: { celebrationId: 'c_xmas' }, openDraw: { celebrationId: 'c_xmas' },
 };
 
 /** Bodies that name something real where a bare sample would be refused. */
@@ -91,6 +98,8 @@ const BODIES: Record<string, unknown> = {
   startGroupGift: { targetMinor: 12000 },
   editGroupGift: { targetMinor: 15000 },
   chipIn: { amountMinor: 2500 },
+  createDraw: { people: ['p_alex', 'p_sam', 'p_robin'], budgetMinor: null },
+  editDraw: { drawTogetherAt: null },
 };
 
 export function request(o: SpecOp) {
@@ -168,6 +177,22 @@ export function household(): Db {
   ]).run();
   db.insert(t.claim).values({ id: 'cl_scarf', wishId: 'w_robin_scarf', giverId: 'p_alex', quantity: 1, state: 'given', givenOn: '2025-12-24', createdAt: NOW, updatedAt: NOW }).run();
   db.insert(t.groupGift).values({ wishId: 'w_sam_pan', organizerId: 'p_alex', targetMinor: 8000, state: 'open', createdAt: NOW, updatedAt: NOW }).run();
+  return db;
+}
+
+/** The household's day `n` days from today (UTC, the tests' household time zone). */
+export const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * household() plus draws: Christmas has one (hosted by Alex; Alex, Sam, Robin and, kids drawing too, Mia; not drawn yet), and a cousins'
+ * exchange in ten days (Alex hosts; Alex, Sam, Robin) has none.
+ */
+export function withDraws(db: Db): Db {
+  db.insert(t.celebration).values({ id: 'c_cousins', name: 'Cousins\' exchange', date: inDays(10), poster: 'gold', recurrence: 'none', hostId: 'p_alex', createdAt: NOW }).run();
+  for (const p of ['p_alex', 'p_sam', 'p_robin']) db.insert(t.celebrationPerson).values({ celebrationId: 'c_cousins', personId: p }).run();
+  const year = Number(nextDate('2024-12-24', 'yearly', inDays(0)).slice(0, 4));
+  db.insert(t.draw).values({ id: 'd_xmas', celebrationId: 'c_xmas', year, rulesVersion: 1, kidsDraw: 1, createdBy: 'p_alex', createdAt: NOW, updatedAt: NOW }).run();
+  for (const p of ['alex', 'sam', 'robin', 'mia']) db.insert(t.drawParticipant).values({ id: `dp_${p}`, drawId: 'd_xmas', kind: 'person', personId: `p_${p}`, createdAt: NOW }).run();
   return db;
 }
 

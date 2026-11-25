@@ -108,4 +108,27 @@ export function sizes(b: Body) {
   if (!ok) throw new Refused(400, 'sizes: up to 30 { label, value } of 1 to 40 characters');
   return (v as { label: string; value: string }[]).map((s) => ({ label: s.label.trim(), value: s.value.trim() }));
 }
+import { isDate as isDay } from './celebrations/dates';
 export { isDate } from './celebrations/dates';
+
+/** An instant with its time zone (ISO 8601, e.g. 2026-12-24T18:00:00.000Z or +01:00), or null. Returned in UTC. */
+export function nullableDateTime(b: Body, field: string): string | null | undefined {
+  const v = b[field];
+  if (v === undefined || v === null) return v;
+  const ok = typeof v === 'string' && v.length <= 40 && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/.test(v) && !Number.isNaN(Date.parse(v));
+  return ok ? new Date(v).toISOString() : bad(field, 'a date and time (ISO 8601 with a time zone), or null');
+}
+
+export function nullableDay(b: Body, field: string): string | null | undefined {
+  const v = b[field];
+  if (v === undefined || v === null) return v;
+  return isDay(v) ? v : bad(field, 'a day (YYYY-MM-DD), or null');
+}
+
+/** Pairs of two ids ([[a, b], …]). */
+export function idPairs(b: Body, field: string, max: number): [string, string][] | undefined {
+  const v = b[field];
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v) || v.length > max || !v.every((p) => Array.isArray(p) && p.length === 2 && p.every(isId))) return bad(field, 'up to # pairs of two ids', max);
+  return v as [string, string][];
+}

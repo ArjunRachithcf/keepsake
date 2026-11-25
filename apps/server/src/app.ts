@@ -13,6 +13,7 @@ import { clientKey, dropUntrustedIdentity } from './identity';
 import { isApi, servesPage } from './paths';
 import { authRoutes } from './routes/auth';
 import { celebrationRoutes } from './routes/celebrations';
+import { drawRoutes } from './routes/draws';
 import { systemRoutes } from './routes/system';
 import { giftRoutes } from './routes/gifts';
 import { householdRoutes } from './routes/household';
@@ -71,6 +72,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     wishRoutes(router, data);
     giftRoutes(router, data);
     celebrationRoutes(router, data);
+    drawRoutes(router, data);
   }, { prefix: '/api' });
   const notFound = { error: 'not found' };
   const webDir = cfg.webDir && existsSync(cfg.webDir) ? cfg.webDir : null;
