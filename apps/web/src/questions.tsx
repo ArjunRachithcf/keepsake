@@ -1,8 +1,8 @@
 // Anonymous questions (ADR 0008) and ideas (spec §3) on the screens: the Ask sheet (its promises, starter chips, the
 // sent state), a person's answers, the questions waiting for you on My wishes, and the ideas kept for someone. The
 // server never sends who asked; "yours" is all anyone learns, and only about their own.
-import { useId, useState } from 'react';
-import { api, message, type AskedQuestion, type Celebration, type Idea, type QuestionToAnswer } from './api';
+import { useEffect, useId, useState } from 'react';
+import { api, message, type AskedQuestion, type Celebration, type Celebrations, type Idea, type QuestionToAnswer } from './api';
 import { day } from './format';
 import { Chips, Field, Group, Notice, Sheet } from './ui';
 import { WishForm } from './wish';
@@ -108,12 +108,28 @@ export function HomeQuestions({ questions, meId, celebrations, onChanged }: { qu
         {sheet?.kind === 'wish' && (
           <div className="stack">
             <blockquote className="quote">{sheet.q.text}</blockquote>
-            <WishForm personId={sheet.q.for.id} celebrations={celebrations} answering={sheet.q.id} onDone={() => { setSheet(null); onChanged(); }} />
+            {sheet.q.for.id === meId
+              ? <WishForm personId={meId} celebrations={celebrations} answering={sheet.q.id} onDone={() => { setSheet(null); onChanged(); }} />
+              : <KidWish q={sheet.q} onDone={() => { setSheet(null); onChanged(); }} />}
           </div>
         )}
       </Sheet>
     </>
   );
+}
+
+/** A kid's question answered with a wish: the wish is the kid's, so it offers the kid's own celebrations. */
+function KidWish({ q, onDone }: { q: QuestionToAnswer; onDone: () => void }) {
+  const [cs, setCs] = useState<Celebration[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api<Celebrations>('/celebrations').then((r) => { if (live) setCs(r.upcoming.filter((c) => c.people.includes(q.for.id))); }, (e) => { if (live) setError(message(e)); });
+    return () => { live = false; };
+  }, [q.for.id]);
+  if (error) return <Notice kind="error">{error}</Notice>;
+  if (!cs) return <p className="hint">Loading…</p>;
+  return <WishForm personId={q.for.id} celebrations={cs} answering={q.id} onDone={onDone} />;
 }
 
 function AnswerForm({ q, onDone }: { q: QuestionToAnswer; onDone: () => void }) {

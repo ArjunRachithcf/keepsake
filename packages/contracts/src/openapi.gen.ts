@@ -1396,6 +1396,8 @@ export interface components {
             currency: string | null;
             /** @description Whose wishes the guest sees: the share link's person, or a draw guest's own person once opened (null before, or when it is another guest) */
             person: components["schemas"]["PersonRef"] | null;
+            /** @description That person's sizes, likes and "please no", read-only (null while there is no person) */
+            profile: components["schemas"]["Profile"] | null;
             /** @description A draw link's celebration */
             celebration: {
                 id: components["schemas"]["Id"];

@@ -127,6 +127,9 @@ asker and person; a declined question is shown to its asker only; ideas are for 
 kids; one share link per guest (labelled), a 12-hour guest session from the link; guests see gifts without anyone's
 name, the household sees a guest's claims with the guest's name (unless a draw keeps them unnamed); a guest invited
 after the draw is a re-draw; the import maps unmatched occasions to any time and skips Bought rows.
+Decided on PR #11: a kid does not see questions a parent answered for them (answers are for the givers); guests see
+their person's sizes, likes and "please no" read-only (a draw guest their own person's only); a parent's "Add a wish
+instead" on a kid's question offers the kid's celebrations; import rows are counted by sheet row.
 
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by

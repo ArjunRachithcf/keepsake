@@ -4,7 +4,7 @@
 // guest's name; a guest sees nobody's name on a gift, only their own.
 import { useCallback, useEffect, useId, useState } from 'react';
 import { api, ApiError, message, type AskedQuestion, type GuestPage, type Wish } from '../api';
-import { day, host, money } from '../format';
+import { day, host, money, since } from '../format';
 import { GiftLine, isBought } from '../gift';
 import { AskForm } from '../questions';
 import { takeToken } from './SignIn';
@@ -56,6 +56,7 @@ export function Guest() {
             {page.wishes.length === 0 && <li className="row"><span className="row-sub">Nothing on the list yet.</span></li>}
             {page.wishes.map((w) => <GuestWish key={w.id} wish={w} currency={page.currency} named={Boolean(page.name)} onChanged={() => void load()} />)}
           </Group>
+          <GuestProfile page={page} name={who!} />
           <GuestQuestions questions={page.questions} name={who!} onAsk={() => setAsk(true)} />
         </>
       )}
@@ -133,6 +134,19 @@ function GuestQuestions({ questions, name, onAsk }: { questions: AskedQuestion[]
         </li>
       ))}
       <li className="row"><button type="button" className="row-button" onClick={onAsk}><span aria-hidden="true" className="plus">?</span> Ask {name} something</button></li>
+    </Group>
+  );
+}
+
+/** The person's sizes, likes and "please no", read-only: what a giver buying clothes needs. */
+function GuestProfile({ page, name }: { page: GuestPage; name: string }) {
+  const pr = page.profile;
+  if (!pr || pr.sizes.length + pr.likes.length + pr.pleaseNo.length === 0) return null;
+  return (
+    <Group title="Sizes and likes" footer={`Kept by ${name}'s family.`}>
+      {pr.sizes.length > 0 && <li className="row"><span className="row-title">Sizes</span><span className="row-sub">{pr.sizes.map((s) => `${s.label} ${s.value}`).join(' · ')}</span><span className="row-foot">{since(pr.sizesUpdatedAt)}</span></li>}
+      {pr.likes.length > 0 && <li className="row"><span className="row-title">Likes</span><span className="row-sub">{pr.likes.join(' · ')}</span><span className="row-foot">{since(pr.likesUpdatedAt)}</span></li>}
+      {pr.pleaseNo.length > 0 && <li className="row"><span className="row-title">Please no</span><span className="row-sub">{pr.pleaseNo.join(' · ')}</span><span className="row-foot">{since(pr.pleaseNoUpdatedAt)}</span></li>}
     </Group>
   );
 }

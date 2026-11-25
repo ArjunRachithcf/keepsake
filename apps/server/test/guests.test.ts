@@ -33,6 +33,13 @@ async function start(db: Db) {
   return { inject, person, exchange, guest };
 }
 const cookieOf = (r: { headers: Record<string, unknown> }) => String([r.headers['set-cookie']].flat()[0]).split(';')[0]!;
+/** A profile row with fixed dates, different per `tag`, so two households (or a before and after) differ only in it. */
+const PEOPLE_IDS = ['p_alex', 'p_sam', 'p_robin', 'p_mia', 'p_leo', 'p_quinn', 'p_uma'];
+const setProfile = (db: Db, personId: string, tag: string) => {
+  const row = { personId, sizesJson: JSON.stringify([{ label: 'Shoes', value: `${tag}-38` }]), sizesUpdatedAt: '2026-10-01T10:00:00.000Z',
+    likesJson: JSON.stringify([`${tag} kites`]), likesUpdatedAt: '2026-10-02T10:00:00.000Z', pleaseNoJson: JSON.stringify([`${tag} glitter`]), pleaseNoUpdatedAt: '2026-10-03T10:00:00.000Z' };
+  db.insert(t.profile).values(row).onConflictDoUpdate({ target: t.profile.personId, set: row }).run();
+};
 
 describe('share links', () => {
   it('the token is exchanged once by a POST for a short session; only hashes are kept', async () => {
@@ -109,7 +116,7 @@ describe('share links', () => {
     expect(page.wishes.map((w: { id: string }) => w.id).sort()).toEqual([lantern, kite].sort());
     expect(page.wishes.find((w: { id: string }) => w.id === kite).gift.claims).toEqual([{ giver: null, guest: null, quantity: 1, state: 'claimed', mine: false }]);
     const body = JSON.stringify(page);
-    for (const leak of ['Quinn', 'p_quinn', 'Alex', 'p_alex', 'ideas', 'profile']) expect(body, leak).not.toContain(leak);
+    for (const leak of ['Quinn', 'p_quinn', 'Alex', 'p_alex', 'ideas']) expect(body, leak).not.toContain(leak);
     expect((await as(h, 'gR').send('PUT', '/api/guest/wishes/w_sam_book/claim', { quantity: 1 })).statusCode).toBe(404);
     expect((await as(h, 'gR').send('PUT', '/api/guest/wishes/w_mia_bike/claim', { quantity: 1 })).statusCode).toBe(404);
     h.db.update(t.guestLink).set({ guestName: null }).where(eq(t.guestLink.id, 'l_gR')).run();
@@ -143,6 +150,29 @@ describe('share links', () => {
       for (const k of Object.keys(x)) expect(x[k], `${v} ${k}`).toBe(y[k]);
     }
   }, 30_000);
+  it('a share guest sees their person\'s sizes, likes and "please no", read-only', async () => {
+    const h = await home();
+    await ok(as(h, 'robin').send('PUT', '/api/people/p_robin/profile', { sizes: [{ label: 'Jumper', value: 'M' }], likes: ['Kites'], pleaseNo: ['Glitter'] }));
+    await ok(as(h, 'sam').send('PUT', '/api/people/p_mia/profile', { sizes: [{ label: 'Shoes', value: '31' }] }));
+    expect((await as(h, 'gR').get('/api/guest')).json().profile).toMatchObject({ sizes: [{ label: 'Jumper', value: 'M' }], likes: ['Kites'], pleaseNo: ['Glitter'] });
+    expect((await as(h, 'gM').get('/api/guest')).json().profile).toMatchObject({ sizes: [{ label: 'Shoes', value: '31' }], likes: [], pleaseNo: [] });
+    // Read-only: a guest's session opens no profile route, its own or the household's.
+    for (const u of ['/api/people/p_robin/profile', '/api/guest/profile']) expect([401, 404], u).toContain((await as(h, 'gR').send('PUT', u, { likes: ['x'] })).statusCode);
+    expect(h.db.select().from(t.profile).all().flatMap((r) => JSON.parse(r.likesJson))).toEqual(['Kites']);
+  });
+
+  it.each([
+    { guest: 'gR' as const, person: 'p_robin' },
+    { guest: 'gR2' as const, person: 'p_robin' },
+    { guest: 'gM' as const, person: 'p_mia' },
+  ])('$guest gets the same answers whatever anyone but their person keeps as a profile', async ({ guest, person }) => {
+    const [a, b] = [await home(), await home()];
+    setProfile(a.db, person, 'same'); setProfile(b.db, person, 'same');
+    for (const p of PEOPLE_IDS.filter((x) => x !== person)) setProfile(a.db, p, `a-${p}`);
+    const [x, y] = [await reads(a, guest), await reads(b, guest)];
+    for (const k of Object.keys(x)) expect(x[k], k).toBe(y[k]);
+    expect(x['/api/guest']).toContain('same kites');
+  });
 });
 
 describe('personal draw links', () => {
@@ -228,6 +258,29 @@ describe('personal draw links', () => {
     const viewer = ['p_alex', 'p_sam', 'p_robin'].find((p) => p !== page.person.id)!;
     const c = (await s.person(viewer).get(`/api/people/${page.person.id}`)).json().wishes.find((w: { id: string }) => w.id === wish.id).gift.claims[0];
     expect(c).toMatchObject({ giver: null, guest: null, quantity: 1 });
+  });
+});
+
+describe('a draw guest\'s profiles', () => {
+  it('none before their draw is opened, then their own person\'s only: nobody else\'s changes a byte', async () => {
+    const db = withDraws(household());
+    db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    const s = await start(db);
+    const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
+    const g = s.guest(cookieOf(await s.exchange(made.url)));
+    const before = (await ok(g.get('/api/guest'))).body;
+    expect(JSON.parse(before).profile).toBeNull();
+    const ids = db.select().from(t.person).all().map((p) => p.id);
+    for (const p of ids) setProfile(db, p, `x-${p}`);
+    expect((await ok(g.get('/api/guest'))).body).toBe(before);
+    await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/draw/run'));
+    const opened = (await ok(g.send('POST', '/api/guest/draw/open'))).json();
+    const mine = opened.person.id as string;
+    expect(opened.profile).toMatchObject({ likes: [`x-${mine} kites`] });
+    const after = (await ok(g.get('/api/guest'))).body;
+    for (const p of ids.filter((x) => x !== mine)) setProfile(db, p, `y-${p}`);
+    expect((await ok(g.get('/api/guest'))).body).toBe(after);
+    for (const p of ids.filter((x) => x !== mine)) expect(after, p).not.toContain(`x-${p} `);
   });
 });
 

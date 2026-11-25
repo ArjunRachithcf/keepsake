@@ -1844,12 +1844,13 @@ components:
     GuestPage:
       type: object
       additionalProperties: false
-      required: [kind, name, currency, person, celebration, draw, wishes, questions, lastDay]
+      required: [kind, name, currency, person, profile, celebration, draw, wishes, questions, lastDay]
       properties:
         kind: { enum: [share, draw] }
         name: { type: [string, 'null'], description: 'The guest''s own name (claims wait for it)' }
         currency: { type: [string, 'null'] }
         person: { description: 'Whose wishes the guest sees: the share link''s person, or a draw guest''s own person once opened (null before, or when it is another guest)', anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        profile: { description: 'That person''s sizes, likes and "please no", read-only (null while there is no person)', anyOf: [{ $ref: '#/components/schemas/Profile' }, { type: 'null' }] }
         celebration:
           description: A draw link's celebration
           anyOf:

@@ -21,8 +21,9 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   sign-in) for `keepsake_guest`, HttpOnly, Secure, SameSite=Strict, 12 hours; the guest opens the link again after.
 - **What a guest sees**: the listed wishes of the one person (share link) or, once they opened their draw, their own
   person's list for the celebration; as a giver, but **with nobody's name on a gift** (counts and their own only): a
-  forwarded link should not tell an outsider who in the family gives what. No profile, ideas, household or other
-  people. Guests claim (and mark bought, given, back) but do not chip into group gifts.
+  forwarded link should not tell an outsider who in the family gives what. That person's sizes, likes and "please
+  no", read-only (a godmother buying clothes needs them; a draw guest only their own person's, once opened). No
+  ideas, household or other people. Guests claim (and mark bought, given, back) but do not chip into group gifts.
 - **What the household sees**: a guest's claim with the name the guest gave, except while a draw keeps its people's
   gifts unnamed (guests count as its people). Claims wait until the guest has given a name.
 - **Draw links**: inviting a guest after the names are drawn is a re-draw under the re-draw rules; the draw's rules

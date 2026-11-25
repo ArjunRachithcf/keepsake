@@ -65,6 +65,11 @@ export const builtFor = (payload: unknown): object | undefined => (typeof payloa
 export type ListFor = { celebration: string } | 'any' | null;
 
 const json = <T>(s: string): T => JSON.parse(s) as T;
+const profile = (r: ProfileRow): api.Profile => ({
+  sizes: json(r.sizesJson), sizesUpdatedAt: r.sizesUpdatedAt,
+  likes: json(r.likesJson), likesUpdatedAt: r.likesUpdatedAt,
+  pleaseNo: json(r.pleaseNoJson), pleaseNoUpdatedAt: r.pleaseNoUpdatedAt,
+});
 const str = (v: unknown): string => {
   if (typeof v !== 'string') throw new Error('view: not a string');
   return v;
@@ -277,12 +282,6 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
   };
   const upcoming = (cs: api.Celebration[]) => cs.filter((c) => c.upcoming).sort((a, b) => a.nextDate.localeCompare(b.nextDate) || a.name.localeCompare(b.name));
 
-  const profile = (r: ProfileRow): api.Profile => ({
-    sizes: json(r.sizesJson), sizesUpdatedAt: r.sizesUpdatedAt,
-    likes: json(r.likesJson), likesUpdatedAt: r.likesUpdatedAt,
-    pleaseNo: json(r.pleaseNoJson), pleaseNoUpdatedAt: r.pleaseNoUpdatedAt,
-  });
-
   // Questions (ADR 0008): what the viewer may see, the asker never (only `mine`, about the viewer themselves).
   const wishName = (id: string) => { const w = getWish(db, id); return w && canSee(db, viewer, w) ? w.name : null; };
   const asked = (q: Question) => askedOf(q, isAsker(q, { personId: viewer.id }), instant, cfg.timezone, wishName);
@@ -461,7 +460,8 @@ export type View = ReturnType<typeof viewFor>;
 /**
  * What a guest sees (ADR 0009): only what their link reaches (one person's listed wishes; a draw guest's own person's
  * list for the celebration, once opened), as a giver sees it but with nobody's name on a gift (their own claims marked
- * mine), questions without askers (theirs marked mine), no ideas, no profile, nothing else of the household.
+ * mine), that person's sizes, likes and "please no" (read-only), questions without askers (theirs marked mine), no
+ * ideas, nothing else of the household.
  */
 export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealingKey' | 'sealingKeyPrevious'>, l: GuestLink, owner: object) {
   const answer = marker(owner);
@@ -525,6 +525,8 @@ export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'se
       return answer({
         kind: l.kind, name: l.guestName, currency: currency(db),
         person: person ? { id: person.id, name: person.name } : null,
+        // A godmother buying clothes needs the sizes: the reached person's only (a draw guest's once opened).
+        profile: person ? profile(getProfile(db, person.id)) : null,
         celebration: place ? { id: place.c.id, name: place.c.name, date: drawDay(place.c, place.d), place: place.c.place, poster: place.c.poster } : null,
         draw: place ? {
           drawn: place.d.drawnAt !== null, opened: place.me.openedAt !== null, canOpen: place.me.openedAt === null && opensNow(place.d, instant),
