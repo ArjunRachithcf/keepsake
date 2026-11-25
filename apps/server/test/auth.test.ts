@@ -102,7 +102,9 @@ describe('sign-in', () => {
     const o = (await post('/api/auth/sign-in/options')).json();
     const res = await post('/api/auth/sign-in/verify', { challengeId: o.challengeId, response: { id: 'cred-alex', challenge: o.options.challenge } }, { cookie: `__Host-keepsake_guest=${device}` });
     expect(res.statusCode, res.body).toBe(200);
-    expect([res.headers['set-cookie']].flat().some((c) => String(c).startsWith('__Host-keepsake_guest=;'))).toBe(true);
+    const cleared = [res.headers['set-cookie']].flat().map(String).find((c) => c.startsWith('__Host-keepsake_guest=;'))!;
+    // With the attributes it was set with, or a browser ignores the clearing of a __Host- cookie (fifth review, L-a).
+    for (const a of ['Max-Age=0', 'Path=/', 'HttpOnly', 'Secure', 'SameSite=Strict']) expect(cleared.split('; '), a).toContain(a);
     expect(db.select().from(t.guestSession).all().map((x) => x.id)).toEqual(['s2']);
   });
 

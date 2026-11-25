@@ -6,7 +6,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { SESSION_COOKIE, SESSION_DAYS, cookieOptions } from './auth/sessions';
 import { GUEST_COOKIE } from './guests/guests';
+
 import type { Viewed } from './view/view';
+
+/** How a cookie is cleared: as it was set (cookieOptions), so browsers accept the clearing. */
+const CLEARED = { path: '/', secure: true, httpOnly: true, sameSite: 'strict' as const };
 
 /** A request as a route sees it: path parameters, query and body, nothing else. */
 export interface Req<P extends string = string> {
@@ -70,9 +74,11 @@ export function routerFor(api: FastifyInstance, signInLimit: object): Router {
       const res: Res = Object.freeze({
         created: () => { status = 201; },
         startSession: (token: string) => void reply.setCookie(SESSION_COOKIE, token, cookieOptions(SESSION_DAYS * 86_400)),
-        endSession: () => void reply.clearCookie(SESSION_COOKIE, { path: '/' }),
+        // Cleared with the attributes they were set with (fifth review, L-a): a browser ignores a __Host- cookie
+        // cleared without Secure.
+        endSession: () => void reply.clearCookie(SESSION_COOKIE, CLEARED),
         startGuest: (token: string, maxAge: number) => void reply.setCookie(GUEST_COOKIE, token, cookieOptions(maxAge)),
-        endGuest: () => void reply.clearCookie(GUEST_COOKIE, { path: '/' }),
+        endGuest: () => void reply.clearCookie(GUEST_COOKIE, CLEARED),
       });
       const out = await h(r, res);
       return out === undefined ? reply.code(204).send() : reply.code(status).send(out);

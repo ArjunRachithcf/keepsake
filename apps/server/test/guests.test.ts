@@ -291,7 +291,10 @@ describe('share links', () => {
     const first = await ok(s.exchange(made.url));
     const device = cookieOf(first);
     expect(db.select().from(t.guestLink).where(eq(t.guestLink.id, made.link.id)).get()!.openedBy).not.toBeNull();
-    expect((await s.guest(first).send('POST', '/api/guest/sign-out')).statusCode).toBe(204);
+    const out = await s.guest(first).send('POST', '/api/guest/sign-out');
+    expect(out.statusCode).toBe(204);
+    const cleared = String([out.headers['set-cookie']].flat()[0]).split('; ');
+    for (const a of ['__Host-keepsake_guest=', 'Max-Age=0', 'Path=/', 'HttpOnly', 'Secure', 'SameSite=Strict']) expect(cleared, a).toContain(a);
     expect(db.select().from(t.guestLink).where(eq(t.guestLink.id, made.link.id)).get()!.openedBy).toBeNull();
     expect(db.select().from(t.guestSession).all()).toEqual([]);
     // Not even the device that had it reopens it: only a new address does.
