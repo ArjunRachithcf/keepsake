@@ -99,6 +99,22 @@ describe('share links', () => {
     expect((await s.person('p_sam').get('/api/links')).json().links.find((l: { id: string }) => l.id === robin.link.id).revokedAt).not.toBeNull();
   });
 
+  it('a kid\'s share links follow the kid\'s current parents (review L-c)', async () => {
+    const db = household();
+    const s = await start(db);
+    const made = (await ok(s.person('p_sam').send('POST', '/api/people/p_mia/links', { label: 'Granny' }))).json();
+    const listed = async (who: string) => (await s.person(who).get('/api/links')).json().links.map((l: { id: string }) => l.id);
+    expect([await listed('p_sam'), await listed('p_robin')]).toEqual([[made.link.id], []]);
+    // An admin makes Robin Mia's parent instead of Sam: the link goes with Mia.
+    await ok(s.person('p_alex').send('PUT', '/api/people/p_mia/managers', { managerIds: ['p_robin'] }));
+    expect([await listed('p_sam'), await listed('p_robin'), await listed('p_alex'), await listed('p_mia')]).toEqual([[], [made.link.id], [made.link.id], []]);
+    expect((await s.person('p_sam').send('DELETE', `/api/links/${made.link.id}`)).statusCode).toBe(404);
+    expect((await s.person('p_robin').send('DELETE', `/api/links/${made.link.id}`)).statusCode).toBe(204);
+    // A grown-up's share link stays its maker's (and admins').
+    const robin = (await ok(s.person('p_sam').send('POST', '/api/people/p_robin/links', { label: 'Neighbours' }))).json();
+    expect([await listed('p_sam'), (await listed('p_robin')).includes(robin.link.id)]).toEqual([[robin.link.id], false]);
+  });
+
   it('one answer for every failure: unknown, revoked, and a browser whose household session the link is not for', async () => {
     const db = withDraws(household());
     const s = await start(db);

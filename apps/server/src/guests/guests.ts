@@ -24,7 +24,7 @@ import * as t from '../db/schema';
 import { hashToken, looksLikeToken, newToken } from '../auth/tokens';
 import { getCelebration } from '../celebrations/celebrations';
 import { Refused } from '../errors';
-import { managesKid, mustGetPerson, type Person } from '../household/people';
+import { getPerson, managesKid, mustGetPerson, type Person } from '../household/people';
 import { seesGifts } from '../gifts/gifts';
 import { drawnBy, guestPlace, hostRoleOf, managesDraw, occasionOf, openOwn, participantsOf } from '../draws/draws';
 import type { Keyring } from '../draws/sealed';
@@ -122,11 +122,17 @@ export function linkWorks(db: Db, l: GuestLink, today: string): boolean {
 
 /**
  * Who sees a link in their list and may revoke it: a share link, its maker and admins, but never the person it shares
- * (an admin included) nor a kid; a draw link, the draw's host and admins. Nobody ever gets its token again.
+ * (an admin included) nor a kid; a kid's share link, the kid's current parents (review L-c: when the parents change,
+ * its links go with the kid) and admins; a draw link, the draw's host and admins. Nobody ever gets its token again.
  */
 export function managesLink(db: Db, me: Person, l: GuestLink): boolean {
   if (me.role === 'kid') return false;
-  if (l.kind === 'share') return l.personId !== me.id && (l.createdBy === me.id || me.role === 'admin');
+  if (l.kind === 'share') {
+    if (!l.personId || l.personId === me.id) return false;
+    if (me.role === 'admin') return true;
+    const owner = getPerson(db, l.personId);
+    return owner?.role === 'kid' ? managesKid(db, me, owner) : l.createdBy === me.id;
+  }
   if (me.role === 'admin') return true;
   const c = l.celebrationId ? getCelebration(db, l.celebrationId) : undefined;
   return Boolean(c && managesDraw(me, c, hostRoleOf(db, c)));

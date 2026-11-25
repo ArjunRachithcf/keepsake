@@ -49,8 +49,9 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   kid's own link waits for a parent's yes": there is no such link.)
 - **Who sees its address**: its maker, once, at creation. No route returns a token again; to see one again, make a new
   link (and revoke the old). The screen says not to open it oneself, and never to send it to its person.
-- **Who lists it**: its maker and admins (label, made, revoked; never the address), never the person it shares, an
-  admin included, and never kids. A draw link: the celebration's host and admins.
+- **Who lists it**: its maker and admins (label, made, opened, revoked; never the address), never the person it shares,
+  an admin included, and never kids. A kid's share link: the kid's current parents and admins, so its links go with
+  the kid when an admin changes the kid's parents (second review, L-c). A draw link: the celebration's host and admins.
 - **Defence in depth**: the exchange answers its one failure when the browser carries a household session the link is
   not for: a share link's person or a kid; for a draw link, anyone in that draw (its pairs, and the gifts between its
   people, stay secret from them). Questions' per-person limit counts only delivered questions, which everyone giving
