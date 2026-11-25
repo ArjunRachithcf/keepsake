@@ -1,88 +1,69 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { Health } from '@keepsake/contracts';
+// Keepsake's web app (spec §4): three tabs, My wishes · Family · Celebrations, on a floating glass tab bar; the
+// sign-in and the one-time links before them. A screen never calls the network beyond Keepsake's own API.
+import { useCallback, useEffect, useState } from 'react';
+import { api, message, type AuthSession, type Household } from './api';
+import { HouseholdContext } from './household';
+import { Celebrations, CelebrationView } from './pages/Celebrations';
+import { Family } from './pages/Family';
+import { MyWishes } from './pages/MyWishes';
+import { Person } from './pages/Person';
+import { Enrol, SignIn, takeToken } from './pages/SignIn';
+import { Nav, useRouter } from './router';
+import { Link, Loading, Notice, PageHead } from './ui';
 
-// M0: the three-tab shell (spec §4) with placeholders, and the server's health. The screens arrive with M1.
 const TABS = [
-  { id: 'wishes', label: 'My wishes', note: 'Your wishes, for a celebration or any time, arrive with M1.' },
-  { id: 'family', label: 'Family', note: 'The household and what you give them arrive with M1 and M2.' },
-  { id: 'celebrations', label: 'Celebrations', note: 'Celebrations arrive with M1, their draws with M3.' },
+  { to: '/', tab: 'wishes', label: 'My wishes' },
+  { to: '/family', tab: 'family', label: 'Family' },
+  { to: '/celebrations', tab: 'celebrations', label: 'Celebrations' },
 ] as const;
-type TabId = (typeof TABS)[number]['id'];
-
-function useHealth() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    fetch('/api/health')
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then(setHealth, (e: Error) => setError(e.message));
-  }, []);
-  return { health, error };
-}
 
 export function App() {
-  const [tab, setTab] = useState<TabId>('wishes');
-  const { health, error } = useHealth();
-  const current = TABS.find((t) => t.id === tab) ?? TABS[0];
-  const tabRefs = useRef<Record<TabId, HTMLButtonElement | null>>({ wishes: null, family: null, celebrations: null });
-  // The WAI-ARIA tabs pattern: one tab in the Tab order (roving tabIndex); Left/Right move to the previous/next tab
-  // (wrapping), Home/End to the first/last, and the focused tab is selected (automatic activation).
-  const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    const i = TABS.findIndex((t) => t.id === tab);
-    const next = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: TABS.length - 1 }[e.key];
-    if (next === undefined) return;
-    e.preventDefault();
-    const to = TABS[(next + TABS.length) % TABS.length]!;
-    setTab(to.id);
-    tabRefs.current[to.id]?.focus();
+  const { route, go } = useRouter();
+  const [token] = useState(() => (route.tab === 'setup' || route.tab === 'enrol' ? takeToken() : null));
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [household, setHousehold] = useState<Household | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => setHousehold(await api<Household>('/household')), []);
+  useEffect(() => { api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e))); }, []);
+  useEffect(() => { if (session?.signedIn) reload().catch((e) => setError(message(e))); }, [session, reload]);
+  // The page's title follows the screen.
+  useEffect(() => {
+    const t = TABS.find((x) => x.tab === route.tab)?.label;
+    document.title = t ? `${t} · Keepsake` : 'Keepsake';
+  }, [route.tab]);
+
+  const signedIn = (s: AuthSession) => { setSession(s); go('/'); };
+  const signOut = async () => {
+    await api('/auth/sign-out', { method: 'POST' }).catch(() => undefined);
+    setHousehold(null);
+    setSession(await api<AuthSession>('/auth/session'));
+    go('/');
   };
+
+  if (error) return <main className="auth" id="main"><PageHead title="Keepsake" /><Notice kind="error" title="Keepsake did not answer.">{error}</Notice></main>;
+  if (!session) return <main className="auth" id="main"><Loading /></main>;
+  if (route.tab === 'setup' || route.tab === 'enrol') return <Nav.Provider value={go}><Enrol kind={route.tab} token={token} onSignedIn={signedIn} /></Nav.Provider>;
+  if (!session.signedIn) return <Nav.Provider value={go}><SignIn session={session} onSignedIn={signedIn} /></Nav.Provider>;
+  if (!household) return <main className="screen" id="main"><Loading /></main>;
+
   return (
-    <>
-      <main className="screen" id={`panel-${current.id}`} role="tabpanel" aria-labelledby={`tab-${current.id}`}>
-        <p className="eyebrow">Keepsake</p>
-        <h1 className="large-title">{current.label}</h1>
-        <ul className="group" aria-label={current.label}>
-          <li className="row">
-            <span className="row-title">Coming soon</span>
-            <span className="row-sub">{current.note}</span>
-          </li>
-        </ul>
-        <h2 className="group-header">Server</h2>
-        <ul className="group">
-          <li className="row row-inline">
-            <span className="row-title">Status</span>
-            <span className="row-value" role="status">
-              {error ? `Not answering (${error})` : health ? (health.ok ? 'Running' : 'Not ready') : 'Checking…'}
-            </span>
-          </li>
-          {health && (
-            <>
-              <li className="row row-inline"><span className="row-title">Version</span><span className="row-value">{health.version}</span></li>
-              <li className="row row-inline"><span className="row-title">Mode</span><span className="row-value">{health.mode}</span></li>
-            </>
-          )}
-        </ul>
-      </main>
-      <nav className="tab-bar" aria-label="Keepsake">
-        <div role="tablist" aria-orientation="horizontal" onKeyDown={onTabKey}>
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              id={`tab-${t.id}`}
-              type="button"
-              role="tab"
-              ref={(el) => { tabRefs.current[t.id] = el; }}
-              aria-selected={t.id === tab}
-              tabIndex={t.id === tab ? 0 : -1}
-              aria-controls={`panel-${t.id}`}
-              className="tab"
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </nav>
-    </>
+    <Nav.Provider value={go}>
+      <HouseholdContext.Provider value={{ household, reload }}>
+        <a className="skip" href="#main">Skip to the page</a>
+        <main className="screen" id="main">
+          {route.tab === 'wishes' && <MyWishes />}
+          {route.tab === 'family' && (route.person ? <Person key={route.person} id={route.person} /> : <Family onSignOut={household.mode === 'standalone' ? signOut : undefined} />)}
+          {route.tab === 'celebrations' && (route.celebration ? <CelebrationView key={route.celebration} id={route.celebration} /> : <Celebrations />)}
+        </main>
+        <nav className="tab-bar" aria-label="Keepsake">
+          <ul className="tabs">
+            {TABS.map((t) => (
+              <li key={t.tab}><Link to={t.to} className="tab" aria-current={route.tab === t.tab ? 'page' : undefined}>{t.label}</Link></li>
+            ))}
+          </ul>
+        </nav>
+      </HouseholdContext.Provider>
+    </Nav.Provider>
   );
 }
