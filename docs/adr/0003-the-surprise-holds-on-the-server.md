@@ -28,7 +28,8 @@ assignment of a draw other than the one where they give (ADR 0004).
   celebration is over.
 - **No live stream of claims to the person**: updates to a person carry their own wishes only.
 - **After the celebration**: a giver who chose to put their name on a gift is shown to the person (thank-yous); the
-  others stay hidden for good. The name is off by default and can be put on only once the gift is given and its day
+  others stay hidden for good. A kid's thank-yous go to the kid and to the kid's parents (they help write them; decided
+  2026-11-25, PR #9), also only once the occasion is over. The name is off by default and can be put on only once the gift is given and its day
   is over. "The celebration" is the occasion the gift was claimed for (the wish's celebration, else the person's next
   one), kept with the claim: a claim more than a month past its day when it is marked given counts for the next one;
   with no celebration at all, the day after it was given.

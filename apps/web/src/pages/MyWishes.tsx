@@ -9,7 +9,7 @@ import { Chips, Group, Link, Loading, Notice, PageHead, Poster, Sheet, Switch } 
 import { WishForm, WishRow } from '../wish';
 
 export function MyWishes() {
-  const { me } = useHousehold();
+  const { me, name } = useHousehold();
   const [chip, setChip] = useState<string>('all');
   const [home, setHome] = useState<Home | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,11 +91,11 @@ export function MyWishes() {
       )}
 
       {home.thanks.length > 0 && (
-        <Group title="Thank-yous" footer="Gifts you received. Givers who chose to put their name on one are here so you can thank them; the others stay a surprise.">
+        <Group title="Thank-yous" footer="Gifts you received (and your kids’). Givers who chose to put their name on one are here so you can thank them; the others stay a surprise.">
           {home.thanks.map((x) => (
             <li key={x.wish.id} className="row">
               <span className="row-title">{x.wish.name}</span>
-              <span className="row-sub">{[x.celebration?.name, day(x.on)].filter(Boolean).join(' · ')}</span>
+              <span className="row-sub">{[x.wish.personId === me.id ? null : `For ${name(x.wish.personId)}`, x.celebration?.name, day(x.on)].filter(Boolean).join(' · ')}</span>
               <span className="row-foot">{x.from.length ? `From ${x.from.map((p) => p.name).join(', ')}` : 'From someone who kept it a surprise'}</span>
             </li>
           ))}

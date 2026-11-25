@@ -1095,7 +1095,7 @@ components:
         name: { type: string }
 
     Thanks:
-      description: A gift the caller received, after its celebration; `from` names only the givers who chose to
+      description: A gift the caller (or a kid they are a parent of) received, after its celebration; `from` names only the givers who chose to
       type: object
       additionalProperties: false
       required: [wish, celebration, on, from]
@@ -1290,5 +1290,5 @@ components:
         suggestions: { type: array, description: 'Suggestions for the caller, waiting for their yes', items: { $ref: '#/components/schemas/Wish' } }
         toApprove: { type: array, description: 'Kids'' wishes and suggestions waiting for the caller as their manager', items: { $ref: '#/components/schemas/Wish' } }
         suggested: { type: array, description: 'The caller''s suggestions for others, still waiting', items: { $ref: '#/components/schemas/Wish' } }
-        thanks: { type: array, description: 'Gifts the caller received, after their celebration, with the givers who chose to be named', items: { $ref: '#/components/schemas/Thanks' } }
+        thanks: { type: array, description: 'Gifts the caller received, and for a kid''s parent the kid''s, after their celebration, with the givers who chose to be named', items: { $ref: '#/components/schemas/Thanks' } }
         gave: { type: array, description: 'Gifts the caller gave, after their celebration: where they put their name on each', items: { $ref: '#/components/schemas/Gave' } }

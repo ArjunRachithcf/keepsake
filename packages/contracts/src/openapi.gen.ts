@@ -785,7 +785,7 @@ export interface components {
             id: components["schemas"]["Id"];
             name: string;
         };
-        /** @description A gift the caller received, after its celebration; `from` names only the givers who chose to */
+        /** @description A gift the caller (or a kid they are a parent of) received, after its celebration; `from` names only the givers who chose to */
         Thanks: {
             wish: components["schemas"]["Wish"];
             celebration: components["schemas"]["CelebrationRef"] | null;
@@ -917,7 +917,7 @@ export interface components {
             toApprove: components["schemas"]["Wish"][];
             /** @description The caller's suggestions for others, still waiting */
             suggested: components["schemas"]["Wish"][];
-            /** @description Gifts the caller received, after their celebration, with the givers who chose to be named */
+            /** @description Gifts the caller received, and for a kid's parent the kid's, after their celebration, with the givers who chose to be named */
             thanks: components["schemas"]["Thanks"][];
             /** @description Gifts the caller gave, after their celebration: where they put their name on each */
             gave: components["schemas"]["Gave"][];
