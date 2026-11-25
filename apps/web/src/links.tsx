@@ -1,6 +1,7 @@
 // Guest links (ADR 0009) on the household's side: a share link to someone else's wishes (another grown-up; a kid's:
 // a parent; never the person, since it shows what is taken), a personal draw link for a cousin (the celebration's
-// host), and the links you made with Revoke. A new link's address is shown to its maker once: only its hash is kept.
+// host), and the links you made with New address (the same link, a new token: the way back for a guest locked out
+// of the one device it opens on) and Revoke. A new link's address is shown to its maker once: only its hash is kept.
 // Under HomersLab, guests cannot reach Keepsake yet (Homeward #317): no link is made there.
 import { useCallback, useContext, useEffect, useId, useState } from 'react';
 import { api, message, type GuestLink, type GuestLinkMade, type GuestLinks } from './api';
@@ -36,6 +37,11 @@ export function LinksList({ title, filter, make, footer }: {
           <li key={l.id} className="row row-inline">
             <span className="row-text"><span className="row-title">{l.label}</span><span className="row-sub">{what(l)}</span></span>
             {!l.revokedAt && (
+              <button type="button" className="btn btn-sm" onClick={() => { if (confirm(`A new address for ${l.label}? The old one stops working at once, on every device; ${l.label} keeps everything done with it.`)) void run(async () => setMade(await api<GuestLinkMade>(`/links/${l.id}/address`, { method: 'POST' }))); }}>
+                New address<span className="sr-only"> for {l.label}</span>
+              </button>
+            )}
+            {!l.revokedAt && (
               <button type="button" className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Revoke the link for ${l.label}? It stops working at once.`)) void run(() => api(`/links/${l.id}`, { method: 'DELETE' })); }}>
                 Revoke<span className="sr-only"> {l.label}</span>
               </button>
@@ -57,7 +63,7 @@ export function LinksList({ title, filter, make, footer }: {
         <div className="section">
           <Notice title={`The link for ${made.link.label}`}>
             <p>Send it yourself. It is shown only now: Keepsake keeps no copy. Making a new one is the way to see one again.</p>
-            <p>It opens on one device only: whoever opens it first keeps it, and the list here then says “opened”.</p>
+            <p>It opens on one device only: whoever opens it first keeps it, and the list here then says “opened”. If {made.link.label} is told it was opened on another device (a second browser, a new phone), give it a new address here: the same link, nothing lost.</p>
             {made.link.person
               ? <p><strong>Don’t open it yourself, not even to try it, and never send it to {made.link.person.name}: it shows what has been taken, and once opened it opens nowhere else.</strong></p>
               : <p><strong>Don’t open it yourself, not even to try it, and never send it to anyone in the draw: it shows whom {made.link.label} drew and what is taken. If you are in the draw, you would see your own gifts. Once opened it opens nowhere else, so {made.link.label} would be told it was opened on another device.</strong></p>}

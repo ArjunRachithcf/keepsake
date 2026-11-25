@@ -1,57 +1,82 @@
 // The guest page (spec §4, ADR 0009): what a share link or a personal draw link reaches, in a browser, without an
-// account. The token is in the link's #fragment: it is taken out of the address bar before anything else happens and
-// sent once in a POST for a session, so no request line, log or history entry has it. A link opens on one device only
-// (review N2): the first exchange spends it, and this browser keeps its session as long as the link works. Claims wait
-// for the guest's name; a guest sees nobody's name on a gift, only their own.
+// account. The token is in the link's #fragment: nothing is sent until the guest taps Open (review L-1: a mail scanner
+// that renders the page spends nothing); then it is taken out of the address bar and sent once in a POST, so no request
+// line, log or history entry has it. A link opens on one device only (review N2, M-a): the first exchange spends it
+// and records this browser, which can open its links again; the page's address then names the link (?link=), and every
+// guest request carries it. Claims wait for the guest's name; a guest sees nobody's name on a gift, only their own.
 import { useCallback, useEffect, useId, useState } from 'react';
-import { api, ApiError, message, type AskedQuestion, type GuestPage, type Wish } from '../api';
+import { api, ApiError, message, setGuestLink, type AskedQuestion, type GuestPage, type Wish } from '../api';
 import { day, host, money, since } from '../format';
 import { GiftLine, isBought } from '../gift';
 import { AskForm } from '../questions';
-import { takeToken } from './SignIn';
 import { Field, Group, Loading, Notice, PageHead, Poster, Sheet } from '../ui';
 
-/** The token from the fragment, taken out of the address at once; kept for this page load (StrictMode asks twice). */
-let taken: string | null | undefined;
-const takeGuestToken = () => (taken === undefined ? (taken = takeToken()) : taken);
+/** The link's token, still in the fragment until Open; null without one. */
+const tokenInAddress = () => { const t = location.hash.slice(1); return /^[A-Za-z0-9_-]{43}$/.test(t) ? t : null; };
+/** The link this address names once opened. */
+const linkInAddress = () => new URLSearchParams(location.search).get('link');
 /** The one exchange of this page load: a link opens on one device, so it is never sent twice at once. */
 let exchanged: Promise<GuestPage> | undefined;
 const exchange = (token: string) => (exchanged ??= api<GuestPage>('/guest/session', { method: 'POST', body: { token } }));
 
 export function Guest() {
-  const [token] = useState(takeGuestToken);
+  const [token] = useState(tokenInAddress);
   const [page, setPage] = useState<GuestPage | null>(null);
   const [ended, setEnded] = useState<'ended' | 'elsewhere' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ask, setAsk] = useState(false);
-  const load = useCallback(async (first = false) => {
+  const failed = (e: unknown) => {
+    if (e instanceof ApiError && e.status === 401) setEnded('ended');
+    else if (e instanceof ApiError && e.status === 409) setEnded('elsewhere');
+    else setError(message(e));
+  };
+  const load = useCallback(async () => {
+    try { setPage(await api<GuestPage>('/guest')); setError(null); } catch (e) { failed(e); }
+  }, []);
+  // An address that names its link (opened here before): its page. One with a token waits for Open.
+  useEffect(() => {
+    const link = linkInAddress();
+    if (token) return;
+    if (!link) { setEnded('ended'); return; }
+    setGuestLink(link);
+    void load();
+  }, [token, load]);
+  const open = async () => {
     try {
-      setPage(first && token ? await exchange(token) : await api<GuestPage>('/guest'));
-      setError(null);
+      const p = await exchange(token!);
+      setGuestLink(p.link);
+      history.replaceState(null, '', `${location.pathname}?link=${encodeURIComponent(p.link)}`);
+      setPage(p);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) setEnded('ended');
-      else if (e instanceof ApiError && e.status === 409) setEnded('elsewhere');
-      else setError(message(e));
+      history.replaceState(null, '', location.pathname);
+      failed(e);
     }
-  }, [token]);
-  useEffect(() => { void load(true); }, [load]);
+  };
 
   if (ended) {
     return (
       <main className="screen" id="main"><PageHead title="Keepsake" />
         {ended === 'elsewhere'
-          ? <Notice title="This link was opened on another device">A link opens on one device only, and someone opened this one before you. If that wasn’t you, tell whoever sent it: they can make you a new one.</Notice>
-          : <Notice title="This link does not open anything (any more)">It may have been revoked, or its celebration may be over. Ask whoever sent it for a new one.</Notice>}
+          ? <Notice title="This link was opened on another device">A link opens on one device only, and it was opened on another one before. If that wasn’t you, tell whoever sent it: they can give the same link a new address, and you keep everything you did with it.</Notice>
+          : <Notice title="This link does not open anything (any more)">It may have been revoked, given a new address, or its celebration may be over. Ask whoever sent it for a new address.</Notice>}
       </main>
     );
   }
   if (error) return <main className="screen" id="main"><PageHead title="Keepsake" /><Notice kind="error">{error}</Notice></main>;
+  if (!page && token) {
+    return (
+      <main className="screen" id="main"><PageHead title="Keepsake" eyebrow="By link" sub="Someone shared a wish list with you." />
+        <Notice title="This link opens on one device">Open it on the phone or computer you’ll use for it: after that it opens only there.</Notice>
+        <p className="section"><button type="button" className="btn btn-block btn-lg" onClick={() => void open()}>Open</button></p>
+      </main>
+    );
+  }
   if (!page) return <main className="screen" id="main"><Loading /></main>;
 
   const who = page.person?.name;
   const title = page.kind === 'share' ? `${who ?? 'Someone'}’s wishes` : page.celebration?.name ?? 'Your draw';
   const signOut = async () => {
-    if (!confirm('Leave for good? The link opens on one device only: after this it opens nowhere, and you would need a new one.')) return;
+    if (!confirm('Forget it for good? The link opens on one device only: after this it opens nowhere, until whoever sent it gives it a new address.')) return;
     await api('/guest/sign-out', { method: 'POST' }).catch(() => undefined);
     setEnded('ended');
   };

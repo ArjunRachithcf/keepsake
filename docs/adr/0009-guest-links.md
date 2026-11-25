@@ -99,6 +99,9 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   answer), and the 409's text ("ask whoever sent it for a new address") and the hosts' screens say so. It keeps N2's
   point: a host who reissues to peek ends the guest's session, the guest finds the link no longer opens, and the list
   and audit show the reissue.
+- **The exchange waits for Open** (L-1): the guest page takes the token out of the address and sends nothing until
+  the guest taps Open, so a mail scanner that renders the page spends nothing; the page says the link opens on this
+  device only.
 - **Idle sessions** (L-2): a guest session ends after 30 days without use, on top of the link's own end (and the 400
   days); a household sign-in in the browser clears `keepsake_guest` and ends its sessions.
 - **Forget this link on this device** ends its session and leaves no device holding the link: it opens nowhere until
