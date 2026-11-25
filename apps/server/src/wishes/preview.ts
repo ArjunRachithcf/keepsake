@@ -48,7 +48,8 @@ function product(v: unknown, depth = 0, seen = { n: 0 }): Record<string, unknown
   for (const k of ['@graph', 'mainEntity', 'itemListElement', 'item']) { const p = product(o[k], depth + 1, seen); if (p) return p; }
   return null;
 }
-const scalar = (v: unknown): string | null => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : null);
+/** A JSON-LD value as text, cut to 2000 characters before anything reads it (PR #12 review, M1). */
+const scalar = (v: unknown): string | null => (typeof v === 'string' ? v.slice(0, 2000) : typeof v === 'number' && Number.isFinite(v) ? String(v) : null);
 
 /** At most this many tags of a kind are looked at, and a tag longer than this is skipped: a page cannot make the reading slow. */
 const MAX_TAGS = 2000;
@@ -80,7 +81,9 @@ export function readPage(html: string): Found {
   for (const { tag, end } of tagsOf(page, lower, 'script')) {
     if ((attrs(tag).type ?? '').trim().toLowerCase() !== 'application/ld+json') continue;
     const close = lower.indexOf('</script', end);
-    if (close < 0 || close - end > 100_000) continue;
+    // No end after this one: none after the later ones either (PR #12 review, L1).
+    if (close < 0) break;
+    if (close - end > 100_000) continue;
     let p: Record<string, unknown> | null = null;
     try { p = product(JSON.parse(page.slice(end, close))); } catch { /* not JSON: ignored */ }
     if (!p) continue;
@@ -110,16 +113,46 @@ export function readPage(html: string): Found {
   return found;
 }
 
-/** An amount as pages write it ("1234.5", "1'234.50", "1,234.50", "12,50", "CHF 25.–") in minor units, or null. */
+/** An amount longer than this is no price (and is never looked at further). */
+const MAX_AMOUNT = 40;
+const SKIPPED = new Set([' ', '\t', '\n', '\r', '\u00a0', '\u2009', '\u202f', "'", '\u2019']);
+const DASHES = new Set(['-', '\u2013', '\u2014']);
+const isDigit = (c: string) => c >= '0' && c <= '9';
+const isMark = (c: string) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c === '$' || c === '\u20ac' || c === '\u00a3' || c === '\u00a5';
+
+/**
+ * An amount as pages write it ("1234.5", "1'234.50", "1,234.50", "12,50", "CHF 25.–") in minor units, or null. Read by
+ * plain scanning of at most 40 characters: no pattern runs over a page's text (PR #12 review, M1).
+ */
 export function minorUnits(amount: string, currency: string): number | null {
-  let s = amount.replace(/[\s'\u2019\u00a0]/g, '').replace(/[.,]?[–-]+$/, '').replace(/^[A-Za-z$€£¥]+|[A-Za-z$€£¥]+$/g, '');
-  if (!/^\d{1,12}(?:[.,]\d{3})*(?:[.,]\d{1,2})?$/.test(s)) return null;
-  // The last separator followed by one or two digits is the decimal one; every other separator groups thousands.
-  const dec = /[.,](\d{1,2})$/.exec(s);
-  const whole = (dec ? s.slice(0, dec.index) : s).replace(/[.,]/g, '');
-  const frac = dec ? dec[1]!.padEnd(2, '0') : '00';
-  s = `${whole}.${frac}`;
-  const n = NO_MINOR.has(currency) ? Math.round(Number(s)) : Math.round(Number(s) * 100);
+  if (amount.length > MAX_AMOUNT) return null;
+  let s = [...amount].filter((c) => !SKIPPED.has(c)).join('');
+  // "25.–": a trailing dash (and the separator before it) means no minor units.
+  let end = s.length;
+  while (end > 0 && DASHES.has(s[end - 1]!)) end--;
+  if (end < s.length && end > 0 && (s[end - 1] === '.' || s[end - 1] === ',')) end--;
+  let start = 0;
+  while (start < end && isMark(s[start]!)) start++;
+  while (end > start && isMark(s[end - 1]!)) end--;
+  s = s.slice(start, end);
+  // Runs of digits between single separators.
+  const groups: string[] = [];
+  const seps: string[] = [];
+  let run = '';
+  for (const c of s) {
+    if (isDigit(c)) { run += c; continue; }
+    if ((c !== '.' && c !== ',') || !run) return null;
+    groups.push(run); seps.push(c); run = '';
+  }
+  if (!run) return null;
+  groups.push(run);
+  // The last separator followed by one or two digits is the decimal one; every other one groups thousands.
+  const last = groups.length > 1 && groups.at(-1)!.length <= 2 ? groups.pop()! : null;
+  if (last !== null) seps.pop();
+  if (groups[0]!.length > 12 || groups.slice(1).some((g) => g.length !== 3)) return null;
+  const whole = groups.join('');
+  const frac = last === null ? '00' : last.padEnd(2, '0');
+  const n = NO_MINOR.has(currency) ? Math.round(Number(`${whole}.${frac}`)) : Number(whole) * 100 + Number(frac);
   return Number.isSafeInteger(n) && n >= 0 && n <= MONEY ? n : null;
 }
 

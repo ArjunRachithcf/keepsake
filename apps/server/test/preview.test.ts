@@ -40,6 +40,22 @@ describe('reading a page', () => {
     expect(readPage('<metadata content="x" property="og:title"><meta property="og:title" content="Yes">').name).toBe('Yes');
   });
 
+  it('a price made to be slow is not (PR #12 review, M1): a 99 KB amount of dashes in JSON-LD', () => {
+    const html = `<script type="application/ld+json">{"@type":"Product","name":"x","offers":{"price":"${'-'.repeat(99_000)}1","priceCurrency":"CHF"}}</script>`;
+    const t = performance.now();
+    expect(proposal('l', readPage(html), 'CHF').priceMinor).toBeNull();
+    expect(minorUnits(`${'-'.repeat(50_000)}1`, 'CHF')).toBeNull();
+    expect(minorUnits('1'.repeat(41), 'CHF')).toBeNull();
+    expect(performance.now() - t).toBeLessThan(100);
+  });
+
+  it('JSON-LD script tags without their end do not rescan the page (PR #12 review, L1)', () => {
+    const html = '<script type="application/ld+json">{'.repeat(2000) + 'x'.repeat(900_000);
+    const t = performance.now();
+    readPage(html);
+    expect(performance.now() - t).toBeLessThan(100);
+  });
+
   it.each([
     ['34.90', 'CHF', 3490], ['34,90', 'EUR', 3490], ['1,234.50', 'USD', 123450], ['1.234,50', 'EUR', 123450], ["1'234.50", 'CHF', 123450],
     ['25.–', 'CHF', 2500], ['CHF 25.00', 'CHF', 2500], ['12', 'CHF', 1200], ['1,234', 'USD', 123400], ['1500', 'JPY', 1500],
