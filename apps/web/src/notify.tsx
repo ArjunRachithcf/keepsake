@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 import { api, message, type Notice as NoticeT, type Notices, type PushInfo, type Thanks } from './api';
 import { day } from './format';
+import { b64uToBytes, freshSubscription, syncSubscription, type PushServer } from './push';
 import { useHousehold } from './household';
 import { Group, Link, Notice, Switch } from './ui';
 
@@ -45,7 +46,30 @@ export function NoticesGroup({ refresh }: { refresh: number }) {
   );
 }
 
-const b64uToBytes = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+const server: PushServer = {
+  put: (subscription) => api('/push/subscription', { method: 'PUT', body: subscription }),
+  drop: (endpoint) => api('/push/unsubscribe', { method: 'POST', body: { endpoint } }),
+};
+
+/** Sends this device's subscription again at the app's start and whenever it is shown (PR #12 review, M2, L7). */
+export function useKeepSubscription(signedIn: boolean): void {
+  useEffect(() => {
+    if (!signedIn || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    let key: string | null | undefined;
+    const sync = async () => {
+      try {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (!reg) return;
+        key ??= (await api<PushInfo>('/push')).publicKey;
+        await syncSubscription(reg.pushManager, key, server);
+      } catch { /* the next start or showing tries again */ }
+    };
+    const shown = () => { if (document.visibilityState === 'visible') void sync(); };
+    void sync();
+    document.addEventListener('visibilitychange', shown);
+    return () => document.removeEventListener('visibilitychange', shown);
+  }, [signedIn]);
+}
 
 /** This device's push subscription, if the browser has one for Keepsake. */
 async function currentSubscription(): Promise<PushSubscription | null> {
@@ -79,8 +103,8 @@ export function PushSwitch() {
       if (!want) { await unsubscribeThisDevice(); setOn(false); return; }
       if (await Notification.requestPermission() !== 'granted') { setError('Notifications are blocked for Keepsake in this browser’s settings.'); return; }
       const reg = await navigator.serviceWorker.ready;
-      const sub = (await reg.pushManager.getSubscription()) ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(info.publicKey!) });
-      await api('/push/subscription', { method: 'PUT', body: sub.toJSON() });
+      const sub = await freshSubscription(reg.pushManager, b64uToBytes(info.publicKey!), server);
+      await server.put(sub.toJSON());
       setOn(true);
     } catch (e) { setError(message(e)); }
   };

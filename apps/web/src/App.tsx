@@ -11,7 +11,7 @@ import { Enrol, SignIn, takeToken } from './pages/SignIn';
 import { Guest } from './pages/Guest';
 import { Nav, useRouter } from './router';
 import { Link, Loading, Notice, PageHead } from './ui';
-import { unsubscribeThisDevice } from './notify';
+import { unsubscribeThisDevice, useKeepSubscription } from './notify';
 
 const TABS = [
   { to: '/', tab: 'wishes', label: 'My wishes' },
@@ -29,6 +29,7 @@ export function App() {
   const reload = useCallback(async () => setHousehold(await api<Household>('/household')), []);
   useEffect(() => { if (route.tab !== 'guest') api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e))); }, [route.tab]);
   useEffect(() => { if (session?.signedIn) reload().catch((e) => setError(message(e))); }, [session, reload]);
+  useKeepSubscription(Boolean(session?.signedIn) && route.tab !== 'guest');
 
   const signedIn = (s: AuthSession) => { setSession(s); go('/'); };
   const signOut = async () => {
