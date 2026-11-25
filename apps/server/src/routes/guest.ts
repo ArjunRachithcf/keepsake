@@ -1,6 +1,7 @@
-// A guest's routes (ADR 0009): the token from the link's #fragment is exchanged once (a POST, rate limited like a
-// sign-in) for a short guest session; after that a guest sees what their link reaches, gives their name, claims,
-// opens their draw and asks. Nothing else: these routes take the guest session only, and no other route takes it.
+// A guest's routes (ADR 0009): the token from the link's #fragment is exchanged (a POST, rate limited like a sign-in,
+// only after the guest taps Open) for a guest session on this device, which lasts as long as the link; after that a
+// guest sees what their link reaches (each request names it: X-Keepsake-Link), gives their name, claims, opens their
+// draw and asks. Nothing else: these routes take the guest session only, and no other route takes it.
 import { CLAIM_STATES } from '@keepsake/contracts';
 import type { Data } from '../data';
 import { Refused, type Field } from '../errors';

@@ -14,6 +14,7 @@ import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { ORIGIN, household, inDays, sessionCookie, standalone, withDraws } from './helpers';
 import { as, makeHome, ok, pin, reads, setNow, tokenOf, type Home } from './m4';
+import { openLink } from '../src/guests/guests';
 
 const apps: BuiltApp[] = [];
 const homes: Home[] = [];
@@ -266,6 +267,18 @@ describe('share links', () => {
       expect((await g.get('/api/guest')).statusCode).toBe(401);
       expect(db.select().from(t.guestSession).all()).toEqual([]);
     } finally { vi.useRealTimers(); }
+  });
+
+  it('a first exchange spends the link in one statement: a stale read never opens it twice', async () => {
+    const db = household();
+    const s = await start(db);
+    const made = (await ok(s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' }))).json();
+    const stale = db.select().from(t.guestLink).where(eq(t.guestLink.id, made.link.id)).get()!;
+    expect((await s.exchange(made.url)).statusCode).toBe(200);
+    // Read before it was opened, spent after: the conditional UPDATE refuses, and nothing is written.
+    expect(() => openLink(db, stale, hashToken('d'.repeat(43)), new Date(), 'p_alex')).toThrow('this link was opened on another device');
+    expect(db.select().from(t.guestSession).all()).toHaveLength(1);
+    expect(db.select().from(t.audit).all().filter((a) => a.action === 'link_opened')).toHaveLength(1);
   });
 
   it('the exchange is rate limited like a sign-in', async () => {
@@ -657,6 +670,18 @@ describe('a wish moved out of a draw guest\'s reach (review L-a)', () => {
     expect(db.select().from(t.claim).all().filter((c) => c.wishId.includes('_xmas')).map((c) => [c.wishId, c.state, c.guestId, c.giverId])).toEqual([[`w_${p}_xmas2`, 'bought', null, null]]);
     const other = ['p_alex', 'p_sam', 'p_robin'].find((q) => q !== person && q !== mover)!;
     expect((await s.person(other).send('PUT', `/api/wishes/w_${p}_xmas1/claim`, { quantity: 1 })).statusCode).toBe(200);
+  });
+});
+
+describe('a wish waiting for a parent stays within a guest\'s reach', () => {
+  it('a kid\'s change sends her wish back to a parent: the guest\'s claim stays, and is theirs again once approved', async () => {
+    const h = await home();
+    await ok(as(h, 'gM').send('PUT', '/api/guest/wishes/w_mia_bike/claim', { quantity: 1 }));
+    await ok(as(h, 'mia').send('PATCH', '/api/wishes/w_mia_bike', { note: 'A blue one' }));
+    expect(h.db.select().from(t.wish).where(eq(t.wish.id, 'w_mia_bike')).get()!.state).toBe('awaiting_parent');
+    expect(h.db.select().from(t.claim).where(eq(t.claim.wishId, 'w_mia_bike')).all().map((c) => [c.guestId, c.state])).toEqual([['l_gM', 'claimed']]);
+    await ok(as(h, 'sam').send('POST', '/api/wishes/w_mia_bike/approve'));
+    expect((await as(h, 'gM').get('/api/guest')).json().wishes.find((w: { id: string }) => w.id === 'w_mia_bike').gift.claims).toEqual([expect.objectContaining({ mine: true })]);
   });
 });
 
