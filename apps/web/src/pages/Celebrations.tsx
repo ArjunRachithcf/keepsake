@@ -141,6 +141,8 @@ function CelebrationForm({ celebration, onDone }: { celebration?: Celebration; o
   const [people, setPeople] = useState<string[]>(celebration?.people ?? [me.id]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The celebration was made but its draw was refused: why, and the way to its page.
+  const [made, setMade] = useState<{ c: Celebration; why: string } | null>(null);
   const kids = new Set(household.people.filter((p) => p.role === 'kid').map((p) => p.id));
   const [drawing, setDrawing] = useState(false);
   const [draw, setDraw] = useState<DrawOptions>(() => defaultDrawOptions([], kids, ''));
@@ -155,11 +157,22 @@ function CelebrationForm({ celebration, onDone }: { celebration?: Celebration; o
     try {
       const c = celebration ? await api<Celebration>(`/celebrations/${celebration.id}`, { method: 'PATCH', body })
         : await api<Celebration>('/celebrations', { method: 'POST', body });
-      // The celebration is made; if its draw is refused, the host sets it up on the celebration's page (it says why).
-      if (!celebration && drawBody) await api(`/celebrations/${c.id}/draw`, { method: 'POST', body: drawBody }).catch(() => undefined);
+      // The celebration is made; if its draw is refused, the form says why and the host sets it up on its page.
+      if (!celebration && drawBody) {
+        try { await api(`/celebrations/${c.id}/draw`, { method: 'POST', body: drawBody }); } catch (err) { setMade({ c, why: message(err) }); return; }
+      }
       onDone(celebration ? undefined : c);
     } catch (err) { setError(message(err)); } finally { setBusy(false); }
   };
+  if (made) {
+    return (
+      <div className="stack">
+        <Notice kind="error" title={`${made.c.name} is added, without its draw`}>{made.why}</Notice>
+        <p className="hint">Set up the draw on the celebration’s page with other options.</p>
+        <button type="button" className="btn btn-primary btn-lg btn-block" onClick={() => onDone(made.c)}>Open {made.c.name}</button>
+      </div>
+    );
+  }
   return (
     <form className="stack" onSubmit={save} noValidate>
       <fieldset className="poster-pick">

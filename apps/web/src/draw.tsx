@@ -115,7 +115,8 @@ export function DrawSection({ celebration, onChanged }: { celebration: Celebrati
                 {d.budgetMinor !== null && cur && <p className="draw-sub">Budget {money(d.budgetMinor, cur)}</p>}
                 <button type="button" className="btn-text btn-text-on-poster" onClick={() => setShown(false)}>Hide again</button></>
             )}
-            {mine.opened && !receiver && <><p className="draw-eyebrow">Your draw</p><p className="draw-title">They have left</p><p className="draw-sub">The person you drew is no longer in the household.</p></>}
+            {mine.opened && !receiver && mine.unreadable && <><p className="draw-eyebrow">Your draw</p><p className="draw-title">It does not open</p><p className="draw-sub">Its key is not on the server any more. {celebration.host ? `${celebration.host.name} can draw the names again.` : 'The host can draw the names again.'}</p></>}
+            {mine.opened && !receiver && !mine.unreadable && <><p className="draw-eyebrow">Your draw</p><p className="draw-title">They have left</p><p className="draw-sub">The person you drew is no longer in the household.</p></>}
           </div>
           {mine.opened && receiver && shown && (
             <div className="button-row draw-actions">
@@ -220,7 +221,7 @@ export function DrawFields({ value, onChange, people, yearly, locked }: {
             {p.id === me.id ? `${p.name} (you)` : p.name}
           </label>
         ))}
-        <p className="hint">At least three. Nobody draws themselves.</p>
+        <p className="hint">At least four. Nobody draws themselves, and the rules must leave nobody able to work out someone else’s person.</p>
       </fieldset>
       {!locked && cur && (
         <Field label={`Budget (${cur})`} id={`${id}-b`} hint="Optional: what each gift should cost about.">
