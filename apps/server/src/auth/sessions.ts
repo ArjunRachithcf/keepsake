@@ -23,7 +23,7 @@ export function createSession(db: Db, personId: string, passkeyId: string | null
   return { token, expiresAt };
 }
 
-export const isFresh = (s: Pick<Session, 'createdAt'>, now = new Date()) => now.getTime() - new Date(s.createdAt).getTime() <= FRESH_MINUTES * 60_000;
+export const isFresh = (s: Pick<Session, 'createdAt'>, now = new Date(), minutes = FRESH_MINUTES) => now.getTime() - new Date(s.createdAt).getTime() <= minutes * 60_000;
 
 /** The session a cookie belongs to, if it is still alive; refreshes its last use at most once a minute. */
 export function liveSession(db: Db, token: string | undefined, now = new Date()): Session | null {

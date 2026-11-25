@@ -127,3 +127,15 @@ export const profile = sqliteTable('profile', {
   pleaseNoJson: text('please_no_json').notNull().default('[]'),
   pleaseNoUpdatedAt: text('please_no_updated_at'),
 });
+
+/** What an admin did to someone else's sign-in (an admin's passkey reset). Kept when either person is removed. */
+export const audit = sqliteTable('audit', {
+  id: text('id').primaryKey(),
+  at: text('at').notNull(),
+  actorId: text('actor_id').notNull(),
+  action: text('action', { enum: ['passkeys_reset'] }).notNull(),
+  subjectId: text('subject_id').notNull(),
+}, (t) => [
+  index('audit_subject').on(t.subjectId),
+  check('audit_action', sql`${t.action} IN ('passkeys_reset')`),
+]);

@@ -1,3 +1,13 @@
+CREATE TABLE `audit` (
+	`id` text PRIMARY KEY NOT NULL,
+	`at` text NOT NULL,
+	`actor_id` text NOT NULL,
+	`action` text NOT NULL,
+	`subject_id` text NOT NULL,
+	CONSTRAINT "audit_action" CHECK("audit"."action" IN ('passkeys_reset'))
+);
+--> statement-breakpoint
+CREATE INDEX `audit_subject` ON `audit` (`subject_id`);--> statement-breakpoint
 CREATE TABLE `celebration` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,

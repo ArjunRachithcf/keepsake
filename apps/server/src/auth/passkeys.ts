@@ -1,10 +1,11 @@
 // Passkeys in the database (standalone): looked up at sign-in, added at enrolment from a one-time link.
 import { and, eq, gt, isNull, ne } from 'drizzle-orm';
+import { ulid } from 'ulid';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { Db } from '../db/open';
 import { asDb } from '../db/open';
 import * as t from '../db/schema';
-import { getPerson, setupNeeded, type Person } from '../household/people';
+import { getPerson, mustGetPerson, setupNeeded, type Person } from '../household/people';
 import { openRecovery, removeSetupLink, spendInvites, useInvite, type Invite } from './invites';
 import type { Config } from '../config';
 import { Refused } from '../errors';
@@ -36,7 +37,7 @@ export function getInvite(db: Db, id: string): Invite | undefined {
  * must still be unused and unexpired at this last step. The setup link makes the first admin, with the name typed
  * and the id chosen when the passkey's options were made (the authenticator's user handle). An admin's invite is for
  * someone's first passkey only. A recovery link replaces the admin's passkeys: the others are removed and every
- * session ends (a lost or stolen device keeps nothing). Returns the person signed in, 'taken' if the passkey is
+ * session ends, and their unused invites go (a lost or stolen device keeps nothing). Returns the person signed in, 'taken' if the passkey is
  * already enrolled, or null if the link is no longer good.
  */
 export function enrol(db: Db, cfg: Pick<Config, 'dataDir'>, o: { inviteId: string; name?: string; newPersonId?: string }, cred: NewCredential, label: string): string | 'taken' | null {
@@ -68,6 +69,8 @@ export function enrol(db: Db, cfg: Pick<Config, 'dataDir'>, o: { inviteId: strin
       if (recovery) {
         tx.delete(t.session).where(eq(t.session.personId, personId)).run();
         tx.delete(t.passkey).where(and(eq(t.passkey.personId, personId), ne(t.passkey.id, cred.id))).run();
+        // and the admin's open invites: whoever held the lost device could have made some
+        tx.delete(t.invite).where(and(eq(t.invite.createdBy, personId), eq(t.invite.kind, 'admin'), isNull(t.invite.usedAt))).run();
       }
     });
   } catch (e) {
@@ -97,4 +100,23 @@ export function removePasskey(db: Db, personId: string, id: string): void {
   if (!mine.some((k) => k.id === id)) throw new Refused(404, 'no such passkey');
   if (mine.length === 1) throw new Refused(409, 'your last passkey stays: add another first');
   db.delete(t.passkey).where(and(eq(t.passkey.id, id), eq(t.passkey.personId, personId))).run();
+}
+
+/** A reset needs a sign-in of the last few minutes. */
+export const RESET_FRESH_MINUTES = 5;
+
+/**
+ * An admin's reset of someone's passkeys, for a person who lost every device (an admin who did uses `keepsake
+ * recover`): their passkeys go, their sessions end with them and their open links are spent; then the admin sends the
+ * usual invite. Recorded in the audit table.
+ */
+export function resetPasskeys(db: Db, actorId: string, personId: string, now = new Date()): void {
+  const p = mustGetPerson(db, personId);
+  if (p.role === 'admin') throw new Refused(409, 'an admin recovers with keepsake recover');
+  db.transaction((tx) => {
+    tx.delete(t.session).where(eq(t.session.personId, p.id)).run();
+    tx.delete(t.passkey).where(eq(t.passkey.personId, p.id)).run();
+    spendInvites(asDb(tx), p.id, now);
+    tx.insert(t.audit).values({ id: ulid(), at: now.toISOString(), actorId, action: 'passkeys_reset', subjectId: p.id }).run();
+  });
 }

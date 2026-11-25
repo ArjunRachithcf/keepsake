@@ -1,9 +1,67 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "060907ce-f9ca-4f35-b67e-e3a973101174",
+  "id": "017bd1a7-2327-47be-8435-42f1c23cdbcc",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
+    "audit": {
+      "name": "audit",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "at": {
+          "name": "at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "subject_id": {
+          "name": "subject_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "audit_subject": {
+          "name": "audit_subject",
+          "columns": [
+            "subject_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "audit_action": {
+          "name": "audit_action",
+          "value": "\"audit\".\"action\" IN ('passkeys_reset')"
+        }
+      }
+    },
     "celebration": {
       "name": "celebration",
       "columns": {
