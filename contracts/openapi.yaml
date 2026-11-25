@@ -1084,7 +1084,7 @@ paths:
     post:
       tags: [guest]
       operationId: startGuest
-      summary: 'A guest''s link token (from the link''s #fragment) for a session cookie (keepsake_guest) on one device: the first exchange spends the token, and the session lasts as long as the link (at most 400 days); the browser holding it may exchange again, any other gets 409. One 401 for every other failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in'
+      summary: 'A guest''s link token (from the link''s #fragment) for a session cookie (__Host-keepsake_guest) on one device: the first exchange spends the token, and the session lasts as long as the link (at most 400 days); the browser holding it may exchange again, any other gets 409. One 401 for every other failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in'
       security: []
       requestBody:
         required: true
@@ -1242,7 +1242,7 @@ components:
     guestSession:
       type: apiKey
       in: cookie
-      name: keepsake_guest
+      name: __Host-keepsake_guest
       description: 'A guest''s device (ADR 0009), from POST /guest/session: 256 random bits, HttpOnly; Secure; SameSite=Strict; 400 days. It holds the sessions of every link it opened; each /guest/* request names its link in the X-Keepsake-Link header. A session lasts as long as its link (at most 400 days), ends after 30 days unused and at a household sign-in in that browser'
 
   parameters:

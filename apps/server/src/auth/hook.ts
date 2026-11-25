@@ -44,7 +44,7 @@ export function authHook(cfg: Config, db: Db) {
     const auth = req.routeOptions.config.auth ?? 'person';
     if (auth === 'public') return;
     // A guest's route (ADR 0009): only the guest session acts there, in both modes: the device's (cookie
-    // keepsake_guest) session of the link the request names (X-Keepsake-Link, review M-a). A household session along
+    // __Host-keepsake_guest) session of the link the request names (X-Keepsake-Link, review M-a). A household session along
     // with it counts only to refuse (review N1): a guest session left in a shared browser never opens for someone who
     // may not see what it shows (its person, a kid; for a draw link, anyone in that draw). That session ends, and the
     // answer is the one an unknown session gets.

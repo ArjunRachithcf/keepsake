@@ -64,7 +64,7 @@ describe('share links', () => {
     const r = await s.exchange(url);
     expect(r.statusCode, r.body).toBe(200);
     const set = String([r.headers['set-cookie']].flat()[0]);
-    expect(set).toMatch(/^keepsake_guest=[A-Za-z0-9_-]{43}; Max-Age=34560000; Path=\/; HttpOnly; Secure; SameSite=Strict$/);
+    expect(set).toMatch(/^__Host-keepsake_guest=[A-Za-z0-9_-]{43}; Max-Age=34560000; Path=\/; HttpOnly; Secure; SameSite=Strict$/);
     expect(r.json()).toMatchObject({ kind: 'share', name: null, person: { id: 'p_robin', name: 'Robin' }, celebration: null, draw: null });
     // Neither token is in the database, only their SHA-256.
     const dump = JSON.stringify([db.select().from(t.guestLink).all(), db.select().from(t.guestSession).all()]);
@@ -233,9 +233,13 @@ describe('share links', () => {
     const sam = (await ok(s.person('p_alex').send('POST', '/api/people/p_sam/links', { label: 'Godmother' }))).json();
     const cousin = (await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' }))).json();
     const first = await s.exchange(robin.url);
-    const device = cookieOf(first);
-    // The same device opens the others: its cookie stays the same.
-    for (const l of [sam, cousin]) expect(cookieOf(await ok(s.exchange(l.url, undefined, device)))).toBe(device);
+    let device = cookieOf(first);
+    // The same device opens the others: each first exchange gives it a fresh value (review R-2), its links come along.
+    for (const l of [sam, cousin]) {
+      const next = cookieOf(await ok(s.exchange(l.url, undefined, device)));
+      expect(next).not.toBe(device);
+      device = next;
+    }
     const page = (linkId: string) => s.inject({ url: '/api/guest', headers: { cookie: device, 'x-keepsake-link': linkId } });
     for (let i = 0; i < 2; i++) {
       for (const [l, who] of [[robin, 'Robin'], [sam, 'Sam']] as const) expect((await ok(page(l.link.id))).json().person.name).toBe(who);
@@ -250,8 +254,34 @@ describe('share links', () => {
     // A third browser (and another device cookie) gets the 409 for each.
     for (const l of [robin, sam, cousin]) {
       expect((await s.exchange(l.url)).statusCode).toBe(409);
-      expect((await s.exchange(l.url, undefined, `keepsake_guest=${'o'.repeat(43)}`)).statusCode).toBe(409);
+      expect((await s.exchange(l.url, undefined, `__Host-keepsake_guest=${'o'.repeat(43)}`)).statusCode).toBe(409);
     }
+  });
+
+  it('a planted device value is never kept: the first exchange gives a fresh one, and the planted one opens nothing (review R-2)', async () => {
+    const db = household();
+    const s = await start(db);
+    const robin = (await ok(s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' }))).json();
+    const sam = (await ok(s.person('p_alex').send('POST', '/api/people/p_sam/links', { label: 'Godmother' }))).json();
+    // An attacker opens a link of their own with a value they chose, then plants that value in the victim's browser.
+    const planted = `__Host-keepsake_guest=${'P'.repeat(43)}`;
+    const own = (await ok(s.person('p_alex').send('POST', '/api/people/p_sam/links', { label: 'Mine' }))).json();
+    const attacker = await ok(s.exchange(own.url, undefined, planted));
+    expect(cookieOf(attacker)).not.toBe(planted);
+    // The victim opens Robin's link carrying the planted value, then Sam's with what came back.
+    const first = await ok(s.exchange(robin.url, undefined, planted));
+    const victim = cookieOf(first);
+    expect(victim).not.toBe(planted);
+    expect(String([first.headers['set-cookie']].flat()[0])).toMatch(/^__Host-keepsake_guest=[A-Za-z0-9_-]{43}; Max-Age=\d+; Path=\/; HttpOnly; Secure; SameSite=Strict$/);
+    const page = (cookie: string, linkId: string) => s.inject({ url: '/api/guest', headers: { cookie, 'x-keepsake-link': linkId } });
+    expect((await page(planted, robin.link.id)).statusCode).toBe(401);
+    expect((await page(victim, robin.link.id)).statusCode).toBe(200);
+    const second = cookieOf(await ok(s.exchange(sam.url, undefined, victim)));
+    // The earlier values open nothing; the newest opens both of the victim's links, and the link stays on that device.
+    for (const old of [planted, victim]) for (const l of [robin, sam]) expect((await page(old, l.link.id)).statusCode).toBe(401);
+    for (const l of [robin, sam]) expect((await page(second, l.link.id)).statusCode).toBe(200);
+    expect((await s.exchange(robin.url, undefined, second)).statusCode).toBe(200);
+    expect((await s.exchange(robin.url, undefined, victim)).statusCode).toBe(409);
   });
 
   it('a guest session ends after 30 days unused, and goes on while used (review L-2)', async () => {
@@ -373,7 +403,7 @@ describe('a guest session left in a shared browser (review N1)', () => {
     const r = await h.built.app.inject({ method, url, payload, headers: { cookie, origin: ORIGIN, 'x-keepsake-link': link } });
     return JSON.stringify([r.statusCode, r.body, Object.entries(r.headers).filter(([k]) => k !== 'date').sort()]);
   };
-  const UNKNOWN_GUEST = `keepsake_guest=${'u'.repeat(43)}`;
+  const UNKNOWN_GUEST = `__Host-keepsake_guest=${'u'.repeat(43)}`;
 
   it.each([
     { who: 'robin' as const, guest: 'gR' as const },
@@ -414,7 +444,7 @@ describe('a guest session left in a shared browser (review N1)', () => {
     const quinn = await s.inject({ url: '/api/guest', headers: { cookie: `${cookieOf(g)}; ${sessionCookie(db, 'p_quinn')}`, ...link } });
     expect(quinn.statusCode).toBe(200);
     const sam = await s.inject({ url: '/api/guest', headers: { cookie: `${cookieOf(g)}; ${sessionCookie(db, 'p_sam')}`, ...link } });
-    const unknown = await s.inject({ url: '/api/guest', headers: { cookie: `keepsake_guest=${'u'.repeat(43)}; ${sessionCookie(db, 'p_sam')}`, ...link } });
+    const unknown = await s.inject({ url: '/api/guest', headers: { cookie: `__Host-keepsake_guest=${'u'.repeat(43)}; ${sessionCookie(db, 'p_sam')}`, ...link } });
     expect([sam.statusCode, sam.body, sam.headers['set-cookie']]).toEqual([unknown.statusCode, unknown.body, unknown.headers['set-cookie']]);
     expect((await s.guest(g).get('/api/guest')).statusCode).toBe(401);
   });

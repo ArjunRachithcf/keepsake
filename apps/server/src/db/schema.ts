@@ -377,7 +377,7 @@ export const guestLink = sqliteTable('guest_link', {
 ]);
 
 /**
- * A guest's session of one link on one device (review M-a): the device is the cookie keepsake_guest (256 random bits,
+ * A guest's session of one link on one device (review M-a): the device is the cookie __Host-keepsake_guest (256 random bits,
  * SHA-256 here as device_hash), which holds the sessions of every link it opened; a session is found by link and
  * device. Made from a link's token by a POST; it ends with the link (expires_at: at most 400 days) or after 30 days
  * without use (last_seen_at).

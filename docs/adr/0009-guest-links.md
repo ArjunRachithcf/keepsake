@@ -19,7 +19,7 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
 - **The link is the guest**: one row per link (`guest_link`), so its maker makes one share link per guest (a label
   says who for, at most 20 open per person), and a draw link is one named cousin.
 - **The session**: the page reads the token from the fragment and POSTs it (`/guest/session`, rate limited as a
-  sign-in) for `keepsake_guest`, HttpOnly, Secure, SameSite=Strict, on one device (see the second review below).
+  sign-in) for `__Host-keepsake_guest`, HttpOnly, Secure, SameSite=Strict, on one device (see the second review below).
 - **What a guest sees**: the listed wishes of the one person (share link) or, once they opened their draw, their own
   person's list for the celebration; as a giver, but **with nobody's name on a gift** (counts and their own only): a
   forwarded link should not tell an outsider who in the family gives what. That person's sizes, likes and "please
@@ -86,7 +86,7 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
 
 **Third review of PR #11, decided 2026-11-25**:
 
-- **The device, not the cookie, is what opens** (M-a): `keepsake_guest` is one random device cookie (400 days, SHA-256
+- **The device, not the cookie, is what opens** (M-a): `__Host-keepsake_guest` is one random device cookie (400 days, SHA-256
   at rest) that holds the sessions of every link the browser opened. The first exchange records it on the link
   (`opened_by`); a session is found by link and device, and each guest request names its link (`X-Keepsake-Link`,
   the link's id, which the guest page keeps in its address after the exchange). So the godmother with links to two
@@ -112,6 +112,10 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   the guest taps Open, so a mail scanner that renders the page spends nothing; the page says the link opens on this
   device only.
 - **Idle sessions** (L-2): a guest session ends after 30 days without use, on top of the link's own end (and the 400
-  days); a household sign-in in the browser clears `keepsake_guest` and ends its sessions.
+  days); a household sign-in in the browser clears `__Host-keepsake_guest` and ends its sessions.
 - **Forget this link on this device** ends its session and leaves no device holding the link: it opens nowhere until
   whoever may make it gives it a new address.
+- **The device cookie cannot be planted** (fourth review, R-2): it is `__Host-keepsake_guest` (browsers take it only
+  from this origin over HTTPS, with `Path=/` and no `Domain`, so neither a sibling subdomain nor a plain-HTTP answer can
+  set it), and every first exchange gives the device a fresh value made by the server: the device's sessions and the
+  links it opened move to it in the same transaction, and the value it held before opens nothing.

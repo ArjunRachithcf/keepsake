@@ -100,9 +100,9 @@ describe('sign-in', () => {
       { id: 's2', linkId: 'l_x', deviceHash: hashToken('e'.repeat(43)), createdAt: now, lastSeenAt: now, expiresAt: '2999-01-01T00:00:00.000Z' },
     ]).run();
     const o = (await post('/api/auth/sign-in/options')).json();
-    const res = await post('/api/auth/sign-in/verify', { challengeId: o.challengeId, response: { id: 'cred-alex', challenge: o.options.challenge } }, { cookie: `keepsake_guest=${device}` });
+    const res = await post('/api/auth/sign-in/verify', { challengeId: o.challengeId, response: { id: 'cred-alex', challenge: o.options.challenge } }, { cookie: `__Host-keepsake_guest=${device}` });
     expect(res.statusCode, res.body).toBe(200);
-    expect([res.headers['set-cookie']].flat().some((c) => String(c).startsWith('keepsake_guest=;'))).toBe(true);
+    expect([res.headers['set-cookie']].flat().some((c) => String(c).startsWith('__Host-keepsake_guest=;'))).toBe(true);
     expect(db.select().from(t.guestSession).all().map((x) => x.id)).toEqual(['s2']);
   });
 

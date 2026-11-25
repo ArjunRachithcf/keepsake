@@ -8,10 +8,10 @@
 //   (draws/draws.ts addGuest: the draw's rules hold with them in it). It opens their own person and that person's list
 //   for the celebration, and ends with the draw's day (household time), computed when read.
 // - The token (256 bits) travels in the link's #fragment, so no request line or log has it; the browser POSTs it once
-//   for a session (keepsake_guest, HttpOnly, Secure, SameSite=Strict). Both are kept as SHA-256 only. Every failure
+//   for a session (__Host-keepsake_guest, HttpOnly, Secure, SameSite=Strict). Both are kept as SHA-256 only. Every failure
 //   gets the one answer, and the exchange is rate limited like a sign-in.
 // - A link opens on one device (review N2): the first exchange spends the token and records the device (review M-a:
-//   the cookie keepsake_guest is the device, and holds the sessions of every link it opened; a request names its link
+//   the cookie __Host-keepsake_guest is the device, and holds the sessions of every link it opened; a request names its link
 //   in the X-Keepsake-Link header). A session lasts as long as the link (up to GUEST_DAYS, a browser's limit) unless
 //   unused for GUEST_IDLE_DAYS; that device may exchange the token again, any other is told it was opened on another
 //   device. Its maker sees it opened, and the opening is audited: someone who opens a link not meant for them locks its
@@ -34,7 +34,11 @@ import type { Keyring } from '../draws/sealed';
 import { getWish, type Wish } from '../wishes/wishes';
 
 export type GuestLink = typeof t.guestLink.$inferSelect;
-export const GUEST_COOKIE = 'keepsake_guest';
+/**
+ * The device cookie (review M-a). __Host- (review R-2): browsers take it only from this very origin over HTTPS, with
+ * Path=/ and no Domain, so a sibling subdomain or a plain-HTTP answer cannot plant one.
+ */
+export const GUEST_COOKIE = '__Host-keepsake_guest';
 /** A guest session's longest life: a link's own end comes first (linkWorks); browsers keep a cookie 400 days at most. */
 export const GUEST_DAYS = 400;
 /** A guest session unused this long ends (review L-2: a session left in a browser nobody uses). */
@@ -240,10 +244,16 @@ const newSession = (db: Db, linkId: string, device: string, now: Date) => {
  * A link's first exchange, from `l` as read before (review N2): spends it in one statement (`opened_at` set only while
  * unset, so a stale read can never open it twice), records the device, ends any session it had and audits it.
  */
-export function openLink(db: Db, l: GuestLink, device: string, now: Date, actorId: string): Date {
+export function openLink(db: Db, l: GuestLink, device: string, now: Date, actorId: string, earlier: string | null = null): Date {
   return db.transaction((tx) => {
     const spent = tx.update(t.guestLink).set({ openedAt: now.toISOString(), openedBy: device }).where(and(eq(t.guestLink.id, l.id), isNull(t.guestLink.openedAt))).run();
     if (spent.changes !== 1) throw OPENED();
+    // The device gets a fresh value (review R-2): what it held before (`earlier`, maybe planted) moves over with its
+    // sessions and the links it opened, and opens nothing any more.
+    if (earlier) {
+      tx.update(t.guestSession).set({ deviceHash: device }).where(eq(t.guestSession.deviceHash, earlier)).run();
+      tx.update(t.guestLink).set({ openedBy: device }).where(eq(t.guestLink.openedBy, earlier)).run();
+    }
     tx.delete(t.guestSession).where(eq(t.guestSession.linkId, l.id)).run();
     audit(tx as unknown as Db, actorId, 'link_opened', l.id);
     return newSession(tx as unknown as Db, l.id, device, now);
@@ -253,21 +263,23 @@ export function openLink(db: Db, l: GuestLink, device: string, now: Date, actorI
 /**
  * A link's token for a session, on one device (review N2, M-a). One answer for every failure, also to a household
  * member it is not for (`by`, the browser's own household session, if any). After those: a link opened already opens
- * again only on the device that opened it (`deviceCookie`, the browser's keepsake_guest), else it answers so; a link
- * not opened yet is spent (openLink). Returns the device cookie (the browser's own, or a new one) and the link.
+ * again only on the device that opened it (`deviceCookie`, the browser's __Host-keepsake_guest), else it answers so; a link
+ * not opened yet is spent (openLink), and the device gets a fresh value. Returns the device cookie and the link.
  */
 export function startGuestSession(db: Db, token: unknown, today: string, now = new Date(), by?: Pick<Person, 'id' | 'role'> | null, deviceCookie?: string): { device: string; expiresAt: Date; link: GuestLink } {
   if (!looksLikeToken(token)) throw UNKNOWN();
   const l = db.select().from(t.guestLink).where(eq(t.guestLink.tokenHash, hashToken(token))).get();
   if (!l || !linkWorks(db, l, today) || (by && !mayOpenAsGuest(db, by, l))) throw UNKNOWN();
-  const cookie = looksLikeToken(deviceCookie) ? deviceCookie : newToken();
-  const device = hashToken(cookie);
+  const held = deviceOf(deviceCookie);
   if (l.openedAt) {
-    if (l.openedBy !== device) throw OPENED();
-    const s = sessionFor(db, device, l.id, now);
-    return { device: cookie, expiresAt: s ? new Date(s.expiresAt) : newSession(db, l.id, device, now), link: l };
+    if (!held || l.openedBy !== held) throw OPENED();
+    const s = sessionFor(db, held, l.id, now);
+    return { device: deviceCookie!, expiresAt: s ? new Date(s.expiresAt) : newSession(db, l.id, held, now), link: l };
   }
-  const expiresAt = openLink(db, l, device, now, by?.id ?? l.id);
+  // A first exchange: always a value of the server's own (review R-2: a planted one is never kept).
+  const cookie = newToken();
+  const device = hashToken(cookie);
+  const expiresAt = openLink(db, l, device, now, by?.id ?? l.id, held);
   return { device: cookie, expiresAt, link: { ...l, openedAt: now.toISOString(), openedBy: device } };
 }
 

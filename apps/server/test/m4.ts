@@ -33,7 +33,7 @@ export async function makeHome(): Promise<Home> {
   }))).run();
   const cookies: Record<string, string> = Object.fromEntries(PEOPLE.map((p) => [p, sessionCookie(db, `p_${p}`)]));
   // Each guest on their own device (a browser of their own).
-  for (const g of Object.keys(GUESTS)) cookies[g] = `keepsake_guest=${startGuestSession(db, tokenOf(g), today('UTC')).device}`;
+  for (const g of Object.keys(GUESTS)) cookies[g] = `__Host-keepsake_guest=${startGuestSession(db, tokenOf(g), today('UTC')).device}`;
   const built = await buildApp(standalone(), db);
   return { db, built, cookies };
 }

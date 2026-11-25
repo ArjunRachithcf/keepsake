@@ -926,7 +926,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A guest's link token (from the link's #fragment) for a session cookie (keepsake_guest) on one device: the first exchange spends the token, and the session lasts as long as the link (at most 400 days); the browser holding it may exchange again, any other gets 409. One 401 for every other failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in */
+        /** A guest's link token (from the link's #fragment) for a session cookie (__Host-keepsake_guest) on one device: the first exchange spends the token, and the session lasts as long as the link (at most 400 days); the browser holding it may exchange again, any other gets 409. One 401 for every other failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in */
         post: operations["startGuest"];
         delete?: never;
         options?: never;
