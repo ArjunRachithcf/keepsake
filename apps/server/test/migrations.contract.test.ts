@@ -95,10 +95,25 @@ describe('migrations', () => {
   });
 });
 
-// Filled in at each release (none yet: 0000_init.sql may still change until 0.1.0 ships).
-const RELEASED: Record<string, string> = {};
-describe.skipIf(Object.keys(RELEASED).length === 0)('released migrations', () => {
-  it.each(Object.entries(RELEASED))('%s is unchanged', (file, sha) => {
-    expect(createHash('sha256').update(readFileSync(join(drizzleDir, file))).digest('hex')).toBe(sha);
+// Every migration already on main is frozen: its SQL and its journal's `when` never change (PR #12 review). Only the
+// migration of a branch not yet merged may be regenerated; once merged, it joins this list.
+const ON_MAIN: Record<string, { sha256: string; when: number }> = {
+  '0000_init': { sha256: '2309b6c89f3beb972cd25d400fb587cd0f97880434c723e1ab51c9f28d4c3bc0', when: 1795563590530 },
+  '0001_gifts': { sha256: 'c659f8594bfefb7cffab20c6d148d2b13d256cdae4102d88f17d64ded2173b60', when: 1795570312184 },
+  '0002_draws': { sha256: '722a104f5aa0fe16a848f9661c3702b081a0e11342b6ca1df5fe76aaa2a2b2d3', when: 1795587420196 },
+  '0003_m4': { sha256: '078e51e56cedbac7d54b788fd71cd9477e331a74893662d462fe2116cb7fd203', when: 1795589205530 },
+};
+describe('the migrations already on main', () => {
+  const journal = JSON.parse(readFileSync(join(drizzleDir, 'meta/_journal.json'), 'utf8')) as { entries: { idx: number; tag: string; when: number }[] };
+  it.each(Object.entries(ON_MAIN))('%s is unchanged (its SQL and its place in the journal)', (tag, frozen) => {
+    expect(createHash('sha256').update(readFileSync(join(drizzleDir, `${tag}.sql`))).digest('hex')).toBe(frozen.sha256);
+    const e = journal.entries.find((x) => x.tag === tag);
+    expect(e && { when: e.when, idx: e.idx }).toEqual({ when: frozen.when, idx: Number(tag.slice(0, 4)) });
+  });
+  it('come first, in order, and every later one is newer', () => {
+    const tags = Object.keys(ON_MAIN);
+    expect(journal.entries.slice(0, tags.length).map((e) => e.tag)).toEqual(tags);
+    const last = Math.max(...Object.values(ON_MAIN).map((x) => x.when));
+    for (const e of journal.entries.slice(tags.length)) expect(e.when).toBeGreaterThan(last);
   });
 });
