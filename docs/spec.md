@@ -116,7 +116,8 @@ moves later, and once revealed it stays revealed (ADR 0003); a giver who leaves 
 are only claimed and their shares of group gifts not yet given along, and leaves bought and given ones behind, unnamed.
 
 2026-11-25 (M3, decided by default, open to change; ADR 0004): one draw per celebration and year; the host picks who
-draws from the celebration's people, at least 3; the reveal is a day after the celebration or never; re-draw after
+draws from the celebration's people, at least 4, under rules that let nobody work out another's person; while a draw
+is secret, gifts between its people name no giver to anyone but the giver; a drawn draw's day only moves later; the reveal is a day after the celebration or never; re-draw after
 someone opened theirs only before the day and not once a gift is bought since the draw; a re-draw is told in the app
 (everyone opens theirs again), by push from M5; a celebration without a host has its draw run by an admin.
 

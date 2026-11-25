@@ -17,7 +17,7 @@ hl="$project-hl"
 dc() { KEEPSAKE_IMAGE="$tag" docker compose -p "$project" --project-directory "$work" -f "$PWD/docker-compose.yml" "$@"; }
 cleanup() {
   dc down -v --remove-orphans >/dev/null 2>&1 || true
-  docker rm -f "$hl" "$hl-bare" >/dev/null 2>&1 || true
+  docker rm -fv "$hl" "$hl-bare" >/dev/null 2>&1 || true
   docker volume rm "$hl-data" >/dev/null 2>&1 || true
   docker image rm "$tag" >/dev/null 2>&1 || true
   rm -rf "$work"
@@ -73,6 +73,7 @@ done
 dc logs keepsake 2>&1 | grep -q '/setup#' && { echo "the setup link reached the log" >&2; exit 1; }
 # the draws' key: made once in keys/ for Keepsake's user only, 32 bytes, not in data/, not in the log
 [ "$(stat -c %a "$work/keys/sealing.key")" = 600 ] || { echo "no private sealing key in keys/" >&2; exit 1; }
+[ "$(stat -c %a "$work/keys")" = 700 ] || { echo "keys/ is not 0700" >&2; exit 1; }
 [ "$(base64 -d "$work/keys/sealing.key" | wc -c)" = 32 ] || { echo "the sealing key is not 32 bytes" >&2; exit 1; }
 grep -rqF "$(cat "$work/keys/sealing.key")" "$work/data" && { echo "the sealing key is in data/" >&2; exit 1; }
 dc logs keepsake 2>&1 | grep -qF "$(cat "$work/keys/sealing.key")" && { echo "the sealing key reached the log" >&2; exit 1; }
