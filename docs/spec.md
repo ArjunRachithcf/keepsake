@@ -139,6 +139,9 @@ show only their day; no guest link under HomersLab until Homeward #317.
 After its second review: a link opens on one device (the first exchange spends it, the session lasts as long as the
 link, another device is told it was opened elsewhere, its maker sees "opened"); a guest session left in a browser
 never opens with a household session it is not for.
+After its third review: one browser keeps every link it opened (a device cookie; each guest request names its link);
+a link's managers give it a new address (the same guest, place, pair and claims); the guest page sends nothing until
+Open; a guest session ends after 30 days unused and at a household sign-in in that browser.
 
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by
