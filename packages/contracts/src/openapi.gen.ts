@@ -641,7 +641,6 @@ export interface components {
             quantity: number;
             note: string | null;
             mostWanted: boolean;
-            position: number;
             state: components["schemas"]["WishState"];
             /** @description Who added it, when someone other than the person did (a suggestion, a parent) */
             addedBy: components["schemas"]["PersonRef"] | null;

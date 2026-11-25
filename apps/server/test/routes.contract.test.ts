@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { EDGE_IDENTITY } from '../src/config';
 import type { Db } from '../src/db/open';
+import * as t from '../src/db/schema';
 import { ORIGIN, expectValid, fakeWebAuthn, hl, homerslab, household, isPublic, ops, request, sessionCookie, spec, standalone } from './helpers';
 
 describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)', (mode) => {
@@ -85,6 +86,50 @@ describe('answers', () => {
     const res = await app.inject({ method: 'POST', url: '/api/wishes', headers: { cookie: sessionCookie(db, 'p_alex'), origin: ORIGIN, 'content-type': 'application/json' }, payload: '{nope' });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: expect.any(String) });
+    await app.close();
+  });
+});
+
+describe('admins only, refused to anyone else (standalone)', () => {
+  const ADMIN_ONLY = ['editHousehold', 'addPerson', 'editPerson', 'removePerson', 'setManagers', 'invitePerson', 'resetPasskeys'];
+  it.each(ADMIN_ONLY)('%s as a grown-up who is not an admin: 403, nothing changed', async (id) => {
+    const db = household();
+    const { app } = await buildApp(standalone(), db, { webauthn: fakeWebAuthn() });
+    const o = ops.find((x) => x.op.operationId === id)!;
+    const req = request(o);
+    const before = JSON.stringify([db.select().from(t.person).all(), db.select().from(t.manager).all(), db.select().from(t.passkey).all(), db.select().from(t.invite).all(), db.select().from(t.setting).all()]);
+    const res = await app.inject({ ...req, headers: { ...req.headers, cookie: sessionCookie(db, 'p_robin') } });
+    expect(res.statusCode, res.body).toBe(403);
+    expectValid(o, 403, res.json());
+    expect(JSON.stringify([db.select().from(t.person).all(), db.select().from(t.manager).all(), db.select().from(t.passkey).all(), db.select().from(t.invite).all(), db.select().from(t.setting).all()])).toBe(before);
+    await app.close();
+  });
+});
+
+describe('order and position give no hidden wish away (ADR 0003)', () => {
+  // Every viewer × the lists a person's wishes appear in: the wishes carry no stored position, and the answer holds
+  // no id of a wish hidden from the viewer, so neither a gap nor a number counts what they cannot see.
+  const viewers = ['p_alex', 'p_sam', 'p_robin', 'p_mia', 'p_leo'];
+  const hiddenFrom: Record<string, string[]> = {
+    p_alex: [], p_sam: ['w_leo_kite', 'w_sug_for_alex'], p_robin: ['w_mia_slime', 'w_leo_kite'],
+    p_mia: ['w_leo_kite', 'w_sug_for_alex'], p_leo: ['w_mia_slime', 'w_sug_for_alex', 'w_sug_for_mia'],
+  };
+  it.each(viewers)('%s', async (who) => {
+    const db = household();
+    const { app } = await buildApp(standalone(), db);
+    const cookie = sessionCookie(db, who);
+    // a new listed wish for Mia from her parent, and a suggestion from Leo: their answers count nothing either
+    const add = await app.inject({ method: 'POST', url: '/api/wishes', headers: { origin: ORIGIN, cookie: sessionCookie(db, 'p_sam') }, payload: { personId: 'p_mia', name: 'A scooter', celebrationId: null } });
+    const sug = await app.inject({ method: 'POST', url: '/api/wishes', headers: { origin: ORIGIN, cookie: sessionCookie(db, 'p_leo') }, payload: { personId: 'p_mia', name: 'Marbles', celebrationId: null } });
+    for (const r of [add, sug]) expect(r.statusCode).toBe(201);
+    expect(add.json()).not.toHaveProperty('position');
+    expect(sug.json()).not.toHaveProperty('position');
+    for (const url of ['/api/home', '/api/people/p_mia', '/api/people/p_leo', '/api/people/p_alex', '/api/celebrations/c_xmas', '/api/celebrations/c_mia']) {
+      const res = await app.inject({ url, headers: { cookie } });
+      expect(res.statusCode, url).toBe(200);
+      expect(res.body, `${who} ${url}`).not.toContain('"position"');
+      for (const w of hiddenFrom[who]!) expect(res.body, `${who} ${url} ${w}`).not.toContain(w);
+    }
     await app.close();
   });
 });

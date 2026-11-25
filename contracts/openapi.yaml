@@ -852,7 +852,7 @@ components:
     Wish:
       type: object
       additionalProperties: false
-      required: [id, personId, celebrationId, name, link, priceMinor, quantity, note, mostWanted, position, state, addedBy, createdAt, updatedAt, canEdit, canApprove]
+      required: [id, personId, celebrationId, name, link, priceMinor, quantity, note, mostWanted, state, addedBy, createdAt, updatedAt, canEdit, canApprove]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         personId: { $ref: '#/components/schemas/Id' }
@@ -865,7 +865,6 @@ components:
         quantity: { type: integer, minimum: 1 }
         note: { type: [string, 'null'] }
         mostWanted: { type: boolean }
-        position: { type: integer }
         state: { $ref: '#/components/schemas/WishState' }
         addedBy:
           description: Who added it, when someone other than the person did (a suggestion, a parent)

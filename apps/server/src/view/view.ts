@@ -17,7 +17,8 @@ import { currency, hasPasskey, household, keeps, managersOf, mustGetPerson, type
 import { getProfile, type ProfileRow } from '../household/profile';
 import { allWaiting, canApprove, canEdit, canSee, seeWish, wishesAddedBy, wishesOf, type Wish } from '../wishes/wishes';
 
-const VIEWED = new WeakSet<object>();
+/** Each answer with the request it was built for (the seam lets it out on that request only). */
+const VIEWED = new WeakMap<object, object>();
 declare const VIEWED_BRAND: unique symbol;
 /** An answer the view layer built (the router takes only these; the seam checks the bytes as well). */
 export type Viewed<T extends object = object> = T & { readonly [VIEWED_BRAND]: true };
@@ -28,13 +29,19 @@ function deepFreeze<T>(v: T): T {
   }
   return v;
 }
-/** Marks an answer as built by the view layer (only this module can) and freezes it: nothing can be added after. */
-function answer<T extends object>(body: T): Viewed<T> {
-  VIEWED.add(deepFreeze(body));
+/**
+ * Marks an answer as built by the view layer for one request (only this module can) and freezes it: nothing can be
+ * added after, and no other request can send it (a cached answer built for someone else is refused).
+ */
+function mark<T extends object>(owner: object, body: T): Viewed<T> {
+  VIEWED.set(deepFreeze(body), owner);
   return body as Viewed<T>;
 }
+const marker = (owner: object) => <T extends object>(body: T): Viewed<T> => mark(owner, body);
 /** Whether an answer came from the view layer (the seam asks before serializing it; src/seam.ts). */
 export const isViewed = (payload: unknown): boolean => typeof payload === 'object' && payload !== null && VIEWED.has(payload);
+/** The request an answer was built for, if the view layer built it. */
+export const builtFor = (payload: unknown): object | undefined => (typeof payload === 'object' && payload !== null ? VIEWED.get(payload) : undefined);
 
 /** `for`: a celebration's list (its wishes and the any-time ones), the any-time wishes only, or everything. */
 export type ListFor = { celebration: string } | 'any' | null;
@@ -83,21 +90,23 @@ function requestOptions(o: PublicKeyCredentialRequestOptionsJSON): Record<string
 }
 
 /** Answers that need no viewer: the server's health, the sign-in steps, and the person a passkey has just signed in. */
-export function publicViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>) {
+export function publicViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, owner: object) {
+  const answer = marker(owner);
   return {
     health: (version: string): Viewed<api.Health> => answer({ ok: true, version, mode: cfg.mode }),
     signInStart: (challengeId: string, o: PublicKeyCredentialRequestOptionsJSON): Viewed<api.SignInStart> => answer({ challengeId, options: requestOptions(o) }),
     enrolStart: (challengeId: string, o: PublicKeyCredentialCreationOptionsJSON): Viewed<api.EnrolStart> =>
       answer({ challengeId, options: creationOptions(o), person: { name: str(o.user.name) } }),
     signedOut: (setupNeeded: boolean): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: false, setupNeeded }),
-    signedIn: (personId: string): Viewed<api.AuthSession> => viewFor(db, cfg, mustGetPerson(db, personId)).signedIn(),
+    signedIn: (personId: string): Viewed<api.AuthSession> => viewFor(db, cfg, mustGetPerson(db, personId), owner).signedIn(),
   };
 }
 
 /** A one-time link, from what createInvite returned (data.ts hands it over; routes never get one to pass). */
-export const linkAnswer = (i: { url: string; expiresAt: Date }): Viewed<api.OneTimeLink> => answer({ url: str(i.url), expiresAt: i.expiresAt.toISOString() });
+export const linkAnswer = (owner: object, i: { url: string; expiresAt: Date }): Viewed<api.OneTimeLink> => mark(owner, { url: str(i.url), expiresAt: i.expiresAt.toISOString() });
 
-export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: Person) {
+export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: Person, owner: object) {
+  const answer = marker(owner);
   const now = today(cfg.timezone);
   // Read when the first answer is built, not when the view is made: a route may change things in between
   // (`view(req).wish(editWish(...))` makes the view first).
@@ -122,7 +131,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
 
   const wish = (w: Wish): api.Wish => ({
     id: w.id, personId: w.personId, celebrationId: w.celebrationId, name: w.name, link: w.link, priceMinor: w.priceMinor,
-    quantity: w.quantity, note: w.note, mostWanted: w.mostWanted === 1, position: w.position, state: w.state,
+    quantity: w.quantity, note: w.note, mostWanted: w.mostWanted === 1, state: w.state,
     addedBy: w.addedBy && w.addedBy !== w.personId ? ref(w.addedBy) : null,
     createdAt: w.createdAt, updatedAt: w.updatedAt,
     canEdit: canEdit(db, viewer, w), canApprove: canApprove(db, viewer, w),
