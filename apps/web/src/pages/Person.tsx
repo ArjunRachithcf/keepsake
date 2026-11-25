@@ -1,5 +1,6 @@
 // A person's page as a giver sees it (spec §4): their sizes and likes (dated), celebration chips, their list; the
-// keeper (the person, a kid's parent) changes it, anyone else suggests. Claims, ideas and questions come later.
+// keeper (the person, a kid's parent) changes it, anyone else suggests. A giver claims and chips in on each wish
+// (gift.tsx); the server sends the gifts to givers only. Ideas and questions come later.
 import { useCallback, useEffect, useId, useState } from 'react';
 import { api, message, type Celebration, type PersonPage, type Profile, type Size, type Wish } from '../api';
 import { since } from '../format';
@@ -47,7 +48,8 @@ export function Person({ id }: { id: string }) {
 
       <div className="section"><Chips label={`Show ${p.name}’s wishes for`} value={chip} options={chips} onChange={setChip} /></div>
       <Group title={current ? `${p.name}’s list for ${current.name}` : chip === 'any' ? 'Any time' : `${p.name}’s wishes`}
-        footer={current ? 'Their wishes for it and their any-time wishes.' : undefined}>
+        footer={[current ? 'Their wishes for it and their any-time wishes.' : null,
+          page.wishes.some((w) => w.gift) ? `Only people giving to ${p.name} see who’s getting what. ${p.name} never does. A wish given once is gone from every list.` : null].filter(Boolean).join(' ') || undefined}>
         {page.wishes.length === 0 && <li className="row"><span className="row-sub">No wishes here yet.</span></li>}
         {page.wishes.map((w) => <WishRow key={w.id} wish={w} celebrations={all} onChanged={load} onEdit={(x) => setSheet({ wish: x })} showFor={!current} />)}
         {!self && (

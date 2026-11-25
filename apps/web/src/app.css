@@ -31,6 +31,8 @@
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
   --badge: #7A4F00;             /* 6.2:1 on its tint over white */
   --badge-tint: rgba(242, 193, 78, 0.22);
+  --done: #196B2F;              /* 6.4:1 on its tint over white */
+  --done-tint: #DFF6E4;
   --font: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
   --fs-large-title: 34px;
   --fs-title: 22px;
@@ -63,6 +65,8 @@
     --shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
     --badge: #F2C14E;
     --badge-tint: rgba(242, 193, 78, 0.16);
+    --done: #7EE2A0;
+    --done-tint: rgba(126, 226, 160, 0.16);
   }
 }
 
@@ -258,3 +262,22 @@ legend { padding: 0; margin-bottom: 6px; }
 @media (forced-colors: active) {
   .chip[aria-pressed="true"], .tab[aria-current="page"] { outline: 2px solid CanvasText; }
 }
+
+/* Gifts (a giver's view only): notes, pills, the group gift's bar (the design canvas's person page). */
+.row-title-done { color: var(--text-2); text-decoration: line-through; }
+.gift { display: grid; gap: 4px; margin-top: 4px; }
+.gift-note { margin: 0; color: var(--text-2); font-size: var(--fs-foot); }
+.gift-mine { color: var(--accent); font-weight: 600; }
+.gift-actions { display: flex; flex-wrap: wrap; gap: 0 8px; }
+/* A 44 px target around a 32 px pill. */
+.pill { display: inline-flex; align-items: center; min-height: var(--target); padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
+.pill > span {
+  --pill-bg: var(--fill);
+  display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 16px;
+  background: var(--pill-bg); color: var(--text); font-size: var(--fs-sub); font-weight: 600;
+}
+.pill > .pill-accent { --pill-bg: var(--accent-tint); color: var(--accent); }
+.pill > .pill-done { --pill-bg: var(--done-tint); color: var(--done); }
+.pill:disabled { opacity: 0.5; cursor: default; }
+.gift-bar { height: 6px; margin-top: 4px; border-radius: 3px; background: var(--fill); overflow: hidden; }
+.gift-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent-fill); transition: width var(--dur-snappy) var(--spring-snappy); }

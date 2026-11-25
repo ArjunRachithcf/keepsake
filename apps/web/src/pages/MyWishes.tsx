@@ -1,10 +1,11 @@
 // My wishes (spec §4, home): the next celebration, celebration chips filtering my list, "Add a wish for …" rows,
-// suggestions for me, and kids' wishes waiting for me.
+// suggestions for me, and kids' wishes waiting for me; after a celebration, my thank-yous (the givers who chose to be
+// named) and the gifts I gave, where I choose to put my name on each (off by default).
 import { useCallback, useEffect, useState } from 'react';
 import { api, message, type Home, type Wish } from '../api';
-import { celebrationLine, inDays } from '../format';
+import { celebrationLine, day, inDays } from '../format';
 import { useHousehold } from '../household';
-import { Chips, Group, Link, Loading, Notice, PageHead, Poster, Sheet } from '../ui';
+import { Chips, Group, Link, Loading, Notice, PageHead, Poster, Sheet, Switch } from '../ui';
 import { WishForm, WishRow } from '../wish';
 
 export function MyWishes() {
@@ -89,6 +90,23 @@ export function MyWishes() {
         <p className="section"><button type="button" className="btn-text" aria-pressed={reorder} onClick={() => setReorder(!reorder)}>{reorder ? 'Done ordering' : 'Change the order'}</button></p>
       )}
 
+      {home.thanks.length > 0 && (
+        <Group title="Thank-yous" footer="Gifts you received. Givers who chose to put their name on one are here so you can thank them; the others stay a surprise.">
+          {home.thanks.map((x) => (
+            <li key={x.wish.id} className="row">
+              <span className="row-title">{x.wish.name}</span>
+              <span className="row-sub">{[x.celebration?.name, day(x.on)].filter(Boolean).join(' · ')}</span>
+              <span className="row-foot">{x.from.length ? `From ${x.from.map((p) => p.name).join(', ')}` : 'From someone who kept it a surprise'}</span>
+            </li>
+          ))}
+        </Group>
+      )}
+      {home.gave.length > 0 && (
+        <Group title="Gifts you gave" footer="Put your name on a gift and its person sees it was you, to thank you. Off unless you turn it on.">
+          {home.gave.map((x) => <GaveRow key={x.wish.id} wishId={x.wish.id} name={x.wish.name} line={[x.celebration?.name, day(x.on)].filter(Boolean).join(' · ')} named={x.named} onChanged={load} />)}
+        </Group>
+      )}
+
       {home.suggested.length > 0 && (
         <Group title="Your suggestions" footer="Waiting for a yes. You can change or take back a suggestion until then.">
           {home.suggested.map((w) => <WishRow key={w.id} wish={w} celebrations={all} onChanged={load} onEdit={(x) => setSheet({ wish: x })} />)}
@@ -100,5 +118,21 @@ export function MyWishes() {
           onDone={() => { setSheet(null); void load(); }} />}
       </Sheet>
     </>
+  );
+}
+
+function GaveRow({ wishId, name, line, named, onChanged }: { wishId: string; name: string; line: string; named: boolean; onChanged: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const set = async (v: boolean) => {
+    setError(null);
+    try { await api(`/wishes/${wishId}/named`, { method: 'PUT', body: { named: v } }); onChanged(); } catch (e) { setError(message(e)); }
+  };
+  return (
+    <li className="row">
+      <span className="row-title">{name}</span>
+      <span className="row-sub">{line}</span>
+      <Switch label="Put my name on it" checked={named} onChange={set} />
+      {error && <p className="row-error" role="alert">{error}</p>}
+    </li>
   );
 }

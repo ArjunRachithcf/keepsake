@@ -1,7 +1,8 @@
-// A wish as a row, and the sheet to add or change one (spec §4 "New wish": name, link, price, For, most wanted, note).
+// A wish as a row (with a giver's actions when the server sent its gifts: gift.tsx), and the sheet to add or change one (spec §4 "New wish": name, link, price, For, most wanted, note).
 import { useId, useState } from 'react';
 import { api, message, type Celebration, type Wish, type WishInput, type WishPatch } from './api';
 import { host, money, parseMoney, toMoneyText } from './format';
+import { GiftLine, isBought } from './gift';
 import { useHousehold } from './household';
 import { Field, Notice, Switch } from './ui';
 
@@ -31,13 +32,14 @@ export function WishRow({ wish, celebrations, onEdit, onChanged, showFor = true,
   return (
     <li className="row wish-row">
       <div className="wish-main">
-        <p className="row-title">
+        <p className={`row-title${isBought(wish.gift) ? ' row-title-done' : ''}`}>
           {wish.mostWanted && <span className="star" aria-label="Most wanted" role="img">★</span>}
           {wish.name}
         </p>
         {meta && <p className="row-sub">{meta}</p>}
         {wish.note && <p className="row-note">{wish.note}</p>}
         {state && <p className="badge">{state}</p>}
+        {wish.gift && <GiftLine wish={wish} onChanged={onChanged} />}
         {error && <p className="row-error" role="alert">{error}</p>}
       </div>
       <div className="wish-actions">
