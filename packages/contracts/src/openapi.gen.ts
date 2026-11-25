@@ -1269,6 +1269,8 @@ export interface components {
             passkeys: components["schemas"]["Passkey"][];
         };
         Household: {
+            /** @description Whether this server reads shop pages for "Add from a link" (ADR 0011: it lists shops, and egress is on) */
+            addFromLink: boolean;
             mode: components["schemas"]["Mode"];
             me: components["schemas"]["Person"];
             people: components["schemas"]["Person"][];

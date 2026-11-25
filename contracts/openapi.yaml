@@ -1587,8 +1587,9 @@ components:
     Household:
       type: object
       additionalProperties: false
-      required: [mode, me, people, currency]
+      required: [mode, me, people, currency, addFromLink]
       properties:
+        addFromLink: { type: boolean, description: 'Whether this server reads shop pages for "Add from a link" (ADR 0011: it lists shops, and egress is on)' }
         mode: { $ref: '#/components/schemas/Mode' }
         me: { $ref: '#/components/schemas/Person' }
         people: { type: array, items: { $ref: '#/components/schemas/Person' } }

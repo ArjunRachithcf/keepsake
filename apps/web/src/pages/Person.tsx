@@ -9,6 +9,7 @@ import { roleLabel, useHousehold } from '../household';
 import { Chips, Field, Group, Link, Loading, Notice, PageHead, Sheet } from '../ui';
 import { WishForm, WishRow } from '../wish';
 import { AskForm, IdeasGroup, QuestionsGroup } from '../questions';
+import { RemindMe } from '../notify';
 import { ShareLinks } from '../links';
 
 export function Person({ id }: { id: string }) {
@@ -65,6 +66,7 @@ export function Person({ id }: { id: string }) {
       </Group>
 
       {page.questions && <QuestionsGroup name={p.name} questions={page.questions} onAsk={page.keeps ? undefined : () => setSheet('ask')} onChanged={load} />}
+      {!self && <RemindMe personId={p.id} name={p.name} days={page.reminder} onChanged={load} />}
       {page.ideas && <IdeasGroup personId={p.id} name={p.name} ideas={page.ideas} onChanged={load} />}
       {/* Another grown-up shares someone's wishes (a kid's: a parent, who keeps the kid's list); never the person. */}
       {!self && me.role !== 'kid' && (p.role !== 'kid' || page.keeps) ? <ShareLinks personId={p.id} name={p.name} /> : null}

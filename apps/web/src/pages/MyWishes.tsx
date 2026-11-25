@@ -8,6 +8,7 @@ import { useHousehold } from '../household';
 import { Chips, Group, Link, Loading, Notice, PageHead, Poster, Sheet, Switch } from '../ui';
 import { WishForm, WishRow } from '../wish';
 import { HomeQuestions } from '../questions';
+import { NoticesGroup, ThankYou } from '../notify';
 
 export function MyWishes() {
   const { me, name } = useHousehold();
@@ -17,7 +18,9 @@ export function MyWishes() {
   const [sheet, setSheet] = useState<{ wish?: Wish; for?: string | null } | null>(null);
   const [reorder, setReorder] = useState(false);
 
+  const [loaded, setLoaded] = useState(0);
   const load = useCallback(async () => {
+    setLoaded((n) => n + 1);
     try { setHome(await api<Home>(`/home${chip === 'all' ? '' : `?for=${encodeURIComponent(chip)}`}`)); setError(null); } catch (e) { setError(message(e)); }
   }, [chip]);
   useEffect(() => { void load(); }, [load]);
@@ -52,6 +55,8 @@ export function MyWishes() {
           </Poster>
         </Link>
       )}
+
+      <NoticesGroup refresh={loaded} />
 
       <HomeQuestions questions={home.questions} meId={me.id} celebrations={home.celebrations} onChanged={load} />
 
@@ -101,6 +106,17 @@ export function MyWishes() {
               <span className="row-title">{x.wish.name}</span>
               <span className="row-sub">{[x.wish.personId === me.id ? null : `For ${name(x.wish.personId)}`, x.celebration?.name, day(x.on)].filter(Boolean).join(' · ')}</span>
               <span className="row-foot">{x.from.length ? `From ${x.from.map((p) => p.name).join(', ')}` : 'From someone who kept it a surprise'}</span>
+              <ThankYou thanks={x} onChanged={load} />
+            </li>
+          ))}
+        </Group>
+      )}
+      {home.thanked.length > 0 && (
+        <Group title="Thanked by" footer="Thank-yous for gifts you gave.">
+          {home.thanked.map((x) => (
+            <li key={x.id} className="row">
+              <span className="row-title">{x.from?.name ?? 'Someone'}: “{x.text}”</span>
+              <span className="row-sub">{[x.wish.name, day(x.on), x.by ? `written by ${x.by.name}` : null].filter(Boolean).join(' · ')}</span>
             </li>
           ))}
         </Group>

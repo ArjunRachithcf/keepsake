@@ -11,6 +11,7 @@ import { Enrol, SignIn, takeToken } from './pages/SignIn';
 import { Guest } from './pages/Guest';
 import { Nav, useRouter } from './router';
 import { Link, Loading, Notice, PageHead } from './ui';
+import { unsubscribeThisDevice } from './notify';
 
 const TABS = [
   { to: '/', tab: 'wishes', label: 'My wishes' },
@@ -31,6 +32,8 @@ export function App() {
 
   const signedIn = (s: AuthSession) => { setSession(s); go('/'); };
   const signOut = async () => {
+    // This device gets nothing more for this person (the server ends it with the session too).
+    await unsubscribeThisDevice();
     await api('/auth/sign-out', { method: 'POST' }).catch(() => undefined);
     setHousehold(null);
     setSession(await api<AuthSession>('/auth/session'));

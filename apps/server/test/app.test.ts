@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -73,6 +73,30 @@ describe('security headers', () => {
     expect(res.statusCode).toBe(404);
     expect(res.json()).toEqual({ error: 'not found' });
     await app.close();
+  });
+
+  it('the PWA: the manifest and the service worker are served as the build\'s files, with the same headers', async () => {
+    const pub = new URL('../../web/public/', import.meta.url);
+    for (const f of ['sw.js', 'site.webmanifest']) writeFileSync(join(web, f), readFileSync(new URL(f, pub)));
+    const { app } = await buildApp({ ...loadConfig({}), webDir: web }, openDb(':memory:'));
+    const sw = await app.inject({ method: 'GET', url: '/sw.js' });
+    expect(sw.statusCode).toBe(200);
+    expect(String(sw.headers['content-type'])).toMatch(/javascript/);
+    expect(sw.headers['content-security-policy']).toContain("default-src 'self'");
+    const m = JSON.parse((await app.inject({ method: 'GET', url: '/site.webmanifest' })).body);
+    expect(m).toMatchObject({ id: '/', start_url: '/', scope: '/', display: 'standalone' });
+    // Its icons are the build's own files (the logo's set in public/).
+    for (const i of m.icons) expect(readFileSync(new URL(i.src.slice(1), pub)).length, i.src).toBeGreaterThan(0);
+    await app.close();
+  });
+
+  it('the service worker never keeps or answers /api, and a push shows one fixed text, never what it carried', () => {
+    const src = readFileSync(new URL('../../web/public/sw.js', import.meta.url), 'utf8');
+    // The fetch handler leaves /api (and other origins, and every method but GET) to the network before anything else.
+    expect(src).toMatch(/req\.method !== 'GET' \|\| url\.origin !== self\.location\.origin \|\| url\.pathname === '\/api' \|\| url\.pathname\.startsWith\('\/api\/'\)\) return;/);
+    const push = src.slice(src.indexOf("addEventListener('push'"), src.indexOf("addEventListener('notificationclick'"));
+    expect(push).toContain("body: 'Something new in Keepsake'");
+    expect(push).not.toMatch(/\.data\b|\.json\(|\.text\(/);
   });
 
   it('serves the build\'s files', async () => {

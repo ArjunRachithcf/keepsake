@@ -157,7 +157,7 @@ const byMorning = (a: Question, b: Question) => b.deliverAt.localeCompare(a.deli
 /** A one-time link, from what createInvite returned (data.ts hands it over; routes never get one to pass). */
 export const linkAnswer = (owner: object, i: { url: string; expiresAt: Date }): Viewed<api.OneTimeLink> => mark(owner, { url: str(i.url), expiresAt: i.expiresAt.toISOString() });
 
-export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealingKey' | 'sealingKeyPrevious'> & Partial<Pick<Config, 'vapidKey' | 'egress'>>, viewer: Person, owner: object) {
+export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealingKey' | 'sealingKeyPrevious'> & Partial<Pick<Config, 'vapidKey' | 'egress' | 'shopHosts'>>, viewer: Person, owner: object) {
   const answer = marker(owner);
   const instant = new Date();
   const now = today(cfg.timezone, instant);
@@ -379,7 +379,10 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
   // Every helper builds its own answer from ids, for this viewer: none takes a person, a row or a ready object.
   return {
     signedIn: (): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),
-    household: (): Viewed<api.Household> => answer({ mode: cfg.mode, me: person(viewer), people: [...people().values()].map(person), currency: currency(db) }),
+    household: (): Viewed<api.Household> => answer({
+      mode: cfg.mode, me: person(viewer), people: [...people().values()].map(person), currency: currency(db),
+      addFromLink: cfg.egress !== false && (cfg.shopHosts?.length ?? 0) > 0,
+    }),
     person: (id: string): Viewed<api.Person> => answer(person(mustGetPerson(db, id))),
     profile: (personId: string): Viewed<api.Profile> => answer(profile(getProfile(db, mustGetPerson(db, personId).id))),
     /** The viewer's own passkeys: nobody lists someone else's. */
