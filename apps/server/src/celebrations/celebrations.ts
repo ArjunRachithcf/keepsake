@@ -40,6 +40,12 @@ export function peopleByCelebration(db: Db): Map<string, string[]> {
   return m;
 }
 
+/** The celebrations a person is part of. */
+export function celebrationsOfPerson(db: Db, personId: string): Celebration[] {
+  return db.select({ c: t.celebration }).from(t.celebration).innerJoin(t.celebrationPerson, eq(t.celebrationPerson.celebrationId, t.celebration.id))
+    .where(eq(t.celebrationPerson.personId, personId)).all().map((r) => r.c);
+}
+
 export function isIn(db: Db, celebrationId: string, personId: string): boolean {
   return Boolean(db.select().from(t.celebrationPerson)
     .where(and(eq(t.celebrationPerson.celebrationId, celebrationId), eq(t.celebrationPerson.personId, personId))).get());
@@ -99,8 +105,9 @@ export function removeCelebration(db: Db, me: Person, id: string): void {
 }
 
 /**
- * ADR 0007: once a one-off celebration's day has passed, its wishes (none is given yet in M1; from M2 only those not
- * given) are for any time. Yearly ones roll on to their next date and keep theirs. `today` is the household's day.
+ * ADR 0007: once a one-off celebration's day has passed, its wishes are for any time. Given ones too: what a gift was
+ * for is the gift's own (claim.celebration_id), and a wish that is gone is gone whatever it is for, so nothing about a
+ * wish's row tells its person whether it was given (ADR 0003). Yearly ones roll on to their next date and keep theirs. `today` is the household's day.
  */
 export function settlePastCelebrations(db: Db, today: string): void {
   const past = db.select({ id: t.celebration.id }).from(t.celebration).where(and(eq(t.celebration.recurrence, 'none'), lt(t.celebration.date, today))).all().map((c) => c.id);

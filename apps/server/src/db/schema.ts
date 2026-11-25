@@ -139,3 +139,62 @@ export const audit = sqliteTable('audit', {
   index('audit_subject').on(t.subjectId),
   check('audit_action', sql`${t.action} IN ('passkeys_reset')`),
 ]);
+
+// Gifts (spec §3, ADR 0003): claims and group gifts. The surprise: nothing here ever reaches the person a wish is for
+// (or a kid) except through the view layer's thank-yous after the celebration, for givers who chose to be named.
+
+/**
+ * "I'll get this": one giver's claim on a wish, for `quantity` of it; then bought, then given. `celebration_id` and
+ * `for_date` are the occasion it is for (the wish's celebration, or the person's next one), set when it is claimed;
+ * the person learns it was given only once that day is over. `named`: the giver puts their name on it (thank-yous).
+ */
+export const claim = sqliteTable('claim', {
+  id: text('id').primaryKey(),
+  wishId: text('wish_id').notNull().references(() => wish.id, { onDelete: 'cascade' }),
+  giverId: text('giver_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  quantity: integer('quantity').notNull(),
+  state: text('state', { enum: ['claimed', 'bought', 'given'] }).notNull(),
+  celebrationId: text('celebration_id').references(() => celebration.id, { onDelete: 'set null' }),
+  forDate: text('for_date'),
+  givenOn: text('given_on'),
+  named: integer('named').notNull().default(0),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [
+  uniqueIndex('claim_wish_giver').on(t.wishId, t.giverId),
+  index('claim_giver').on(t.giverId),
+  check('claim_state', sql`${t.state} IN ('claimed', 'bought', 'given')`),
+  check('claim_quantity', sql`${t.quantity} BETWEEN 1 AND 99`),
+  check('claim_named', sql`${t.named} IN (0, 1)`),
+]);
+
+/** A wish several givers chip into: its organizer, a target, open → bought → given. The occasion as for a claim. */
+export const groupGift = sqliteTable('group_gift', {
+  wishId: text('wish_id').primaryKey().references(() => wish.id, { onDelete: 'cascade' }),
+  organizerId: text('organizer_id').references(() => person.id, { onDelete: 'set null' }),
+  targetMinor: integer('target_minor').notNull(),
+  state: text('state', { enum: ['open', 'bought', 'given'] }).notNull(),
+  celebrationId: text('celebration_id').references(() => celebration.id, { onDelete: 'set null' }),
+  forDate: text('for_date'),
+  givenOn: text('given_on'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [
+  check('group_gift_state', sql`${t.state} IN ('open', 'bought', 'given')`),
+  check('group_gift_target', sql`${t.targetMinor} > 0`),
+]);
+
+/** One giver's share of a group gift; `named` as for a claim. */
+export const share = sqliteTable('share', {
+  wishId: text('wish_id').notNull().references(() => groupGift.wishId, { onDelete: 'cascade' }),
+  giverId: text('giver_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  amountMinor: integer('amount_minor').notNull(),
+  named: integer('named').notNull().default(0),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.wishId, t.giverId] }),
+  index('share_giver').on(t.giverId),
+  check('share_amount', sql`${t.amountMinor} > 0`),
+  check('share_named', sql`${t.named} IN (0, 1)`),
+]);

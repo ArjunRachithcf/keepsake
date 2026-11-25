@@ -67,6 +67,10 @@ const PARAMS: Record<string, Record<string, string>> = {
   editWish: { wishId: 'w_alex_tent' }, removeWish: { wishId: 'w_alex_old' },
   approveWish: { wishId: 'w_leo_kite' }, declineWish: { wishId: 'w_sug_for_alex' },
   removePasskey: { passkeyId: 'pk2' }, endSessions: { personId: 'p_mia' }, resetPasskeys: { personId: 'p_leo' },
+  claimWish: { wishId: 'w_sam_book' }, editClaim: { wishId: 'w_sam_book' }, unclaimWish: { wishId: 'w_sam_book' },
+  nameOnGift: { wishId: 'w_robin_scarf' },
+  startGroupGift: { wishId: 'w_mia_bike' }, editGroupGift: { wishId: 'w_mia_bike' }, endGroupGift: { wishId: 'w_mia_bike' },
+  chipIn: { wishId: 'w_sam_pan' }, withdrawShare: { wishId: 'w_sam_pan' },
   getCelebration: { celebrationId: 'c_xmas' }, editCelebration: { celebrationId: 'c_xmas' }, removeCelebration: { celebrationId: 'c_old' },
 };
 
@@ -81,6 +85,12 @@ const BODIES: Record<string, unknown> = {
   addCelebration: { name: 'Summer party', date: '2027-07-01', poster: 'gold', recurrence: 'none', people: ['p_alex'] },
   editCelebration: { place: 'The garden' },
   setProfile: { likes: ['Hiking'] },
+  claimWish: { quantity: 1 },
+  editClaim: { state: 'bought' },
+  nameOnGift: { named: true },
+  startGroupGift: { targetMinor: 12000 },
+  editGroupGift: { targetMinor: 15000 },
+  chipIn: { amountMinor: 2500 },
 };
 
 export function request(o: SpecOp) {
@@ -120,7 +130,8 @@ const NOW = '2026-11-01T10:00:00.000Z';
 /**
  * Alex (admin, two passkeys), Sam and Robin (adults), Mia (kid; Sam manages her), Leo (kid; nobody set, so the admins),
  * Pat (to be removed). Celebrations: Christmas (yearly; everyone), Mia's birthday (yearly; Mia), an old one-off.
- * Wishes in every state. All invented.
+ * Wishes in every state; Robin's scarf given by Alex last Christmas (over), Sam's pan a group gift Alex started.
+ * All invented.
  */
 export function household(): Db {
   const db = openDb(':memory:');
@@ -152,7 +163,11 @@ export function household(): Db {
     w('w_leo_kite', 'p_leo', 'A dragon kite', 'awaiting_parent'),
     w('w_sug_for_alex', 'p_alex', 'A bread course', 'suggested', { addedBy: 'p_robin', position: 2 }),
     w('w_sug_for_mia', 'p_mia', 'A paint set', 'suggested', { addedBy: 'p_robin', position: 2 }),
+    w('w_robin_scarf', 'p_robin', 'A wool scarf', 'listed'),
+    w('w_sam_pan', 'p_sam', 'A cast-iron pan', 'listed', { position: 1 }),
   ]).run();
+  db.insert(t.claim).values({ id: 'cl_scarf', wishId: 'w_robin_scarf', giverId: 'p_alex', quantity: 1, state: 'given', celebrationId: 'c_xmas', forDate: '2025-12-24', givenOn: '2025-12-24', createdAt: NOW, updatedAt: NOW }).run();
+  db.insert(t.groupGift).values({ wishId: 'w_sam_pan', organizerId: 'p_alex', targetMinor: 8000, state: 'open', celebrationId: 'c_xmas', forDate: '2026-12-24', createdAt: NOW, updatedAt: NOW }).run();
   return db;
 }
 

@@ -6,8 +6,8 @@ info:
     HTTP API of Keepsake. Same under HomersLab and standalone (ADR 0001). Deny by default: every operation needs a
     person unless it declares `security: []`. Every request that changes something carries Keepsake's own Origin
     (KEEPSAKE_ORIGIN), in both modes. Every answer about the household is built by one view layer (`viewFor(viewer)`,
-    ADR 0003): claims, group-gift shares, ideas and the asker of a question (later milestones) are never sent to the
-    person a wish is for. docs/security.md lists each route's actor and control.
+    ADR 0003): claims and group-gift shares (M2), ideas and the asker of a question (later milestones) are never sent to the
+    person a wish is for, nor to a kid. docs/security.md lists each route's actor and control.
 servers: [{ url: /api }]
 security: [ { homerslabPerson: [] }, { session: [] } ]
 tags:
@@ -15,6 +15,7 @@ tags:
   - { name: sign-in, description: 'Standalone only (passkeys, Philobiblos ADR 0010); 404 under HomersLab' }
   - { name: household }
   - { name: wishes }
+  - { name: gifts, description: 'Claims and group gifts: givers only (not the wish''s person, not a kid; ADR 0003)' }
   - { name: celebrations }
 
 paths:
@@ -513,6 +514,149 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /wishes/{wishId}/claim:
+    parameters:
+      - { $ref: '#/components/parameters/wishId' }
+    put:
+      tags: [gifts]
+      operationId: claimWish
+      summary: 'I''ll get this, or how many of it (a giver: not the wish''s person, not a kid; not on a group gift)'
+      description: The person's and a kid's answer is a 403 decided before anything about the wish's gifts is read, so it is the same whatever the gifts are (ADR 0003).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimInput' }
+      responses:
+        '200': { $ref: '#/components/responses/GiverWish' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [gifts]
+      operationId: editClaim
+      summary: Your claim bought, given, or back (a given gift whose celebration is over stays given)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimPatch' }
+      responses:
+        '200': { $ref: '#/components/responses/GiverWish' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [gifts]
+      operationId: unclaimWish
+      summary: Takes back your claim (not once it is given)
+      responses:
+        '204': { description: Taken back }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /wishes/{wishId}/named:
+    parameters:
+      - { $ref: '#/components/parameters/wishId' }
+    put:
+      tags: [gifts]
+      operationId: nameOnGift
+      summary: After the celebration, puts your name on a gift you gave (or takes it off) so its person can thank you; off by default
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NamedInput' }
+      responses:
+        '200': { $ref: '#/components/responses/GiverWish' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /wishes/{wishId}/group:
+    parameters:
+      - { $ref: '#/components/parameters/wishId' }
+    post:
+      tags: [gifts]
+      operationId: startGroupGift
+      summary: Makes a wish a group gift with a target (a giver; not a wish someone has claimed; the household's currency first)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupInput' }
+      responses:
+        '200': { $ref: '#/components/responses/GiverWish' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    patch:
+      tags: [gifts]
+      operationId: editGroupGift
+      summary: The target (while open) or the state, by whoever started it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupPatch' }
+      responses:
+        '200': { $ref: '#/components/responses/GiverWish' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [gifts]
+      operationId: endGroupGift
+      summary: Back to a plain wish, while nobody else has chipped in
+      responses:
+        '204': { description: Ended }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /wishes/{wishId}/group/share:
+    parameters:
+      - { $ref: '#/components/parameters/wishId' }
+    put:
+      tags: [gifts]
+      operationId: chipIn
+      summary: Chips in, or changes your share, while the group gift is open
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ShareInput' }
+      responses:
+        '200': { $ref: '#/components/responses/GiverWish' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [gifts]
+      operationId: withdrawShare
+      summary: Takes your share back while the group gift is open
+      responses:
+        '204': { description: Taken back }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /celebrations:
     get:
       tags: [celebrations]
@@ -647,6 +791,9 @@ components:
     Conflict:
       description: Not possible in this state
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    GiverWish:
+      description: The wish as the giver sees it now (with its gifts)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } }
     TooMany:
       description: Too many tries; wait a minute
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -873,6 +1020,144 @@ components:
         updatedAt: { $ref: '#/components/schemas/DateTime' }
         canEdit: { type: boolean }
         canApprove: { type: boolean }
+        gift:
+          description: 'Only for a giver (not its person, not a kid): absent, not null, for everyone else, whatever the gifts are'
+          $ref: '#/components/schemas/Gift'
+
+    ClaimState: { enum: [claimed, bought, given] }
+    GroupState: { enum: [open, bought, given] }
+
+    Gift:
+      description: 'A wish''s gifts, only ever for a giver: never its person, never a kid (ADR 0003). Others'' shares are names, not amounts.'
+      type: object
+      additionalProperties: false
+      required: [claimed, left, given, claims, group, mine]
+      properties:
+        claimed: { type: integer, minimum: 0, description: 'How many are claimed' }
+        left: { type: integer, minimum: 0, description: 'How many are left to claim (0 for a group gift)' }
+        given: { type: boolean, description: 'All given: gone from every list for givers' }
+        claims: { type: array, items: { $ref: '#/components/schemas/Claim' } }
+        group:
+          anyOf: [{ $ref: '#/components/schemas/GroupGift' }, { type: 'null' }]
+        mine:
+          description: The caller's own claim or share
+          anyOf: [{ $ref: '#/components/schemas/MyGift' }, { type: 'null' }]
+
+    Claim:
+      type: object
+      additionalProperties: false
+      required: [giver, quantity, state, mine]
+      properties:
+        giver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        quantity: { type: integer, minimum: 1 }
+        state: { $ref: '#/components/schemas/ClaimState' }
+        mine: { type: boolean }
+
+    GroupGift:
+      type: object
+      additionalProperties: false
+      required: [organizer, targetMinor, totalMinor, state, givers, myShareMinor, canManage]
+      properties:
+        organizer: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        targetMinor: { type: integer, minimum: 1 }
+        totalMinor: { type: integer, minimum: 0 }
+        state: { $ref: '#/components/schemas/GroupState' }
+        givers:
+          type: array
+          description: Who chipped in (names only)
+          items:
+            type: object
+            additionalProperties: false
+            required: [giver, mine]
+            properties:
+              giver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+              mine: { type: boolean }
+        myShareMinor: { type: [integer, 'null'] }
+        canManage: { type: boolean }
+
+    MyGift:
+      type: object
+      additionalProperties: false
+      required: [state, named, over, celebrationId, forDate]
+      properties:
+        state: { enum: [claimed, bought, given, open] }
+        named: { type: boolean, description: 'Your name is on it for the person (after the celebration)' }
+        over: { type: boolean, description: 'Given, and its celebration is over: you may put your name on it' }
+        celebrationId: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+        forDate: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+
+    CelebrationRef:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+
+    Thanks:
+      description: A gift the caller received, after its celebration; `from` names only the givers who chose to
+      type: object
+      additionalProperties: false
+      required: [wish, celebration, on, from]
+      properties:
+        wish: { $ref: '#/components/schemas/Wish' }
+        celebration: { anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
+        on: { $ref: '#/components/schemas/Day' }
+        from: { type: array, items: { $ref: '#/components/schemas/PersonRef' } }
+
+    Gave:
+      description: A gift the caller gave, after its celebration
+      type: object
+      additionalProperties: false
+      required: [wish, celebration, on, named]
+      properties:
+        wish: { $ref: '#/components/schemas/Wish' }
+        celebration: { anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
+        on: { $ref: '#/components/schemas/Day' }
+        named: { type: boolean }
+
+    ClaimInput:
+      type: object
+      additionalProperties: false
+      required: [quantity]
+      properties:
+        quantity: { type: integer, minimum: 1, maximum: 99 }
+
+    ClaimPatch:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: { $ref: '#/components/schemas/ClaimState' }
+
+    NamedInput:
+      type: object
+      additionalProperties: false
+      required: [named]
+      properties:
+        named: { type: boolean }
+
+    GroupInput:
+      type: object
+      additionalProperties: false
+      required: [targetMinor]
+      properties:
+        targetMinor: { type: integer, minimum: 1, maximum: 100000000 }
+
+    GroupPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        targetMinor: { type: integer, minimum: 1, maximum: 100000000 }
+        state: { $ref: '#/components/schemas/GroupState' }
+
+    ShareInput:
+      type: object
+      additionalProperties: false
+      required: [amountMinor]
+      properties:
+        amountMinor: { type: integer, minimum: 1, maximum: 100000000 }
 
     WishInput:
       type: object
@@ -995,7 +1280,7 @@ components:
     Home:
       type: object
       additionalProperties: false
-      required: [next, celebrations, wishes, suggestions, toApprove, suggested]
+      required: [next, celebrations, wishes, suggestions, toApprove, suggested, thanks, gave]
       properties:
         next:
           description: The next celebration the caller is part of
@@ -1005,3 +1290,5 @@ components:
         suggestions: { type: array, description: 'Suggestions for the caller, waiting for their yes', items: { $ref: '#/components/schemas/Wish' } }
         toApprove: { type: array, description: 'Kids'' wishes and suggestions waiting for the caller as their manager', items: { $ref: '#/components/schemas/Wish' } }
         suggested: { type: array, description: 'The caller''s suggestions for others, still waiting', items: { $ref: '#/components/schemas/Wish' } }
+        thanks: { type: array, description: 'Gifts the caller received, after their celebration, with the givers who chose to be named', items: { $ref: '#/components/schemas/Thanks' } }
+        gave: { type: array, description: 'Gifts the caller gave, after their celebration: where they put their name on each', items: { $ref: '#/components/schemas/Gave' } }

@@ -21,6 +21,7 @@ import {
   addPerson, editPerson, hasPasskey, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
   type Person, type PersonInput,
 } from './household/people';
+import { chipIn, claimWish, editGroup, endGroup, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
 import { setProfile, type ProfileInput } from './household/profile';
 import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
@@ -30,6 +31,7 @@ import { addWish, approveWish, declineWish, editWish, orderWishes, removeWish, t
 
 export type { CelebrationInput } from './celebrations/celebrations';
 export type { WishInput } from './wishes/wishes';
+export type { ClaimState, GroupState } from './gifts/gifts';
 export { MAX_WISHES } from './wishes/wishes';
 export { RESET_FRESH_MINUTES } from './auth/passkeys';
 
@@ -134,6 +136,18 @@ export function dataFor(cfg: Config, db: Db) {
       approve: (r: Req, id: string) => { approveWish(db, me(r), id); },
       decline: (r: Req, id: string) => declineWish(db, me(r), id),
       order: (r: Req, personId: string, ids: string[]) => orderWishes(db, me(r), personId, ids),
+    },
+    /** What givers do (gifts/gifts.ts), as the request's person: each returns the wish's id for the view layer. */
+    gifts: {
+      claim: (r: Req, wishId: string, quantity: number) => claimWish(db, me(r), wishId, quantity, today(cfg.timezone)).id,
+      setState: (r: Req, wishId: string, state: ClaimState) => setClaimState(db, me(r), wishId, state, today(cfg.timezone)).id,
+      unclaim: (r: Req, wishId: string) => unclaimWish(db, me(r), wishId),
+      setNamed: (r: Req, wishId: string, named: boolean) => setNamed(db, me(r), wishId, named, today(cfg.timezone)).id,
+      startGroup: (r: Req, wishId: string, targetMinor: number) => startGroup(db, me(r), wishId, targetMinor, today(cfg.timezone)).id,
+      editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => editGroup(db, me(r), wishId, patch, today(cfg.timezone)).id,
+      endGroup: (r: Req, wishId: string) => endGroup(db, me(r), wishId),
+      chipIn: (r: Req, wishId: string, amountMinor: number) => chipIn(db, me(r), wishId, amountMinor).id,
+      withdraw: (r: Req, wishId: string) => withdrawShare(db, me(r), wishId),
     },
     celebrations: {
       add: (r: Req, i: CelebrationInput) => addCelebration(db, me(r), i).id,

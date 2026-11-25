@@ -14,6 +14,7 @@ import { isApi, servesPage } from './paths';
 import { authRoutes } from './routes/auth';
 import { celebrationRoutes } from './routes/celebrations';
 import { systemRoutes } from './routes/system';
+import { giftRoutes } from './routes/gifts';
 import { householdRoutes } from './routes/household';
 import { wishRoutes } from './routes/wishes';
 import { routerFor } from './router';
@@ -68,6 +69,7 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     authRoutes(router, cfg, data, webauthn, challenges);
     householdRoutes(router, cfg, data);
     wishRoutes(router, data);
+    giftRoutes(router, data);
     celebrationRoutes(router, data);
   }, { prefix: '/api' });
   const notFound = { error: 'not found' };
