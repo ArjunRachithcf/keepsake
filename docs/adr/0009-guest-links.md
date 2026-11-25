@@ -120,3 +120,6 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   from this origin over HTTPS, with `Path=/` and no `Domain`, so neither a sibling subdomain nor a plain-HTTP answer can
   set it), and every first exchange gives the device a fresh value made by the server: the device's sessions and the
   links it opened move to it in the same transaction, and the value it held before opens nothing.
+- **Known and accepted** (fifth review, L-c): if the answer to a first exchange is lost, or two first exchanges race in
+  two tabs, the device's other links have moved to a value the browser never stored. On that device they then answer
+  "opened on another device" (409) until each gets a new address. Open coming first makes this rare.
