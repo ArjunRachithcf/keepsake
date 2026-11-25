@@ -11,7 +11,8 @@ that private is the surprise: the person a gift is for must not learn it from Ke
 | Claims and "bought" marks | SQLite | the surprise: never to the person a wish is for |
 | Ideas kept for someone, group-gift shares | SQLite | the surprise |
 | Who asked a question | SQLite | anonymity (ADR 0008) |
-| Exchange assignments | sealed per giver; key outside the database | nobody may list the whole draw |
+| Draw assignments | `draw_assignment`: sealed per giver (AES-256-GCM), the key outside the database (`KEEPSAKE_SEALING_KEY`, or the standalone key file in `keys/`) | nobody may list the whole draw before the host's reveal date; a backup alone must say nothing |
+| The sealing key | `KEEPSAKE_SEALING_KEY` / `_FILE`, or `keys/sealing.key` (0600, made once) | whoever holds it and a copy of the database can open every draw: kept apart from `data/` and its backups |
 | Sessions, invite links, guest links | hashed in SQLite | sign-in, guest access |
 
 ## Actors and what stops them
@@ -19,13 +20,14 @@ that private is the surprise: the person a gift is for must not learn it from Ke
 | Actor | Could try | Controls |
 |---|---|---|
 | **The person a gift is for** | read claims, shares or ideas for their wishes, or who asked them: page data, API, live updates, filters, sort order, counts, "gone" flags, error messages, export, the arrival time of a question | ADR 0003: one view layer, claims and shares removed before any filter/sort/count, no claim stream to the person; questions batched to the morning (ADR 0008); a viewer × wish matrix of raw-response tests |
-| **A curious adult, host or admin** | list the whole draw before the reveal; learn who asked | ADR 0004: sealed per giver, no route lists pairs, audit without pairs; ADR 0008: asker read only by `viewFor` |
+| **A curious adult, host or admin** | list the whole draw before the reveal; learn who asked | ADR 0004: sealed per giver, no route lists pairs, audit without pairs; every answer before the reveal is byte for byte the same whoever the others drew (`test/draws.test.ts`); ADR 0008: asker read only by `viewFor` |
+| **The host probing the rules** | with "not last year's person" on, try exclusions until a draw is refused, to learn something of last year's pairs | a refusal names only the rule; refused tries are audited (`draw_refused`) and every try counts against 20 a day per draw; a known limit, bounded to the host and written down here |
 | **A kid** | see their own claims; make their list public | kids are "meant for" on their list; public only with an adult's approval |
 | **A stranger on the LAN / internet** | reach the app, forge identity headers, take over an empty install | identity headers only from the configured proxy and only once the edge strips them; standalone binds 127.0.0.1; no first-visitor admin: the first admin comes from HomersLab's roles or a one-time setup link in the data folder (Philobiblos ADR 0010) |
 | **Another website** | CSRF | SameSite=Strict; Origin required on every change; `frame-ancestors 'none'` |
 | **A hostile shop page** (add from a link, M5) | SSRF, huge or scripted pages, decoder exploits | Philobiblos' egress client (allowlist, public addresses only, size and time caps) and media worker (pictures re-encoded) |
 | **Whoever holds a guest link** | reach other people or draws; keep using it after the celebration | ADR 0009: one person or one draw only; claims, questions and a name only; draw links expire after the celebration; revocable; hashed at rest; token in the fragment; a kid's wishes only with a parent's approval |
-| **Someone with a backup** | read the draw | sealed with a key that is not in the database or its backup |
+| **Someone with a backup** | read the draw | sealed with a key that is not in the database or its backup; each row bound to its draw and giver (associated data) and padded to one length, written in the givers' order: the raw tables of two households with different pairs differ only in the sealed bytes (`test/draws.test.ts`) |
 
 ## Rules
 
@@ -66,7 +68,11 @@ Each new route, job or import states its actor and control here before it merges
 | `PUT`/`DELETE /api/wishes/{id}/group/share` (M2) | givers | the same 403/404 as claims; while the group gift is open; all shares together at most the target (409), and the target never below them; one share per giver, amounts 1 to 100 000 000 minor units; others see the caller's name, never the amount |
 | `GET /api/celebrations`, `GET /api/celebrations/{id}` (M1) | everyone in the household | `viewFor(viewer)`; each person's list computed after the visibility filter; `toApprove` counts only the caller's own approvals |
 | `POST /api/celebrations` (M1) | grown-ups | the caller hosts; people must be in the household |
-| `PATCH`/`DELETE /api/celebrations/{id}` (M1) | its host, admins | someone taken out keeps their wishes for any time; a removed celebration's wishes stay, for any time |
+| `PATCH`/`DELETE /api/celebrations/{id}` (M1) | its host, admins | someone taken out keeps their wishes for any time; a removed celebration's wishes stay, for any time (and its draws go); someone in a drawn draw whose day has not come stays until the draw changes (409), in a draw not drawn yet they just leave it |
+| `GET /api/celebrations/{id}/draw` (M3) | everyone in the household | `viewFor(viewer)`: who is in it, its settings, "4 of 6 opened" (counts, never who); the exclusions to its host only (`null` for everyone else); the caller's own person only once they opened theirs (only their own sealed row is opened); every pair only from the reveal date on (a day after the celebration, never by default), and only to the participants and the host. Before the reveal, each viewer's answers to every reading route are byte for byte the same whoever the others drew, the host and admins included (`test/draws.test.ts`, 7 viewers × 7 states). Celebrations carry a short `draw` (counts and the caller's own state, no pairs) |
+| `POST`/`PATCH`/`DELETE /api/celebrations/{id}/draw` (M3) | the celebration's host (an admin when it has none; never a kid) | 403 for anyone else, also in the facade; who draws must be in the celebration, kids only with "Kids draw too"; exclusions pairs of them; a budget needs the currency; the reveal a day after the celebration or never; once drawn, a change to who draws or the rules draws again under the re-draw rules (in one transaction: a refusal leaves the rules as they were); once its day has come only the reveal date changes; every change audited (`draw_created`, `draw_changed`, `reveal_set`, `draw_removed`; who, which draw, when; never pairs) |
+| `POST /api/celebrations/{id}/draw/run` (M3) | the host | needs the sealing key (409 without: no draw is made); pairs from `@keepsake/draw` with node:crypto's `randomInt` (every valid assignment equally likely: nobody themselves, no excluded pair either way, optionally not last year's person); an impossible set of rules is a 409 naming the rule, never a pair; re-draw freely until someone opened theirs, then only before the day and never once a participant has marked a gift bought for another since the draw (the host's own wishes left out, so the answer never depends on gifts meant for them), and everyone opens theirs again (`redrawnAt`); 20 tries a day per draw; audited (`drawn`, `redrawn`, `draw_refused`) |
+| `POST /api/celebrations/{id}/draw/open` (M3) | a participant | only their own row; 403 for anyone not in the draw; 409 before the names are drawn or before the draw-together time; records only that they opened (counted, never shown per person); hiding it again is the browser's |
 
 **The sign-in limits**: 20 sign-in steps a minute per client and 300 for everyone together; the 300 count only the
 steps a client's own limit let through, so one address cannot use up anyone else's budget. A client is the socket's
@@ -74,6 +80,13 @@ address (IPv6 by its /64, so one host cannot spread its tries over its own addre
 this and nothing else) it is the last `X-Forwarded-For` address that proxy set. Each client holds at most 20 waiting
 challenges, and a full store drops the oldest of whoever holds the most, so one client cannot push out another's
 sign-in in progress. Without a proxy, people behind one NAT share a limit; the global 300 bounds the load.
+
+**The sealing key** (M3, ADR 0004): `KEEPSAKE_SEALING_KEY` (base64, 32 bytes; HomersLab gives it as a secret file) or
+`KEEPSAKE_SEALING_KEY_FILE`; standalone makes `KEEPSAKE_KEYS_DIR/sealing.key` (default `./keys`, `/keys` in the image)
+once at start, `O_EXCL`, 0600. A key file inside the data folder is refused at start, so a backup of `data/` never
+carries it. Without a usable key Keepsake still starts, but no draw is made or opened (409). The key's value is never
+logged, never in an answer or error, and `JSON.stringify` of the configuration hides it. Losing the key loses the sealed
+draws (the host draws again); keep a copy apart from the data's backups.
 
 **The data folder**: Keepsake runs with umask 077 and sets the folder to 0700 and `keepsake.sqlite`, `-wal`, `-shm` to
 0600 at start (the smoke test checks it on a folder made 0755), so no other account on the host reads the household's

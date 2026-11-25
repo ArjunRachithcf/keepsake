@@ -115,6 +115,11 @@ occasion kept when it was marked given, the wish's current occasion and the day 
 moves later, and once revealed it stays revealed (ADR 0003); a giver who leaves the household takes their claims that
 are only claimed and their shares of group gifts not yet given along, and leaves bought and given ones behind, unnamed.
 
+2026-11-25 (M3, decided by default, open to change; ADR 0004): one draw per celebration and year; the host picks who
+draws from the celebration's people, at least 3; the reveal is a day after the celebration or never; re-draw after
+someone opened theirs only before the day and not once a gift is bought since the draw; a re-draw is told in the app
+(everyone opens theirs again), by push from M5; a celebration without a host has its draw run by an admin.
+
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by
 default.
