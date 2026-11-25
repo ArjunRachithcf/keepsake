@@ -101,16 +101,25 @@ export function morning(db: Db, cfg: Pick<Config, 'timezone'>, now: Date): strin
   return [...told];
 }
 
-/** Runs the batch at every 08:00 (and now, if today's is due). Returns a stop function. */
-export function scheduleMorning(db: Db, cfg: Pick<Config, 'timezone'>, run: (now: Date) => void): () => void {
+/** After a failed batch, it is tried again this much later, while it is still due (PR #12 review, L8). */
+export const RETRY_MS = 15 * 60_000;
+
+/** Runs the batch at every 08:00 (and now, if today's is due); a failed one again 15 minutes later. Returns a stop function. */
+export function scheduleMorning(db: Db, cfg: Pick<Config, 'timezone'>, run: (now: Date) => void, failed: (e: unknown) => void = () => undefined): () => void {
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
   const arm = () => {
     if (stopped) return;
     const now = new Date();
-    if (due(db, cfg, now)) run(now);
-    // At most a day ahead (timers cap at 24.8 days anyway), and a minute late rather than early.
-    const wait = Math.min(Math.max(nextRun(cfg, now).getTime() - Date.now(), 0) + 1000, 86_400_000);
+    let wait: number;
+    try {
+      if (due(db, cfg, now)) run(now);
+      // At most a day ahead (timers cap at 24.8 days anyway), and a minute late rather than early.
+      wait = Math.min(Math.max(nextRun(cfg, now).getTime() - Date.now(), 0) + 1000, 86_400_000);
+    } catch (e) {
+      failed(e);
+      wait = RETRY_MS;
+    }
     timer = setTimeout(arm, wait);
     timer.unref();
   };
