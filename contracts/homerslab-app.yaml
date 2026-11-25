@@ -23,6 +23,9 @@ identity:
   forwarded_role_header: X-HomersLab-Role  # admin | adult | kid
   household_api: true                      # later: who manages which kid (until then Keepsake's admins set kids' parents)
 audience: household                        # adults and kids (kids' wishes wait for a parent, spec §2)
+# Guests by link (ADR 0009) have no HomersLab account: the edge lets these through without a sign-in (and still strips
+# every X-HomersLab-* header). /api/guest/* takes only Keepsake's own guest session; everything else stays behind sign-in.
+guest_paths: [/guest, /assets/*, /api/guest, /api/guest/*]
 secrets:
   - { key: KEEPSAKE_SEALING_KEY, file: true, description: 'Key that seals the draw assignments (32 bytes, base64; outside the database and its backup, ADR 0004). Without it Keepsake runs but makes and opens no draw' }
 config:

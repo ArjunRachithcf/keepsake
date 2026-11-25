@@ -121,6 +121,13 @@ is secret, gifts between its people name no giver to anyone but the giver; a dra
 someone opened theirs only before the day and not once a gift is bought since the draw; a re-draw is told in the app
 (everyone opens theirs again), by push from M5; a celebration without a host has its draw run by an admin.
 
+2026-11-25 (M4, decided by default, open to change; ADR 0005, 0008, 0009): a question reaches its person at 08:00 the day
+after it was asked; kids do not ask, and a kid's questions go to the kid's parents, who answer them; 3 open questions per
+asker and person; a declined question is shown to its asker only; ideas are for grown-ups other than the person, never
+kids; one share link per guest (labelled), a 12-hour guest session from the link; guests see gifts without anyone's
+name, the household sees a guest's claims with the guest's name (unless a draw keeps them unnamed); a guest invited
+after the draw is a re-draw; the import maps unmatched occasions to any time and skips Bought rows.
+
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by
 default.

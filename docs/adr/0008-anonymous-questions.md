@@ -14,3 +14,17 @@ question, one answer, no chat. The asker is never sent to the person.
 - **Limits**: a few open questions per asker and person; the person can decline or answer with a wish instead ("Add a
   wish instead"); admins can remove an abusive question without learning more than the person did.
 - Kids can be asked; their parent sees the question first, like a kid's wish.
+
+**M4, decided by default (2026-11-25, open to change)**:
+
+- **The batch** is 08:00 household time on the day *after* a question is asked, so the sheet can always say "gets it
+  tomorrow at 8:00". Computed when read (`deliver_at`); until then only the asker sees it, and everyone else's
+  answers are byte for byte those with no question. Ids are random, not ULIDs, so an id carries no time.
+- **Who asks**: grown-ups and guests. Not the person, not a kid's own parent (they keep the list), not kids (they make
+  no gifts in M4, as for claims).
+- **A kid's questions** go to the kid's parents, who answer, decline or add a wish for the kid. The kid does not see
+  questions (passing one on to the kid is left for later).
+- **Limits**: 3 open questions per asker and person, 30 open per person.
+- **Declined** questions are shown to their asker only ("they'd rather not say"); everyone else sees nothing.
+- **Taking back**: the asker until the batch; after it only an admin removes one, audited as who removed which.
+- **Storage**: only `questions/questions.ts isAsker` reads the asker, comparing it with the caller; nothing returns it.

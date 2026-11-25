@@ -17,6 +17,8 @@ assignment of a draw other than the one where they give (ADR 0004).
   against mistakes in our own code, not against deliberately hostile code in the server**: code that sets out to get
   around it can (the server is one process). The source bans in the architecture test (no Fastify, raw request,
   socket, reply or hand-made bytes in a route file) are the backstop, and review is the rest.
+- **Ideas and askers (M4)**: ideas for a person are read only for grown-ups other than the person; the asker of a
+  question is compared with the caller only (`isAsker`) and never sent. Guests see gifts without any giver's name.
 - **"Meant for them"**: the wish's person; for a kid's wish, the kid too. Managers of a kid see its claims (they
   coordinate), unless they are the one it's for. A guest is a viewer like any giver, never "meant for".
 - **Kids see no gifts at all** (decided 2026-11-25, PR #8): not on anyone's wishes, so nothing spoils through a kid. A
@@ -59,4 +61,6 @@ assignment of a draw other than the one where they give (ADR 0004).
   are absent where they must be (the Wishlist lesson: test the data, not the screen). M2's (`test/gifts.test.ts`)
   goes further for whoever may not see gifts: every reading answer must equal, byte for byte, the answer with no
   gifts at all, in every state before the celebration is over (a twin household with the same other changes, the
-  clock pinned so both make them at the same moment: bodies and headers). Guests join the matrix with their links (M4).
+  clock pinned so both make them at the same moment: bodies and headers). M4's (`test/questions.test.ts`, `ideas.test.ts`, `guests.test.ts`) compares twin households the same way: who asked a
+  question, whether ideas exist, whether a guest claimed; every viewer who may not know (the person, kids, the host,
+  admins, other guests) gets the same bytes.
