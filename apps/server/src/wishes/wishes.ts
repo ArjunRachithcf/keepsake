@@ -6,7 +6,7 @@
 // - Anyone else adds one for someone: a suggestion, which the person (or a kid's manager) approves or declines.
 //   A kid's approval of a suggestion still waits for a manager.
 // - A kid's change to a listed wish of theirs sends it back to their manager.
-import { and, eq, inArray, max } from 'drizzle-orm';
+import { and, count, eq, inArray, max } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -79,6 +79,17 @@ function checkPrice(db: Db, priceMinor: number | null): void {
   if (priceMinor !== null && !currency(db)) throw new Refused(409, 'the household has no currency yet: an admin sets it first');
 }
 
+/** At most this many wishes on a person's list (listed and waiting), and this many of one person's suggestions waiting for another. */
+export const MAX_WISHES = 300;
+export const MAX_SUGGESTIONS = 30;
+
+function onList(db: Db, personId: string): number {
+  return db.select({ n: count() }).from(t.wish).where(and(eq(t.wish.personId, personId), inArray(t.wish.state, ['listed', 'awaiting_parent']))).get()?.n ?? 0;
+}
+function checkRoom(db: Db, personId: string): void {
+  if (onList(db, personId) >= MAX_WISHES) throw new Refused(409, `a list holds at most ${MAX_WISHES} wishes`);
+}
+
 const nextPosition = (db: Db, personId: string) =>
   (db.select({ p: max(t.wish.position) }).from(t.wish).where(eq(t.wish.personId, personId)).get()?.p ?? -1) + 1;
 
@@ -88,6 +99,11 @@ export function addWish(db: Db, me: Person, personId: string, i: WishInput): Wis
   checkPrice(db, i.priceMinor);
   const state: WishState = owner.id === me.id ? (me.role === 'kid' ? 'awaiting_parent' : 'listed')
     : managesKid(db, me, owner) ? 'listed' : 'suggested';
+  if (state === 'suggested') {
+    const waiting = db.select({ n: count() }).from(t.wish)
+      .where(and(eq(t.wish.personId, owner.id), eq(t.wish.addedBy, me.id), eq(t.wish.state, 'suggested'))).get()?.n ?? 0;
+    if (waiting >= MAX_SUGGESTIONS) throw new Refused(409, `at most ${MAX_SUGGESTIONS} suggestions wait for one person`);
+  } else checkRoom(db, owner.id);
   const now = new Date().toISOString();
   const id = ulid();
   db.insert(t.wish).values({
@@ -128,6 +144,7 @@ export function approveWish(db: Db, me: Person, id: string): Wish {
   const w = seeWish(db, me, id);
   if (!canApprove(db, me, w)) throw new Refused(403, 'this wish is not yours to approve');
   const owner = mustGetPerson(db, w.personId);
+  if (w.state === 'suggested') checkRoom(db, owner.id);
   // A kid saying yes to a suggestion still needs a manager's yes; a manager's yes lists it.
   const state: WishState = w.state === 'suggested' && owner.role === 'kid' && me.id === owner.id ? 'awaiting_parent' : 'listed';
   db.update(t.wish).set({ state, updatedAt: new Date().toISOString() }).where(eq(t.wish.id, id)).run();

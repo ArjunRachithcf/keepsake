@@ -1,6 +1,6 @@
 // Celebrations (spec §3, ADR 0007): household objects with a date, place, poster and people. Adults host them; the
 // host or an admin changes them. The draw (M3) is not here yet.
-import { and, eq, inArray, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, lt, notInArray } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -96,4 +96,13 @@ export function removeCelebration(db: Db, me: Person, id: string): void {
   const c = mustGetCelebration(db, id);
   if (!canChange(me, c)) throw new Refused(403, 'only its host or an admin removes a celebration');
   db.delete(t.celebration).where(eq(t.celebration.id, id)).run();
+}
+
+/**
+ * ADR 0007: once a one-off celebration's day has passed, its wishes (none is given yet in M1; from M2 only those not
+ * given) are for any time. Yearly ones roll on to their next date and keep theirs. `today` is the household's day.
+ */
+export function settlePastCelebrations(db: Db, today: string): void {
+  const past = db.select({ id: t.celebration.id }).from(t.celebration).where(and(eq(t.celebration.recurrence, 'none'), lt(t.celebration.date, today))).all().map((c) => c.id);
+  if (past.length) db.update(t.wish).set({ celebrationId: null }).where(inArray(t.wish.celebrationId, past)).run();
 }

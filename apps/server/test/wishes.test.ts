@@ -1,7 +1,10 @@
 // Wishes (ADR 0007) and who sees them (ADR 0003's view layer): a kid's new wish waits for a manager, a suggestion for
 // its person, and neither reaches anyone else in any answer. The matrix asserts on the raw response bytes.
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
+import * as t from '../src/db/schema';
+import { MAX_SUGGESTIONS, MAX_WISHES } from '../src/wishes/wishes';
 import type { Db } from '../src/db/open';
 import { ORIGIN, household, sessionCookie, standalone } from './helpers';
 
@@ -226,5 +229,35 @@ describe('the household', () => {
     // A suggestion of someone removed still waits for its person, from nobody now.
     expect((await as('alex').get('/api/home')).json().suggestions).toMatchObject([{ id: 'w_sug_for_alex', addedBy: null }]);
     expect((await as('alex').get('/api/household')).json().people.map((p: { name: string }) => p.name)).not.toContain('Robin');
+  });
+});
+
+describe('limits', () => {
+  beforeEach(fresh);
+  it('a list holds at most 300 wishes; one person keeps at most 30 suggestions waiting for another', async () => {
+    const now = new Date().toISOString();
+    db.insert(t.wish).values(Array.from({ length: MAX_WISHES - 2 }, (_, i) => ({ id: `w_bulk_${i}`, personId: 'p_alex', name: `Wish ${i}`, state: 'listed' as const, position: 10 + i, addedBy: 'p_alex', createdAt: now, updatedAt: now }))).run();
+    expect((await as('alex').send('POST', '/api/wishes', { personId: 'p_alex', name: 'One more', celebrationId: null })).statusCode).toBe(409);
+    // a suggestion waits outside the list, but saying yes needs room
+    expect((await as('alex').send('POST', '/api/wishes/w_sug_for_alex/approve')).statusCode).toBe(409);
+    // the whole list can still be ordered
+    const ids = (await as('alex').get('/api/home')).json().wishes.map((w: { id: string }) => w.id).reverse();
+    expect(ids).toHaveLength(MAX_WISHES);
+    expect((await as('alex').send('PUT', '/api/people/p_alex/wish-order', { wishIds: ids })).statusCode).toBe(204);
+    for (let i = 0; i < MAX_SUGGESTIONS - 1; i++) expect((await as('robin').send('POST', '/api/wishes', { personId: 'p_sam', name: `Idea ${i}`, celebrationId: null })).statusCode).toBe(201);
+    expect((await as('robin').send('POST', '/api/wishes', { personId: 'p_sam', name: 'Too many', celebrationId: null })).statusCode).toBe(201);
+    expect((await as('robin').send('POST', '/api/wishes', { personId: 'p_sam', name: 'Too many', celebrationId: null })).statusCode).toBe(409);
+    expect((await as('mia').send('POST', '/api/wishes', { personId: 'p_sam', name: 'Mine is fine', celebrationId: null })).statusCode).toBe(201);
+  });
+});
+
+describe('a one-off celebration that has passed (ADR 0007)', () => {
+  beforeEach(fresh);
+  it('lets go of its wishes: they are for any time now; a yearly one keeps its own', async () => {
+    db.update(t.wish).set({ celebrationId: 'c_old' }).where(eq(t.wish.id, 'w_alex_old')).run();
+    const socks = (await as('sam').get('/api/people/p_alex?for=any')).json().wishes.map((w: { id: string; celebrationId: string | null }) => [w.id, w.celebrationId]);
+    expect(socks).toEqual([['w_alex_old', null]]);
+    expect((await as('sam').get('/api/people/p_alex')).json().wishes.find((w: { id: string }) => w.id === 'w_alex_tent').celebrationId).toBe('c_xmas');
+    expect((await as('mia').get('/api/home')).json().wishes.find((w: { id: string }) => w.id === 'w_mia_bike').celebrationId).toBe('c_mia');
   });
 });
