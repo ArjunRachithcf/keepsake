@@ -9,4 +9,7 @@ coverage/
 *.sqlite-*
 /data/
 /keys/
+# a data folder or sealing key made by a run from inside apps/server
+/apps/server/keys/
+/apps/server/data/
 *.tsbuildinfo
