@@ -9,9 +9,13 @@ import { newVapidKey, vapidFrom, type Vapid } from './webpush';
 
 const KEYS = new WeakMap<object, Vapid>();
 
+/**
+ * Read as the sealing key is (draws/sealed.ts): base64 or base64url, both alphabets (HomersLab's manifest cannot say
+ * which a generated secret uses; PR #12 review, M3), and it must be 32 bytes.
+ */
 function decode(text: string): Buffer {
-  const k = Buffer.from(text.trim(), 'base64url');
-  if (k.length !== 32 || !/^[A-Za-z0-9_-]{43}=?$/.test(text.trim())) throw new Error('the VAPID key must be 32 bytes, base64url');
+  const k = Buffer.from(text.trim(), 'base64');
+  if (k.length !== 32) throw new Error('the VAPID key must be 32 bytes, base64 or base64url');
   return k;
 }
 

@@ -28,7 +28,7 @@ audience: household                        # adults and kids (kids' wishes wait 
 guest_paths: [/guest, /assets/*, /api/guest, /api/guest/*]
 secrets:
   - { key: KEEPSAKE_SEALING_KEY, file: true, description: 'Key that seals the draw assignments (32 bytes, base64; outside the database and its backup, ADR 0004). Without it Keepsake runs but makes and opens no draw' }
-  - { key: KEEPSAKE_VAPID_KEY, file: true, description: 'Web Push key (a P-256 private scalar, 32 bytes, base64url; outside the database and its backup, ADR 0010). Without it Keepsake sends no push (the news still shows in the app)' }
+  - { key: KEEPSAKE_VAPID_KEY, file: true, description: 'Web Push key (a P-256 private scalar, 32 bytes, base64 or base64url; outside the database and its backup, ADR 0010). Without it Keepsake sends no push (the news still shows in the app)' }
 config:
   - { key: KEEPSAKE_TZ, optional: true, description: "The household's time zone (IANA, e.g. Europe/Berlin; default UTC): celebrations' days, the morning batch" }
   - { key: KEEPSAKE_ORIGIN, description: "The app's address (https://…), set by HomersLab: WebAuthn's origin and the Origin every change must carry" }

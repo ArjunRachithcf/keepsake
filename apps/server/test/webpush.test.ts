@@ -1,6 +1,6 @@
 // Web Push's encryption (RFC 8291) and VAPID (RFC 8292) with node:crypto, and the VAPID key kept as the sealing key
 // is (ADR 0010): its file made once, 0600, never in the data folder, never in a log.
-import { createDecipheriv, createECDH, createHmac, createPublicKey, verify } from 'node:crypto';
+import { createDecipheriv, createECDH, createHmac, createPublicKey, randomBytes, verify } from 'node:crypto';
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -113,6 +113,18 @@ describe('the VAPID key is kept as the sealing key is', () => {
     expect(() => vapidKey({ vapidKey: { file: named, create: false } })).toThrow(/names no file/);
     writeFileSync(named, 'not a key\n');
     expect(() => vapidKey({ vapidKey: { file: named, create: false } })).toThrow(/32 bytes/);
+  });
+
+  it('a key in base64 or base64url is read alike, as the sealing key is (PR #12 review, M3)', () => {
+    // A key whose base64 has + and / (HomersLab's generated secrets), and the same key in base64url.
+    let d = Buffer.alloc(32, 0xfb);
+    d[0] = 0x3e;
+    const std = d.toString('base64');
+    expect(std).toMatch(/[+/]/);
+    const a = vapidKey({ vapidKey: { value: std } })!;
+    const b = vapidKey({ vapidKey: { value: d.toString('base64url') } })!;
+    expect(a.publicKey).toEqual(b.publicKey);
+    for (let i = 0; i < 200; i++) { d = randomBytes(32); expect(() => vapidKey({ vapidKey: { value: d.toString('base64') } })).not.toThrow(); }
   });
 
   it('homerslab mode without the secret has no key (no push), and makes no file', () => {
