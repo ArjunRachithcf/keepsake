@@ -101,8 +101,9 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   answer), and the 409's text ("ask whoever sent it for a new address") and the hosts' screens say so. It keeps N2's
   point: a host who reissues to peek ends the guest's session, and the guest finds the link no longer opens.
 - **A reissue shows** (fourth review, R-1): the list gives each link's `reissuedAt` and `reissueCount` ("new address
-  {day}, 3 so far"), and the guest's page on a new address says "this link got a new address on {day}; the earlier one
-  was last opened on {day}" (its last use: opened or read with it; or never opened). The audit records it too, but no
+  {day}, 3 so far"), and the guest's page on a new address says "this link got a new address on {day}; it has had 3
+  new addresses; the earlier one was last opened on {day}" (the count too, fifth review L-b: a peek on the day of a
+  reissue cannot pass for the cousin's own use, since she knows how often she asked) (its last use: opened or read with it; or never opened). The audit records it too, but no
   route reads the audit: the list and the page are what people see.
 - **Known and accepted** (fourth review): whoever runs a draw (its host, usually in it) can reissue the cousin's link
   and open the new address, and so see whom she drew and what is taken. It cannot go unseen: her session ends at once,

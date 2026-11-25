@@ -546,7 +546,7 @@ export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'se
         lastDay: lastDayOf(db, l),
         // A link given a new address says so, and when the earlier address was last used (review R-1): a peek by
         // whoever held it in between shows to the guest.
-        reissued: l.reissuedAt ? { on: dayOfInstant(cfg.timezone, l.reissuedAt), earlierLastUsedOn: l.earlierLastUsedAt ? dayOfInstant(cfg.timezone, l.earlierLastUsedAt) : null } : null,
+        reissued: l.reissuedAt ? { on: dayOfInstant(cfg.timezone, l.reissuedAt), count: l.reissueCount, earlierLastUsedOn: l.earlierLastUsedAt ? dayOfInstant(cfg.timezone, l.earlierLastUsedAt) : null } : null,
       });
     },
     /** One wish the guest reaches (404 otherwise). */

@@ -619,12 +619,12 @@ describe('a new address for a link (review M-b)', () => {
     expect(fresh.link).toMatchObject({ reissueCount: 1, openedAt: null });
     expect(fresh.link.reissuedAt.slice(0, 10)).toBe(today);
     expect((await s.person('p_sam').get('/api/links')).json().links.find((l: { id: string }) => l.id === made.link.id)).toMatchObject({ reissueCount: 1, reissuedAt: fresh.link.reissuedAt });
-    expect((await ok(s.exchange(fresh.url))).json().reissued).toEqual({ on: today, earlierLastUsedOn: today });
+    expect((await ok(s.exchange(fresh.url))).json().reissued).toEqual({ on: today, count: 1, earlierLastUsedOn: today });
     // Two more, the first of them never opened before the next: the page says the earlier one was never opened.
     await ok(s.person('p_sam').send('POST', `/api/links/${made.link.id}/address`));
     const fourth = (await ok(s.person('p_sam').send('POST', `/api/links/${made.link.id}/address`))).json();
     expect(fourth.link.reissueCount).toBe(3);
-    expect((await ok(s.exchange(fourth.url))).json().reissued).toEqual({ on: today, earlierLastUsedOn: null });
+    expect((await ok(s.exchange(fourth.url))).json().reissued).toEqual({ on: today, count: 3, earlierLastUsedOn: null });
     // Share links: the creation rule. A kid's link (Sam is Mia's parent): an admin who is not her parent gets its 403.
     const mia = (await ok(s.person('p_sam').send('POST', '/api/people/p_mia/links', { label: 'Granny' }))).json();
     const make = await s.person('p_alex').send('POST', '/api/people/p_mia/links', { label: 'Granny' });

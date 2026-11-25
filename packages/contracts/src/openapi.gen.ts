@@ -1464,6 +1464,8 @@ export interface components {
             /** @description The link got a new address (on, household day) and when its earlier address was last used (null: never opened); null when it never got one */
             reissued: {
                 on: components["schemas"]["Day"];
+                /** @description How many new addresses the link has had (the guest knows how often she asked) */
+                count: number;
                 earlierLastUsedOn: components["schemas"]["Day"] | null;
             } | null;
         };

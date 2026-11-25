@@ -1929,9 +1929,10 @@ components:
           anyOf:
             - type: object
               additionalProperties: false
-              required: [on, earlierLastUsedOn]
+              required: [on, count, earlierLastUsedOn]
               properties:
                 on: { $ref: '#/components/schemas/Day' }
+                count: { type: integer, minimum: 1, description: 'How many new addresses the link has had (the guest knows how often she asked)' }
                 earlierLastUsedOn: { anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
             - { type: 'null' }
 
