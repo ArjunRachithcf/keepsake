@@ -129,7 +129,7 @@ export function editWish(db: Db, me: Person, id: string, patch: Partial<WishInpu
     quantity: patch.quantity ?? w.quantity,
     note: patch.note === undefined ? w.note : patch.note?.trim() || null,
     mostWanted: patch.mostWanted === undefined ? w.mostWanted : patch.mostWanted ? 1 : 0,
-    celebrationId, state, updatedAt: new Date().toISOString(),
+    celebrationId, wasFor: patch.celebrationId === undefined ? w.wasFor : null, state, updatedAt: new Date().toISOString(),
   }).where(eq(t.wish.id, id)).run();
   return getWish(db, id)!;
 }

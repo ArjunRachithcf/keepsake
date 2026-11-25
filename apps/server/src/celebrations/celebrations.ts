@@ -1,6 +1,6 @@
 // Celebrations (spec §3, ADR 0007): household objects with a date, place, poster and people. Adults host them; the
 // host or an admin changes them. The draw (M3) is not here yet.
-import { and, eq, inArray, lt, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -38,6 +38,12 @@ export function peopleByCelebration(db: Db): Map<string, string[]> {
   const m = new Map<string, string[]>();
   for (const r of db.select().from(t.celebrationPerson).all()) m.set(r.celebrationId, [...(m.get(r.celebrationId) ?? []), r.personId]);
   return m;
+}
+
+/** The celebrations a person is part of. */
+export function celebrationsOfPerson(db: Db, personId: string): Celebration[] {
+  return db.select({ c: t.celebration }).from(t.celebration).innerJoin(t.celebrationPerson, eq(t.celebrationPerson.celebrationId, t.celebration.id))
+    .where(eq(t.celebrationPerson.personId, personId)).all().map((r) => r.c);
 }
 
 export function isIn(db: Db, celebrationId: string, personId: string): boolean {
@@ -99,10 +105,12 @@ export function removeCelebration(db: Db, me: Person, id: string): void {
 }
 
 /**
- * ADR 0007: once a one-off celebration's day has passed, its wishes (none is given yet in M1; from M2 only those not
- * given) are for any time. Yearly ones roll on to their next date and keep theirs. `today` is the household's day.
+ * ADR 0007: once a one-off celebration's day has passed, its wishes are for any time, given or not (the wish's row
+ * never depends on its gifts, ADR 0003); `was_for` remembers that day's celebration, so a late gift still counts for it
+ * (gifts/gifts.ts). Yearly ones roll on to their next date and keep theirs. `today` is the household's day. Returns
+ * whether any wish moved.
  */
-export function settlePastCelebrations(db: Db, today: string): void {
+export function settlePastCelebrations(db: Db, today: string): boolean {
   const past = db.select({ id: t.celebration.id }).from(t.celebration).where(and(eq(t.celebration.recurrence, 'none'), lt(t.celebration.date, today))).all().map((c) => c.id);
-  if (past.length) db.update(t.wish).set({ celebrationId: null }).where(inArray(t.wish.celebrationId, past)).run();
+  return past.length > 0 && db.update(t.wish).set({ wasFor: sql`${t.wish.celebrationId}`, celebrationId: null }).where(inArray(t.wish.celebrationId, past)).run().changes > 0;
 }

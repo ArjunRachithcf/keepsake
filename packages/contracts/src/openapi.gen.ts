@@ -455,6 +455,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/wishes/{wishId}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * I'll get this, or how many of it (a giver: not the wish's person, not a kid; not on a group gift)
+         * @description The person's and a kid's answer is a 403 decided before anything about the wish's gifts is read, so it is the same whatever the gifts are (ADR 0003).
+         */
+        put: operations["claimWish"];
+        post?: never;
+        /** Takes back your claim (not once it is given) */
+        delete: operations["unclaimWish"];
+        options?: never;
+        head?: never;
+        /** Your claim bought, given, or back (a given gift whose celebration is over stays given) */
+        patch: operations["editClaim"];
+        trace?: never;
+    };
+    "/wishes/{wishId}/named": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** After the celebration, puts your name on a gift you gave (or takes it off) so its person can thank you; off by default */
+        put: operations["nameOnGift"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wishes/{wishId}/group": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Makes a wish a group gift with a target (a giver; not a wish someone has claimed; the household's currency first) */
+        post: operations["startGroupGift"];
+        /** Back to a plain wish, while nobody else has chipped in */
+        delete: operations["endGroupGift"];
+        options?: never;
+        head?: never;
+        /** The target (while open, never below what is chipped in) or the state, by whoever started it */
+        patch: operations["editGroupGift"];
+        trace?: never;
+    };
+    "/wishes/{wishId}/group/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Chips in, or changes your share, while the group gift is open (all shares together at most the target) */
+        put: operations["chipIn"];
+        post?: never;
+        /** Takes your share back while the group gift is open */
+        delete: operations["withdrawShare"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/celebrations": {
         parameters: {
             query?: never;
@@ -648,6 +732,93 @@ export interface components {
             updatedAt: components["schemas"]["DateTime"];
             canEdit: boolean;
             canApprove: boolean;
+            /** @description Only for a giver (not its person, not a kid): absent, not null, for everyone else, whatever the gifts are */
+            gift?: components["schemas"]["Gift"];
+        };
+        /** @enum {unknown} */
+        ClaimState: "claimed" | "bought" | "given";
+        /** @enum {unknown} */
+        GroupState: "open" | "bought" | "given";
+        /** @description A wish's gifts, only ever for a giver: never its person, never a kid (ADR 0003). Others' shares are names, not amounts. */
+        Gift: {
+            /** @description How many are claimed */
+            claimed: number;
+            /** @description How many are left to claim (0 for a group gift) */
+            left: number;
+            /** @description All given: gone from every list for givers */
+            given: boolean;
+            claims: components["schemas"]["Claim"][];
+            group: components["schemas"]["GroupGift"] | null;
+            /** @description The caller's own claim or share */
+            mine: components["schemas"]["MyGift"] | null;
+        };
+        Claim: {
+            giver: components["schemas"]["PersonRef"] | null;
+            quantity: number;
+            state: components["schemas"]["ClaimState"];
+            mine: boolean;
+        };
+        GroupGift: {
+            organizer: components["schemas"]["PersonRef"] | null;
+            targetMinor: number;
+            totalMinor: number;
+            state: components["schemas"]["GroupState"];
+            /** @description Who chipped in (names only) */
+            givers: {
+                giver: components["schemas"]["PersonRef"] | null;
+                mine: boolean;
+            }[];
+            myShareMinor: number | null;
+            canManage: boolean;
+        };
+        MyGift: {
+            /** @enum {unknown} */
+            state: "claimed" | "bought" | "given" | "open";
+            /** @description Your name is on it for the person (after the celebration) */
+            named: boolean;
+            /** @description Given, and its celebration is over: you may put your name on it */
+            over: boolean;
+            /** @description The occasion it counts for, as the wish is now (computed when read) */
+            celebrationId: components["schemas"]["Id"] | null;
+            /** @description That occasion's day (once given, never earlier than the day kept then); its person learns of a given gift the day after the later of this and the day it was given */
+            forDate: components["schemas"]["Day"] | null;
+        };
+        CelebrationRef: {
+            id: components["schemas"]["Id"];
+            name: string;
+        };
+        /** @description A gift the caller (or a kid they are a parent of) received, after its celebration; `from` names only the givers who chose to */
+        Thanks: {
+            wish: components["schemas"]["Wish"];
+            celebration: components["schemas"]["CelebrationRef"] | null;
+            on: components["schemas"]["Day"];
+            from: components["schemas"]["PersonRef"][];
+        };
+        /** @description A gift the caller gave, after its celebration */
+        Gave: {
+            wish: components["schemas"]["Wish"];
+            celebration: components["schemas"]["CelebrationRef"] | null;
+            on: components["schemas"]["Day"];
+            named: boolean;
+        };
+        ClaimInput: {
+            quantity: number;
+        };
+        ClaimPatch: {
+            state: components["schemas"]["ClaimState"];
+        };
+        NamedInput: {
+            named: boolean;
+        };
+        GroupInput: {
+            targetMinor: number;
+        };
+        GroupPatch: {
+            targetMinor?: number;
+            state?: components["schemas"]["GroupState"];
+        };
+        ShareInput: {
+            amountMinor: number;
         };
         WishInput: {
             personId: components["schemas"]["Id"];
@@ -748,6 +919,10 @@ export interface components {
             toApprove: components["schemas"]["Wish"][];
             /** @description The caller's suggestions for others, still waiting */
             suggested: components["schemas"]["Wish"][];
+            /** @description Gifts the caller received, and for a kid's parent the kid's, after their celebration, with the givers who chose to be named */
+            thanks: components["schemas"]["Thanks"][];
+            /** @description Gifts the caller gave, after their celebration: where they put their name on each */
+            gave: components["schemas"]["Gave"][];
         };
     };
     responses: {
@@ -794,6 +969,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description The wish as the giver sees it now (with its gifts) */
+        GiverWish: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Wish"];
             };
         };
         /** @description Too many tries; wait a minute */
@@ -1558,6 +1742,216 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    claimWish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimInput"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GiverWish"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    unclaimWish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Taken back */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    editClaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaimPatch"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GiverWish"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    nameOnGift: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NamedInput"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GiverWish"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    startGroupGift: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupInput"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GiverWish"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    endGroupGift: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ended */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    editGroupGift: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupPatch"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GiverWish"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    chipIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShareInput"];
+            };
+        };
+        responses: {
+            200: components["responses"]["GiverWish"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    withdrawShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Taken back */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     listCelebrations: {

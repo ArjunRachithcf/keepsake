@@ -69,7 +69,7 @@ describe('the routes', () => {
     const r = await send('p_alex', 'PATCH', '/api/celebrations/c_xmas', { people: ['p_alex', 'p_robin'] });
     expect(r.json().people.sort()).toEqual(['p_alex', 'p_robin']);
     const sam = (await get('p_sam', '/api/people/p_sam')).json().wishes;
-    expect(sam).toMatchObject([{ name: 'A cookbook', celebrationId: null }]);
+    expect(sam).toMatchObject([{ name: 'A cookbook', celebrationId: null }, { name: 'A cast-iron pan', celebrationId: null }]);
     expect((await get('p_alex', '/api/people/p_alex')).json().wishes.find((w: { id: string }) => w.id === 'w_alex_tent').celebrationId).toBe('c_xmas');
   });
 

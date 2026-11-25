@@ -109,6 +109,11 @@ export const wish = sqliteTable('wish', {
   addedBy: text('added_by').references(() => person.id, { onDelete: 'set null' }),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+  /**
+   * The one-off celebration it was for until that day passed and it became any time (ADR 0007); cleared when it is
+   * moved. Never sent: a late gift for that day still counts for it (ADR 0003).
+   */
+  wasFor: text('was_for').references(() => celebration.id, { onDelete: 'set null' }),
 }, (t) => [
   index('wish_person').on(t.personId, t.position),
   index('wish_celebration').on(t.celebrationId),
@@ -138,4 +143,71 @@ export const audit = sqliteTable('audit', {
 }, (t) => [
   index('audit_subject').on(t.subjectId),
   check('audit_action', sql`${t.action} IN ('passkeys_reset')`),
+]);
+
+// Gifts (spec §3, ADR 0003): claims and group gifts. The surprise: nothing here ever reaches the person a wish is for
+// (or a kid) except through the view layer's thank-yous after the occasion, for givers who chose to be named. When a
+// gift reaches its person is computed when read: the day after the later of the occasion stored when it was given,
+// the wish's current occasion and the day it was given (gifts/gifts.ts), so the reveal only ever moves later; once its
+// person has it, `revealed_on` keeps it theirs.
+
+/**
+ * "I'll get this": one giver's claim on a wish, for `quantity` of it; then bought, then given (`given_on`). A removed
+ * giver's bought or given claim stays, without a giver and never named, so neither the wish nor a thank-you changes
+ * because of it; one only claimed goes with them. `named`: the giver puts their name on it (thank-yous).
+ */
+export const claim = sqliteTable('claim', {
+  id: text('id').primaryKey(),
+  wishId: text('wish_id').notNull().references(() => wish.id, { onDelete: 'cascade' }),
+  giverId: text('giver_id').references(() => person.id, { onDelete: 'set null' }),
+  quantity: integer('quantity').notNull(),
+  state: text('state', { enum: ['claimed', 'bought', 'given'] }).notNull(),
+  givenOn: text('given_on'),
+  /** When given: its occasion's day then. The reveal only ever moves later (ADR 0003). */
+  occasionOn: text('occasion_on'),
+  /** The first day its person had it: from then on it stays theirs (no un-giving, no date correction hides it again). */
+  revealedOn: text('revealed_on'),
+  named: integer('named').notNull().default(0),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [
+  uniqueIndex('claim_wish_giver').on(t.wishId, t.giverId),
+  index('claim_giver').on(t.giverId),
+  check('claim_state', sql`${t.state} IN ('claimed', 'bought', 'given')`),
+  check('claim_quantity', sql`${t.quantity} BETWEEN 1 AND 99`),
+  check('claim_named', sql`${t.named} IN (0, 1)`),
+  check('claim_given', sql`(${t.state} = 'given') = (${t.givenOn} IS NOT NULL)`),
+]);
+
+/** A wish several givers chip into: its organizer, a target, open → bought → given (`given_on`). */
+export const groupGift = sqliteTable('group_gift', {
+  wishId: text('wish_id').primaryKey().references(() => wish.id, { onDelete: 'cascade' }),
+  organizerId: text('organizer_id').references(() => person.id, { onDelete: 'set null' }),
+  targetMinor: integer('target_minor').notNull(),
+  state: text('state', { enum: ['open', 'bought', 'given'] }).notNull(),
+  givenOn: text('given_on'),
+  occasionOn: text('occasion_on'),
+  revealedOn: text('revealed_on'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [
+  check('group_gift_state', sql`${t.state} IN ('open', 'bought', 'given')`),
+  check('group_gift_target', sql`${t.targetMinor} BETWEEN 1 AND 100000000`),
+  check('group_gift_given', sql`(${t.state} = 'given') = (${t.givenOn} IS NOT NULL)`),
+]);
+
+/** One giver's share of a group gift; `named` as for a claim; a removed giver's share stays, without a giver, once the gift is given (before, it goes with them). */
+export const share = sqliteTable('share', {
+  id: text('id').primaryKey(),
+  wishId: text('wish_id').notNull().references(() => groupGift.wishId, { onDelete: 'cascade' }),
+  giverId: text('giver_id').references(() => person.id, { onDelete: 'set null' }),
+  amountMinor: integer('amount_minor').notNull(),
+  named: integer('named').notNull().default(0),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (t) => [
+  uniqueIndex('share_wish_giver').on(t.wishId, t.giverId),
+  index('share_giver').on(t.giverId),
+  check('share_amount', sql`${t.amountMinor} BETWEEN 1 AND 100000000`),
+  check('share_named', sql`${t.named} IN (0, 1)`),
 ]);

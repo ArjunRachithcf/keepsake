@@ -179,7 +179,7 @@ describe('a celebration\'s list: its wishes plus the any-time ones (computed)', 
   it('the celebration\'s page has each of its people\'s lists', async () => {
     const page = (await as('robin').get('/api/celebrations/c_xmas')).json();
     const byName = Object.fromEntries(page.lists.map((l: { person: { name: string }; wishes: { name: string }[] }) => [l.person.name, names(l.wishes)]));
-    expect(byName).toEqual({ Alex: ['A two-person tent', 'Hiking socks'], Leo: [], Mia: [], Robin: [], Sam: ['A cookbook'] });
+    expect(byName).toEqual({ Alex: ['A two-person tent', 'Hiking socks'], Leo: [], Mia: [], Robin: [], Sam: ['A cast-iron pan', 'A cookbook'] });
     const sams = (await as('sam').get('/api/celebrations/c_xmas')).json();
     expect(sams.lists.find((l: { person: { name: string } }) => l.person.name === 'Mia').wishes.map((w: { name: string }) => w.name)).toEqual(['Glitter slime kit']);
   });
