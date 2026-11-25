@@ -22,7 +22,7 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
     const b = object(r.body, ['currency']);
     if (!('currency' in b)) throw Refused.field('currency', 'required');
     if (b.currency !== null && (typeof b.currency !== 'string' || !/^[A-Z]{3}$/.test(b.currency))) throw new Refused(400, 'currency: three capital letters (ISO 4217), or null');
-    data.people.setCurrency(b.currency as string | null);
+    data.people.setCurrency(r, b.currency as string | null);
     return data.view(r).household();
   });
 
@@ -30,7 +30,7 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
     admin(r);
     standalone();
     const b = object(r.body, ['name', 'role']);
-    const id = data.people.add({ name: text(b, 'name', 60, { required: true })!, role: oneOf(b, 'role', ROLES, { required: true })! });
+    const id = data.people.add(r, { name: text(b, 'name', 60, { required: true })!, role: oneOf(b, 'role', ROLES, { required: true })! });
     res.created();
     return data.view(r).person(id);
   });
@@ -41,7 +41,7 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
     admin(r);
     standalone();
     const b = object(r.body, ['name', 'role']);
-    data.people.edit(r.params.personId, { name: text(b, 'name', 60), role: oneOf(b, 'role', ROLES) });
+    data.people.edit(r, r.params.personId, { name: text(b, 'name', 60), role: oneOf(b, 'role', ROLES) });
     return data.view(r).person(r.params.personId);
   });
 
@@ -55,7 +55,7 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
     admin(r);
     const list = ids(object(r.body, ['managerIds']), 'managerIds', { max: 20 });
     if (!list) throw Refused.field('managerIds', 'required');
-    data.people.setManagers(r.params.personId, list);
+    data.people.setManagers(r, r.params.personId, list);
     return data.view(r).person(r.params.personId);
   });
 

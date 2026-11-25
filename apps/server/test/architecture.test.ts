@@ -117,8 +117,22 @@ describe('the seam at run time', () => {
     // set by a plugin-level hook, as the auth hook does.
     await app.register(async (api) => {
       installSeam(api);
-      api.addHook('onRequest', async (req) => { req.caller = { person: getPerson(db, 'p_alex')!, via: 'session' }; });
+      api.addHook('onRequest', async (req) => {
+        const who = typeof req.headers['x-who'] === 'string' ? req.headers['x-who'] : 'p_alex';
+        req.caller = { person: getPerson(db, who)!, via: 'session' };
+      });
       const r = routerFor(api, {});
+      r.get('/capture', (q) => { captured = q; });
+      // A cache of answers by page (a plausible shortcut): the first viewer's answer handed to the next one.
+      const cache = new Map<string, unknown>();
+      r.get('/cached/:personId', (q) => {
+        const hit = cache.get(q.params.personId) ?? data.view(q).personPage(q.params.personId, null);
+        cache.set(q.params.personId, hit);
+        return hit as never;
+      });
+      // The facade checks the role itself, whatever the route forgot.
+      r.post('/forgot-admin', (q) => { data.people.add(q, { name: 'Jordan', role: 'admin' }); });
+      r.post('/forgot-admin-reset', (q) => { data.auth.resetPasskeys(q, 'p_sam'); });
       r.get('/viewed', (q) => data.view(q).household());
       r.get('/string', () => JSON.stringify(db.select().from(t.wish).all()) as never);
       r.get('/buffer', () => Buffer.from(JSON.stringify(rows())) as never);
@@ -132,6 +146,10 @@ describe('the seam at run time', () => {
       r.get('/empty', () => undefined);
       // Plugin-level hooks in the API's scope (route-level ones are refused at start): a header, a redirect, an error
       // body outside the catalogue.
+      await api.register(async (sub) => {
+        sub.addHook('preHandler', async (_req, reply) => { void reply.header('set-cookie', `other=${LEAK}`); });
+        routerFor(sub, {}).get('/cookie', (q) => data.view(q).household());
+      });
       await api.register(async (sub) => {
         sub.addHook('preHandler', async (_req, reply) => { void reply.header('x-wish', LEAK); });
         routerFor(sub, {}).get('/header', (q) => data.view(q).household());
@@ -148,10 +166,18 @@ describe('the seam at run time', () => {
         sub.addHook('preHandler', async (_req, reply) => reply.code(404).send({ error: 'not found', rows: rows() }));
         routerFor(sub, {}).get('/error-with-rows', (q) => data.view(q).household());
       });
+      // An onSend added after the seam (an envelope, an ETag, compression): the guard still runs last.
+      await api.register(async (sub) => {
+        sub.addHook('onSend', async (_req, _reply, payload) => (typeof payload === 'string' ? payload.replace(/}$/, `,"x":"${LEAK}"}`) : payload));
+        routerFor(sub, {}).get('/late-onsend', (q) => data.view(q).household());
+      });
     }, { prefix: '/api' });
     await app.ready();
+    await app.inject({ url: '/api/capture' });
   });
   afterAll(() => app.close());
+  let captured: Req | undefined;
+  const fakeReq = () => captured!;
 
   it('a viewed answer goes out', async () => {
     const r = await app.inject({ url: '/api/viewed' });
@@ -159,7 +185,7 @@ describe('the seam at run time', () => {
     expect(r.json().me.name).toBe('Alex');
   });
   it.each(['/api/string', '/api/buffer', '/api/stream', '/api/object', '/api/array', '/api/copy', '/api/added', '/api/nested',
-    '/api/forged-viewer', '/api/header', '/api/redirect', '/api/error', '/api/error-with-rows'])('%s is refused with a 500 and leaks nothing', async (url) => {
+    '/api/forged-viewer', '/api/late-onsend', '/api/header', '/api/cookie', '/api/redirect', '/api/error', '/api/error-with-rows'])('%s is refused with a 500 and leaks nothing', async (url) => {
     const r = await app.inject({ url });
     expect(r.statusCode).toBe(500);
     expect(r.json()).toEqual({ error: 'something went wrong' });
@@ -167,6 +193,23 @@ describe('the seam at run time', () => {
     expect(JSON.stringify(r.headers)).not.toContain(LEAK);
     expect(r.headers.location).toBeUndefined();
   });
+  it('an answer built for another request is refused: a cached page never reaches the next viewer', async () => {
+    const sam = await app.inject({ url: '/api/cached/p_mia', headers: { 'x-who': 'p_sam' } }); // Mia's parent: sees her waiting wish
+    expect(sam.statusCode).toBe(200);
+    expect(sam.body).toContain(LEAK);
+    const robin = await app.inject({ url: '/api/cached/p_mia', headers: { 'x-who': 'p_robin' } });
+    expect(robin.statusCode).toBe(500);
+    expect(robin.body).not.toContain(LEAK);
+  });
+
+  it('the facade checks admin-only operations itself', async () => {
+    for (const url of ['/api/forgot-admin', '/api/forgot-admin-reset']) {
+      const r = await app.inject({ method: 'POST', url, headers: { 'x-who': 'p_robin' } });
+      expect(r.statusCode, url).toBe(403);
+    }
+    expect(db.select().from(t.person).all().some((p) => p.name === 'Jordan')).toBe(false);
+  });
+
   it('an empty answer is fine', async () => expect((await app.inject({ url: '/api/empty' })).statusCode).toBe(204));
 
   it('a route the router did not make is refused at start-up', async () => {
@@ -182,16 +225,16 @@ describe('the seam at run time', () => {
   });
 
   it('viewed answers are frozen all the way down; a copy is not viewed', async () => {
-    const h = data.publicView.signedIn('p_alex');
+    const h = data.publicView(fakeReq()).signedIn('p_alex');
     expect(isViewed(h)).toBe(true);
     expect(Object.isFrozen(h) && Object.isFrozen(h.person)).toBe(true);
     expect(isViewed({ ...h })).toBe(false);
-    expect(isViewed(data.publicView.health('0.0.0'))).toBe(true);
+    expect(isViewed(data.publicView(fakeReq()).health('0.0.0'))).toBe(true);
   });
 
   it('the sign-in options keep only the fields the browser needs', () => {
     const o = { challenge: 'c', rpId: 'localhost', userVerification: 'required' as const, secret: LEAK, allowCredentials: [{ id: 'k', type: 'public-key' as const, extra: LEAK }] };
-    const a = data.publicView.signInStart('id', o);
+    const a = data.publicView(fakeReq()).signInStart('id', o);
     expect(JSON.stringify(a)).not.toContain(LEAK);
     expect(a.options).toEqual({ challenge: 'c', rpId: 'localhost', userVerification: 'required', allowCredentials: [{ id: 'k', type: 'public-key' }] });
   });

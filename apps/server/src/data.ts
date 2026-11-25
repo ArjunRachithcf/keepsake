@@ -3,13 +3,15 @@
 // serialize a row; test/architecture.test.ts keeps src/routes to this module, the validators and types.
 //
 // Whoever acts or views is always the request's person: every operation here takes the router's request (src/router.ts)
-// and finds the person on it, never a person a route hands in. Operations return ids or nothing, never rows; the view
-// helpers build the answers from those ids.
+// and finds the person on it, never a person a route hands in. Household operations return ids or nothing; the view
+// helpers build the answers from those ids, bound to that request. (The sign-in steps' lookups, auth.findInvite,
+// invitee, findPasskey and credentialsOf, do hand rows to routes/auth.ts; none of them can leave but through a view
+// answer.) Admin-only operations check the role here too, not only in the route (defence in depth).
 import type { Config } from './config';
 import type { Db } from './db/open';
 import { callerOf } from './auth/hook';
 import { createInvite, findInvite } from './auth/invites';
-import { credentialsOf, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, usedPasskey } from './auth/passkeys';
+import { credentialsOf, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, RESET_FRESH_MINUTES, usedPasskey } from './auth/passkeys';
 import { createSession, endAllSessions, endSession, isFresh, SESSION_COOKIE } from './auth/sessions';
 import type { NewCredential } from './auth/webauthn';
 import { addCelebration, editCelebration, getCelebration, removeCelebration, settlePastCelebrations, type CelebrationInput } from './celebrations/celebrations';
@@ -39,28 +41,35 @@ export function dataFor(cfg: Config, db: Db) {
     return c.person;
   };
   const cookie = (r: Req) => fastifyRequestOf(r).cookies?.[SESSION_COOKIE];
-  const publicView = publicViewFor(db, cfg);
+  const publicView = (r: Req) => publicViewFor(db, cfg, fastifyRequestOf(r));
+  const admin = (r: Req): Person => {
+    const p = me(r);
+    if (p.role !== 'admin') throw new Refused(403, 'admins only');
+    return p;
+  };
+  const fresh = (r: Req, minutes?: number) => {
+    const s = fastifyRequestOf(r).caller?.session;
+    if (!s || !isFresh(s, new Date(), minutes)) throw new Refused(403, 'sign in again to do this');
+  };
 
   return {
     /** The view layer for the request's person. One-off celebrations whose day has passed let go of their wishes first (ADR 0007). */
     view: (r: Req) => {
       const viewer = me(r);
       settlePastCelebrations(db, today(cfg.timezone));
-      return viewFor(db, cfg, viewer);
+      return viewFor(db, cfg, viewer, fastifyRequestOf(r));
     },
+    /** Answers that need no viewer, built for this request. */
     publicView,
     /** GET /auth/session: who this browser is, if anyone. */
     session: (r: Req) => {
       const c = callerOf(cfg, db, fastifyRequestOf(r));
-      return c && c !== 'no-role' ? publicView.signedIn(c.person.id) : publicView.signedOut(cfg.mode === 'standalone' && setupNeeded(db));
+      return c && c !== 'no-role' ? publicView(r).signedIn(c.person.id) : publicView(r).signedOut(cfg.mode === 'standalone' && setupNeeded(db));
     },
     /** The request's person's id and role (for the routes' own checks). */
     me: (r: Req): Readonly<Pick<Person, 'id' | 'role'>> => { const p = me(r); return Object.freeze({ id: p.id, role: p.role }); },
     /** Refuses unless this session signed in with a passkey within `minutes` (an old, stolen cookie cannot). */
-    fresh: (r: Req, minutes?: number) => {
-      const s = fastifyRequestOf(r).caller?.session;
-      if (!s || !isFresh(s, new Date(), minutes)) throw new Refused(403, 'sign in again to do this');
-    },
+    fresh,
     /** The challenge store's key for a request (identity.clientKey, the rate limit's too). */
     clientKey: (r: Req) => { const req = fastifyRequestOf(r); return clientKey(cfg, req.socket.remoteAddress, req.headers); },
     /** The `for` query: a celebration's list, `any`, or nothing (every wish). */
@@ -75,7 +84,12 @@ export function dataFor(cfg: Config, db: Db) {
       findInvite: (token: unknown) => findInvite(db, token),
       invitee: (token: unknown) => { const i = findInvite(db, token); return i ? invitePersonOf(db, i) ?? null : null; },
       /** A one-time link from the request's person: for another device of their own, or (admins) for someone's first passkey. */
-      invite: (r: Req, kind: 'self' | 'admin', personId: string) => linkAnswer(createInvite(db, cfg, { kind, personId, createdBy: me(r).id })),
+      invite: (r: Req, kind: 'self' | 'admin', personId: string) => {
+        const p = kind === 'admin' ? admin(r) : me(r);
+        if (kind === 'self' && personId !== p.id) throw new Refused(403, 'not allowed');
+        fresh(r);
+        return linkAnswer(fastifyRequestOf(r), createInvite(db, cfg, { kind, personId: mustGetPerson(db, personId).id, createdBy: p.id }));
+      },
       credentialsOf: (personId: string) => credentialsOf(db, personId),
       enrol: (o: { inviteId: string; name?: string; newPersonId?: string }, cred: NewCredential, label: string) => enrol(db, cfg, o, cred, label),
       findPasskey: (id: string) => findPasskey(db, id),
@@ -88,15 +102,26 @@ export function dataFor(cfg: Config, db: Db) {
       endThisSession: (r: Req) => endSession(db, cookie(r)),
       endMySessions: (r: Req) => endAllSessions(db, me(r).id),
       removeMyPasskey: (r: Req, id: string) => removePasskey(db, me(r).id, id),
-      endSessionsOf: (personId: string) => endAllSessions(db, mustGetPerson(db, personId).id),
-      resetPasskeys: (r: Req, personId: string) => resetPasskeys(db, me(r).id, personId),
+      /** A kid's parent or an admin ends someone's sessions. */
+      endSessionsOf: (r: Req, personId: string) => {
+        const p = mustGetPerson(db, personId);
+        const by = me(r);
+        if (by.role !== 'admin' && !managesKid(db, by, p)) throw new Refused(403, 'a kid\'s parent or an admin only');
+        endAllSessions(db, p.id);
+      },
+      /** An admin with a passkey sign-in of the last RESET_FRESH_MINUTES resets someone's passkeys. */
+      resetPasskeys: (r: Req, personId: string) => {
+        const by = admin(r);
+        fresh(r, RESET_FRESH_MINUTES);
+        resetPasskeys(db, by.id, personId);
+      },
     },
     people: {
-      add: (i: PersonInput) => addPerson(db, i).id,
-      edit: (id: string, patch: Partial<PersonInput>) => { editPerson(db, id, patch); },
-      remove: (r: Req, id: string) => removePerson(db, id, me(r).id),
-      setManagers: (kidId: string, ids: string[]) => setManagers(db, kidId, ids),
-      setCurrency: (code: string | null) => setCurrency(db, code),
+      add: (r: Req, i: PersonInput) => { admin(r); return addPerson(db, i).id; },
+      edit: (r: Req, id: string, patch: Partial<PersonInput>) => { admin(r); editPerson(db, id, patch); },
+      remove: (r: Req, id: string) => removePerson(db, id, admin(r).id),
+      setManagers: (r: Req, kidId: string, ids: string[]) => { admin(r); setManagers(db, kidId, ids); },
+      setCurrency: (r: Req, code: string | null) => { admin(r); setCurrency(db, code); },
       hasPasskey: (id: string) => hasPasskey(db, mustGetPerson(db, id).id),
       /** Whether the request's person manages this kid (as a set manager, or as an admin when none is set). */
       managesKid: (r: Req, kidId: string) => managesKid(db, me(r), mustGetPerson(db, kidId)),

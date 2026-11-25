@@ -86,10 +86,14 @@ must carry `KEEPSAKE_ORIGIN` as its Origin, public sign-in steps included.
 instance, request or reply: a handler gets the path parameters, query and body and returns a view answer (or nothing,
 a 204). The viewer is always the request's (`data.view(req)`); each view helper takes ids and builds its own answer.
 `apps/server/src/seam.ts` then checks, in `onSend`, the last hook before the bytes leave: an answer below 400 with a
-body must be byte for byte what the seam itself serialized from a view answer (a string, a Buffer, a stream, a copy or
-a changed object is a 500); a 3xx is a 500; an answer of 400 and above is `{ error }` with a message from the fixed
-catalogue (`apps/server/src/errors.ts`); only known header names leave. At start-up it refuses any `/api` route the
-router did not make and any route-level hook, serializer or error handler. This guards against mistakes in our own
+body must be byte for byte what the seam itself serialized from a view answer built for this very request (a string, a
+Buffer, a stream, a copy, a changed object or an answer built for another request, say a cached one, is a 500); a 3xx
+is a 500; an answer of 400 and above is `{ error }` with a message from the fixed catalogue
+(`apps/server/src/errors.ts`); only known header names leave, and no cookie but `keepsake_session`. At start-up it
+refuses any `/api` route the router did not make and any route-level hook, serializer or error handler, and puts its
+own recording and guard on each route, so they run after every hook a scope adds. Admin-only operations check the role
+in the data facade as well as in the route. Wishes carry no stored position: a list's order is its array's order, so no
+number or gap counts the wishes hidden from the viewer. This guards against mistakes in our own
 code, not deliberately hostile code in the server; the source bans in `test/architecture.test.ts` (no Fastify, raw
 request, socket, reply, hooks or hand-made bytes in a route file; nothing reaches a raw stream anywhere) are the
 backstop, and rogue routes run behind the seam there.

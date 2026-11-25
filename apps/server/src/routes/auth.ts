@@ -17,7 +17,7 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
   // A sign-in replaces this browser's earlier session and remembers the passkey.
   const signIn = (r: Req, res: Res, personId: string, passkeyId: string) => {
     res.startSession(data.auth.signIn(r, personId, passkeyId));
-    return data.publicView.signedIn(personId);
+    return data.publicView(r).signedIn(personId);
   };
 
   api.get('/auth/session', { public: true }, (r) => data.session(r));
@@ -32,12 +32,12 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
       // The first admin's id is chosen now, so the authenticator's user handle is the person's id.
       const newPersonId = ulid();
       const { challenge, options } = await webauthn.registrationOptions({ userId: newPersonId, userName: name, exclude: [] });
-      return data.publicView.enrolStart(challenges.put({ challenge, kind: 'enrol', inviteId: invite.id, name, newPersonId }, data.clientKey(r)), options);
+      return data.publicView(r).enrolStart(challenges.put({ challenge, kind: 'enrol', inviteId: invite.id, name, newPersonId }, data.clientKey(r)), options);
     }
     const p = data.auth.invitee(b.token);
     if (!p) throw new Refused(401, 'this link is unknown, used or expired');
     const { challenge, options } = await webauthn.registrationOptions({ userId: p.id, userName: p.name, exclude: data.auth.credentialsOf(p.id) });
-    return data.publicView.enrolStart(challenges.put({ challenge, kind: 'enrol', inviteId: invite.id }, data.clientKey(r)), options);
+    return data.publicView(r).enrolStart(challenges.put({ challenge, kind: 'enrol', inviteId: invite.id }, data.clientKey(r)), options);
   });
 
   api.post('/auth/enrol/verify', { public: true, signIn: true }, async (r, res) => {
@@ -57,7 +57,7 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
   api.post('/auth/sign-in/options', { public: true, signIn: true }, async (r) => {
     standaloneOnly();
     const { challenge, options } = await webauthn.authenticationOptions();
-    return data.publicView.signInStart(challenges.put({ challenge, kind: 'sign-in' }, data.clientKey(r)), options);
+    return data.publicView(r).signInStart(challenges.put({ challenge, kind: 'sign-in' }, data.clientKey(r)), options);
   });
 
   api.post('/auth/sign-in/verify', { public: true, signIn: true }, async (r, res) => {
@@ -112,7 +112,7 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
   api.post('/people/:personId/sessions/end', (r) => {
     standaloneOnly();
     if (data.me(r).role !== 'admin' && !data.people.managesKid(r, r.params.personId)) throw new Refused(403, 'a kid\'s parent or an admin only');
-    data.auth.endSessionsOf(r.params.personId);
+    data.auth.endSessionsOf(r, r.params.personId);
   });
 
   // Every device lost: an admin who signed in with a passkey in the last 5 minutes removes someone's passkeys (their
