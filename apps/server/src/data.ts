@@ -36,7 +36,7 @@ import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from '
 import { answerQuestion, answerWithWish, ask, declineQuestion, removeQuestion } from './questions/questions';
 import { addIdea, removeIdea } from './ideas/ideas';
 import {
-  checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endGuestSession, getLink, GUEST_COOKIE, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
+  checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endDeviceSessions, forgetLink, getLink, GUEST_COOKIE, GUEST_DAYS, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
   startGuestSession, type GuestLink,
 } from './guests/guests';
 import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
@@ -137,6 +137,8 @@ export function dataFor(cfg: Config, db: Db) {
       /** A sign-in: this browser's earlier session ends, a new one starts. Returns the new cookie's token. */
       signIn: (r: Req, personId: string, passkeyId: string) => {
         endSession(db, cookie(r));
+        // A household sign-in ends this browser's guest sessions (review L-2); the route clears the cookie.
+        endDeviceSessions(db, fastifyRequestOf(r).cookies?.[GUEST_COOKIE]);
         return createSession(db, personId, passkeyId).token;
       },
       endThisSession: (r: Req) => endSession(db, cookie(r)),
@@ -263,9 +265,10 @@ export function dataFor(cfg: Config, db: Db) {
         const by = c === 'no-role' ? { id: '', role: 'kid' as const } : c?.person ?? null;
         const now = new Date();
         const s = startGuestSession(db, token, day(), now, by, req.cookies?.[GUEST_COOKIE]);
-        return { cookie: s.token, maxAge: Math.floor((s.expiresAt.getTime() - now.getTime()) / 1000), page: guestViewFor(db, cfg, s.link, req).page() };
+        // The device cookie outlives any one session: it is how this browser opens its links again (review M-a).
+        return { cookie: s.device, maxAge: GUEST_DAYS * 86_400, page: guestViewFor(db, cfg, s.link, req).page() };
       },
-      signOut: (r: Req) => endGuestSession(db, fastifyRequestOf(r).cookies?.[GUEST_COOKIE]),
+      signOut: (r: Req) => forgetLink(db, fastifyRequestOf(r).cookies?.[GUEST_COOKIE], guestOf(r).id),
       setName: (r: Req, name: string) => { setGuestName(db, guestOf(r), name); },
       openDraw: (r: Req) => openDrawAsGuest(db, guestOf(r).id, new Date(), keyring(cfg)),
       claim: (r: Req, wishId: string, quantity: number) => {

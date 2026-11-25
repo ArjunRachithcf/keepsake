@@ -1402,6 +1402,8 @@ export interface components {
             name: string;
         };
         GuestPage: {
+            /** @description The link's id: the guest page names it in X-Keepsake-Link */
+            link: components["schemas"]["Id"];
             /** @enum {unknown} */
             kind: "share" | "draw";
             /** @description The guest's own name (claims wait for it) */
@@ -1774,6 +1776,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+        guestLink: components["schemas"]["Id"];
         personId: components["schemas"]["Id"];
         wishId: components["schemas"]["Id"];
         celebrationId: components["schemas"]["Id"];
@@ -3369,7 +3373,10 @@ export interface operations {
     getGuestPage: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -3383,7 +3390,10 @@ export interface operations {
     setGuestName: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -3402,7 +3412,10 @@ export interface operations {
     openGuestDraw: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -3418,7 +3431,10 @@ export interface operations {
     guestClaim: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
             path: {
                 wishId: components["parameters"]["wishId"];
             };
@@ -3441,7 +3457,10 @@ export interface operations {
     guestUnclaim: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
             path: {
                 wishId: components["parameters"]["wishId"];
             };
@@ -3465,7 +3484,10 @@ export interface operations {
     guestEditClaim: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
             path: {
                 wishId: components["parameters"]["wishId"];
             };
@@ -3488,7 +3510,10 @@ export interface operations {
     guestAsk: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -3509,7 +3534,10 @@ export interface operations {
     endGuest: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The link a guest request is for (its id, from the guest page): the device's session of that link counts */
+                "X-Keepsake-Link": components["parameters"]["guestLink"];
+            };
             path?: never;
             cookie?: never;
         };

@@ -1090,6 +1090,7 @@ paths:
       operationId: getGuestPage
       summary: 'What the guest''s link reaches: one person''s wishes (a share link) or their draw and their person''s list for the celebration (a draw link), as a giver sees them'
       security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
       responses:
         '200': { $ref: '#/components/responses/GuestAnswer' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -1101,6 +1102,7 @@ paths:
       operationId: setGuestName
       summary: 'The guest''s own name (claims wait for it)'
       security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
       requestBody:
         required: true
         content:
@@ -1118,6 +1120,7 @@ paths:
       operationId: openGuestDraw
       summary: 'A draw guest opens theirs (from the draw-together time on)'
       security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
       responses:
         '200': { $ref: '#/components/responses/GuestAnswer' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -1133,6 +1136,7 @@ paths:
       operationId: guestClaim
       summary: '"I''ll get this", as the guest (on what their link reaches; once they gave their name)'
       security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
       requestBody:
         required: true
         content:
@@ -1150,6 +1154,7 @@ paths:
       operationId: guestEditClaim
       summary: 'Bought, given, or back to claimed, as the guest'
       security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
       requestBody:
         required: true
         content:
@@ -1167,6 +1172,7 @@ paths:
       operationId: guestUnclaim
       summary: 'The guest takes their claim back'
       security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
       responses:
         '204': { description: Taken back }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -1180,6 +1186,7 @@ paths:
       operationId: guestAsk
       summary: 'The guest asks their link''s person (a draw guest: their own person, once opened) one anonymous question'
       security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
       requestBody:
         required: true
         content:
@@ -1199,6 +1206,7 @@ paths:
       operationId: endGuest
       summary: 'Ends this browser''s guest session'
       security: [ { guestSession: [] } ]
+      parameters: [ { $ref: '#/components/parameters/guestLink' } ]
       responses:
         '204': { description: Ended }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -1220,9 +1228,15 @@ components:
       type: apiKey
       in: cookie
       name: keepsake_guest
-      description: 'A guest''s session (ADR 0009), from POST /guest/session: HttpOnly; Secure; SameSite=Strict; as long as its link (at most 400 days), on one device; only /guest/*'
+      description: 'A guest''s device (ADR 0009), from POST /guest/session: 256 random bits, HttpOnly; Secure; SameSite=Strict; 400 days. It holds the sessions of every link it opened; each /guest/* request names its link in the X-Keepsake-Link header. A session lasts as long as its link (at most 400 days), ends after 30 days unused and at a household sign-in in that browser'
 
   parameters:
+    guestLink:
+      name: X-Keepsake-Link
+      in: header
+      required: true
+      description: 'The link a guest request is for (its id, from the guest page): the device''s session of that link counts'
+      schema: { $ref: '#/components/schemas/Id' }
     personId:
       name: personId
       in: path
@@ -1854,8 +1868,9 @@ components:
     GuestPage:
       type: object
       additionalProperties: false
-      required: [kind, name, currency, person, profile, celebration, draw, wishes, questions, lastDay]
+      required: [link, kind, name, currency, person, profile, celebration, draw, wishes, questions, lastDay]
       properties:
+        link: { $ref: '#/components/schemas/Id', description: 'The link''s id: the guest page names it in X-Keepsake-Link' }
         kind: { enum: [share, draw] }
         name: { type: [string, 'null'], description: 'The guest''s own name (claims wait for it)' }
         currency: { type: [string, 'null'] }

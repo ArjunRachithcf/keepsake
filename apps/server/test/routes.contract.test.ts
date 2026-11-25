@@ -20,7 +20,7 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
   beforeAll(async () => {
     db = withM4(withDraws(household()));
     auth = mode === 'standalone' ? { cookie: sessionCookie(db, 'p_alex') } : hl('hl-alex', 'Alex', 'admin');
-    guest = { cookie: `keepsake_guest=${startGuestSession(db, GUEST_TOKEN, today('UTC')).token}` };
+    guest = { cookie: `keepsake_guest=${startGuestSession(db, GUEST_TOKEN, today('UTC')).device}`, 'x-keepsake-link': 'l_sam' };
     built = await buildApp(mode === 'standalone' ? standalone() : homerslab(), db, { webauthn: fakeWebAuthn() });
     await built.app.ready();
   });

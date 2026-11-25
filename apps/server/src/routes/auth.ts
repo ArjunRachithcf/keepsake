@@ -17,6 +17,7 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
   // A sign-in replaces this browser's earlier session and remembers the passkey.
   const signIn = (r: Req, res: Res, personId: string, passkeyId: string) => {
     res.startSession(data.auth.signIn(r, personId, passkeyId));
+    res.endGuest();
     return data.publicView(r).signedIn(personId);
   };
 

@@ -32,15 +32,18 @@ export async function makeHome(): Promise<Home> {
     createdBy: personId === 'p_mia' ? 'p_sam' : 'p_alex', approvedAt: NOW, createdAt: NOW,
   }))).run();
   const cookies: Record<string, string> = Object.fromEntries(PEOPLE.map((p) => [p, sessionCookie(db, `p_${p}`)]));
-  for (const g of Object.keys(GUESTS)) cookies[g] = `keepsake_guest=${startGuestSession(db, tokenOf(g), today('UTC')).token}`;
+  // Each guest on their own device (a browser of their own).
+  for (const g of Object.keys(GUESTS)) cookies[g] = `keepsake_guest=${startGuestSession(db, tokenOf(g), today('UTC')).device}`;
   const built = await buildApp(standalone(), db);
   return { db, built, cookies };
 }
 
+/** A guest's requests name their link (X-Keepsake-Link), as the guest page does. */
+const linkOf = (who: string): Record<string, string> => (who in GUESTS ? { 'x-keepsake-link': `l_${who}` } : {});
 export const as = (h: Home, who: Who | Guest) => ({
-  get: (url: string) => h.built.app.inject({ url, headers: { cookie: h.cookies[who]! } }),
+  get: (url: string) => h.built.app.inject({ url, headers: { cookie: h.cookies[who]!, ...linkOf(who) } }),
   send: (method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: object) =>
-    h.built.app.inject({ method, url, payload, headers: { cookie: h.cookies[who]!, origin: ORIGIN } }),
+    h.built.app.inject({ method, url, payload, headers: { cookie: h.cookies[who]!, origin: ORIGIN, ...linkOf(who) } }),
 });
 
 export const READS = ['/api/home', '/api/home?for=c_xmas', '/api/celebrations', '/api/celebrations/c_xmas', '/api/celebrations/c_mia', '/api/auth/session',

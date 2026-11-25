@@ -142,7 +142,7 @@ export const AUDIT_ACTIONS = [
   'passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared',
   // M4: an admin removed a question (never who asked it); guest links made, opened (on their one device) and revoked;
   // a sheet imported; an admin released an imported reservation.
-  'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened',
+  'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued',
 ] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
@@ -346,8 +346,8 @@ export const drawAssignment = sqliteTable('draw_assignment', {
  * person's wishes (person_id), made by another grown-up (a kid's: a parent), never the person. kind 'draw': a personal
  * link for one named guest to one celebration's draw (celebration_id), made by its host; it expires at the end of the
  * draw's day, household time (computed when read). The token (256 bits) travels in the link's #fragment and is kept
- * here as its SHA-256 only. A link opens on one device: opened_at is set by the first exchange, which spends the token
- * (review N2). label: who it is for, from its maker; guest_name: the name the guest gives (claims wait for it).
+ * here as its SHA-256 only. A link opens on one device: opened_at and opened_by (the device's hash) are set by the
+ * first exchange, which spends the token (review N2, M-a); a new address (review M-b) puts a new token on the same row. label: who it is for, from its maker; guest_name: the name the guest gives (claims wait for it).
  * approved_at: set when it is made.
  */
 export const guestLink = sqliteTable('guest_link', {
@@ -363,6 +363,7 @@ export const guestLink = sqliteTable('guest_link', {
   createdAt: text('created_at').notNull(),
   revokedAt: text('revoked_at'),
   openedAt: text('opened_at'),
+  openedBy: text('opened_by'),
 }, (t) => [
   uniqueIndex('guest_link_token').on(t.tokenHash),
   index('guest_link_person').on(t.personId),
@@ -371,13 +372,20 @@ export const guestLink = sqliteTable('guest_link', {
   check('guest_link_target', sql`(${t.kind} = 'share' AND ${t.personId} IS NOT NULL AND ${t.celebrationId} IS NULL) OR (${t.kind} = 'draw' AND ${t.celebrationId} IS NOT NULL AND ${t.personId} IS NULL)`),
 ]);
 
-/** A guest's browser session (cookie keepsake_guest: 256 bits, SHA-256 here), made from a link's token by a POST. */
+/**
+ * A guest's session of one link on one device (review M-a): the device is the cookie keepsake_guest (256 random bits,
+ * SHA-256 here as device_hash), which holds the sessions of every link it opened; a session is found by link and
+ * device. Made from a link's token by a POST; it ends with the link (expires_at: at most 400 days) or after 30 days
+ * without use (last_seen_at).
+ */
 export const guestSession = sqliteTable('guest_session', {
   id: text('id').primaryKey(),
   linkId: text('link_id').notNull().references(() => guestLink.id, { onDelete: 'cascade' }),
+  deviceHash: text('device_hash').notNull(),
   createdAt: text('created_at').notNull(),
+  lastSeenAt: text('last_seen_at').notNull(),
   expiresAt: text('expires_at').notNull(),
-}, (t) => [index('guest_session_link').on(t.linkId)]);
+}, (t) => [index('guest_session_link').on(t.linkId), uniqueIndex('guest_session_device').on(t.deviceHash, t.linkId)]);
 
 /**
  * One anonymous question to a person about their wishes (ADR 0008): one answer, no chat. The asker (a person or a

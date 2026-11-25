@@ -11,6 +11,7 @@ CREATE TABLE `guest_link` (
 	`created_at` text NOT NULL,
 	`revoked_at` text,
 	`opened_at` text,
+	`opened_by` text,
 	FOREIGN KEY (`person_id`) REFERENCES `person`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`celebration_id`) REFERENCES `celebration`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`created_by`) REFERENCES `person`(`id`) ON UPDATE no action ON DELETE set null,
@@ -24,12 +25,15 @@ CREATE INDEX `guest_link_celebration` ON `guest_link` (`celebration_id`);--> sta
 CREATE TABLE `guest_session` (
 	`id` text PRIMARY KEY NOT NULL,
 	`link_id` text NOT NULL,
+	`device_hash` text NOT NULL,
 	`created_at` text NOT NULL,
+	`last_seen_at` text NOT NULL,
 	`expires_at` text NOT NULL,
 	FOREIGN KEY (`link_id`) REFERENCES `guest_link`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE INDEX `guest_session_link` ON `guest_session` (`link_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `guest_session_device` ON `guest_session` (`device_hash`,`link_id`);--> statement-breakpoint
 CREATE TABLE `idea` (
 	`id` text PRIMARY KEY NOT NULL,
 	`person_id` text NOT NULL,
@@ -70,7 +74,7 @@ CREATE TABLE `__new_audit` (
 	`actor_id` text NOT NULL,
 	`action` text NOT NULL,
 	`subject_id` text NOT NULL,
-	CONSTRAINT "audit_action" CHECK(action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened'))
+	CONSTRAINT "audit_action" CHECK(action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued'))
 );
 --> statement-breakpoint
 INSERT INTO `__new_audit`("id", "at", "actor_id", "action", "subject_id") SELECT "id", "at", "actor_id", "action", "subject_id" FROM `audit`;--> statement-breakpoint

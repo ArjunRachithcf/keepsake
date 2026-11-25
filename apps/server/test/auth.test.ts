@@ -8,6 +8,7 @@ import { eq } from 'drizzle-orm';
 import { buildApp, type BuiltApp } from '../src/app';
 import { createInvite, createRecoveryLink, ensureSetupLink, findInvite, SETUP_FILE } from '../src/auth/invites';
 import { FRESH_MINUTES, IDLE_DAYS, createSession, liveSession } from '../src/auth/sessions';
+import { hashToken } from '../src/auth/tokens';
 import { Challenges } from '../src/auth/webauthn';
 import { loadConfig, type Config } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
@@ -87,6 +88,23 @@ describe('sign-in', () => {
     ensureSetupLink(db, cfg);
     await enrol(setupToken(), 'Alex', 'cred-alex');
   }
+
+  it('a sign-in clears this browser\'s guest cookie and ends its guest sessions (review L-2)', async () => {
+    await adminWithPasskey();
+    const alex = db.select().from(t.person).get()!.id;
+    db.insert(t.guestLink).values({ id: 'l_x', kind: 'share', personId: alex, label: 'x', tokenHash: 'h', createdAt: new Date().toISOString(), approvedAt: new Date().toISOString() }).run();
+    const now = new Date().toISOString();
+    const device = 'd'.repeat(43);
+    db.insert(t.guestSession).values([
+      { id: 's1', linkId: 'l_x', deviceHash: hashToken(device), createdAt: now, lastSeenAt: now, expiresAt: '2999-01-01T00:00:00.000Z' },
+      { id: 's2', linkId: 'l_x', deviceHash: hashToken('e'.repeat(43)), createdAt: now, lastSeenAt: now, expiresAt: '2999-01-01T00:00:00.000Z' },
+    ]).run();
+    const o = (await post('/api/auth/sign-in/options')).json();
+    const res = await post('/api/auth/sign-in/verify', { challengeId: o.challengeId, response: { id: 'cred-alex', challenge: o.options.challenge } }, { cookie: `keepsake_guest=${device}` });
+    expect(res.statusCode, res.body).toBe(200);
+    expect([res.headers['set-cookie']].flat().some((c) => String(c).startsWith('keepsake_guest=;'))).toBe(true);
+    expect(db.select().from(t.guestSession).all().map((x) => x.id)).toEqual(['s2']);
+  });
 
   it('a passkey signs in, sign-out ends the session', async () => {
     await adminWithPasskey();

@@ -13,7 +13,7 @@ import { hashToken } from '../src/auth/tokens';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { ORIGIN, household, inDays, sessionCookie, standalone, withDraws } from './helpers';
-import { as, makeHome, ok, pin, reads, tokenOf, type Home } from './m4';
+import { as, makeHome, ok, pin, reads, setNow, tokenOf, type Home } from './m4';
 
 const apps: BuiltApp[] = [];
 const homes: Home[] = [];
@@ -29,11 +29,16 @@ async function start(db: Db) {
     send: (method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: object) => inject({ method, url, payload, headers: { cookie: sessionCookie(db, id), origin: ORIGIN } }),
   });
   /** Opens a link the way the guest page does: the fragment's token in a POST body. Returns the guest's cookie. */
-  const exchange = (url: string, as?: string) => inject({ method: 'POST', url: '/api/guest/session', payload: { token: url.split('#')[1] }, headers: { origin: ORIGIN, ...(as ? { cookie: sessionCookie(db, as) } : {}) } });
-  const guest = (cookie: string) => ({
-    get: (url: string) => inject({ url, headers: { cookie } }),
-    send: (method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: object) => inject({ method, url, payload, headers: { cookie, origin: ORIGIN } }),
-  });
+  const exchange = (url: string, as?: string, device?: string) => inject({ method: 'POST', url: '/api/guest/session', payload: { token: url.split('#')[1] },
+    headers: { origin: ORIGIN, ...(as || device ? { cookie: [device, as && sessionCookie(db, as)].filter(Boolean).join('; ') } : {}) } });
+  /** The guest of an exchange's answer, in that browser: its device cookie, and its link named on every request. */
+  const guest = (r: { headers: Record<string, unknown>; json: () => { link: string } }) => {
+    const headers = { cookie: cookieOf(r), 'x-keepsake-link': r.json().link };
+    return {
+      get: (url: string) => inject({ url, headers }),
+      send: (method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: object) => inject({ method, url, payload, headers: { ...headers, origin: ORIGIN } }),
+    };
+  };
   return { inject, person, exchange, guest };
 }
 const cookieOf = (r: { headers: Record<string, unknown> }) => String([r.headers['set-cookie']].flat()[0]).split(';')[0]!;
@@ -139,7 +144,7 @@ describe('share links', () => {
     expect((await s.exchange(cousin.url, 'p_leo')).statusCode).toBe(401);
     // Revoked: the session ends at once, the link opens nothing.
     expect((await s.person('p_sam').send('DELETE', `/api/links/${mia.link.id}`)).statusCode).toBe(204);
-    expect((await s.guest(cookieOf(g)).get('/api/guest')).statusCode).toBe(401);
+    expect((await s.guest(g).get('/api/guest')).statusCode).toBe(401);
     expect((await s.exchange(mia.url)).json()).toEqual(bad.json());
     const other = await s.inject({ method: 'POST', url: '/api/guest/session', payload: { token: 'z'.repeat(43) }, headers: { origin: 'https://evil.example' } });
     expect(other.statusCode).toBe(403);
@@ -187,7 +192,7 @@ describe('share links', () => {
     // Another browser, with or without a household session that may open it: opened elsewhere, no session made.
     for (const who of [undefined, 'p_sam']) {
       const again = await s.exchange(made.url, who);
-      expect([again.statusCode, again.json(), again.headers['set-cookie']]).toEqual([409, { error: 'this link was opened on another device: ask whoever sent it for a new one' }, undefined]);
+      expect([again.statusCode, again.json(), again.headers['set-cookie']]).toEqual([409, { error: 'this link was opened on another device: ask whoever sent it for a new address' }, undefined]);
     }
     expect(db.select().from(t.guestSession).all()).toHaveLength(1);
     // The same browser following the link again: its own session goes on (the same cookie, no new session).
@@ -215,8 +220,52 @@ describe('share links', () => {
     // Alex is in the draw: in his browser, refused; on his phone (no household session) it opens, and spends the link.
     expect((await s.exchange(made.url, 'p_alex')).statusCode).toBe(401);
     expect((await s.exchange(made.url)).statusCode).toBe(200);
-    expect((await s.exchange(made.url)).json().error).toBe('this link was opened on another device: ask whoever sent it for a new one');
+    expect((await s.exchange(made.url)).json().error).toBe('this link was opened on another device: ask whoever sent it for a new address');
     expect((await s.person('p_alex').get('/api/links')).json().links[0].openedAt).not.toBeNull();
+  });
+
+  it('one browser keeps every link it opened, back and forth; another device still gets the 409 (review M-a)', async () => {
+    const db = withDraws(household());
+    db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    const s = await start(db);
+    const robin = (await ok(s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' }))).json();
+    const sam = (await ok(s.person('p_alex').send('POST', '/api/people/p_sam/links', { label: 'Godmother' }))).json();
+    const cousin = (await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' }))).json();
+    const first = await s.exchange(robin.url);
+    const device = cookieOf(first);
+    // The same device opens the others: its cookie stays the same.
+    for (const l of [sam, cousin]) expect(cookieOf(await ok(s.exchange(l.url, undefined, device)))).toBe(device);
+    const page = (linkId: string) => s.inject({ url: '/api/guest', headers: { cookie: device, 'x-keepsake-link': linkId } });
+    for (let i = 0; i < 2; i++) {
+      for (const [l, who] of [[robin, 'Robin'], [sam, 'Sam']] as const) expect((await ok(page(l.link.id))).json().person.name).toBe(who);
+      expect((await ok(page(cousin.link.id))).json().kind).toBe('draw');
+      // Following each link again from that device opens it again.
+      for (const l of [robin, sam, cousin]) expect((await s.exchange(l.url, undefined, device)).statusCode).toBe(200);
+    }
+    expect(db.select().from(t.guestSession).all()).toHaveLength(3);
+    // A link it did not open, or one the device never named: nothing.
+    expect((await page('l_nope')).statusCode).toBe(401);
+    expect((await s.inject({ url: '/api/guest', headers: { cookie: device } })).statusCode).toBe(401);
+    // A third browser (and another device cookie) gets the 409 for each.
+    for (const l of [robin, sam, cousin]) {
+      expect((await s.exchange(l.url)).statusCode).toBe(409);
+      expect((await s.exchange(l.url, undefined, `keepsake_guest=${'o'.repeat(43)}`)).statusCode).toBe(409);
+    }
+  });
+
+  it('a guest session ends after 30 days unused, and goes on while used (review L-2)', async () => {
+    const db = household();
+    const s = await start(db);
+    const made = (await ok(s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' }))).json();
+    const t0 = Date.now();
+    pin(new Date(t0));
+    try {
+      const g = s.guest(await s.exchange(made.url));
+      for (const days of [29, 58]) { setNow(new Date(t0 + days * 86_400_000)); expect((await g.get('/api/guest')).statusCode, String(days)).toBe(200); }
+      setNow(new Date(t0 + (58 + 30) * 86_400_000 + 60_000));
+      expect((await g.get('/api/guest')).statusCode).toBe(401);
+      expect(db.select().from(t.guestSession).all()).toEqual([]);
+    } finally { vi.useRealTimers(); }
   });
 
   it('the exchange is rate limited like a sign-in', async () => {
@@ -307,8 +356,8 @@ describe('share links', () => {
 
 describe('a guest session left in a shared browser (review N1)', () => {
   /** A guest route's answer with these cookies along: status, body and headers but `date`. */
-  const answer = async (h: Home, cookie: string, method: 'GET' | 'POST' = 'GET', url = '/api/guest', payload?: object) => {
-    const r = await h.built.app.inject({ method, url, payload, headers: { cookie, origin: ORIGIN } });
+  const answer = async (h: Home, cookie: string, link: string, method: 'GET' | 'POST' = 'GET', url = '/api/guest', payload?: object) => {
+    const r = await h.built.app.inject({ method, url, payload, headers: { cookie, origin: ORIGIN, 'x-keepsake-link': link } });
     return JSON.stringify([r.statusCode, r.body, Object.entries(r.headers).filter(([k]) => k !== 'date').sort()]);
   };
   const UNKNOWN_GUEST = `keepsake_guest=${'u'.repeat(43)}`;
@@ -323,9 +372,9 @@ describe('a guest session left in a shared browser (review N1)', () => {
     const both = `${h.cookies[guest]}; ${h.cookies[who]}`;
     const unknown = `${UNKNOWN_GUEST}; ${h.cookies[who]}`;
     for (const [m, u, b] of [['GET', '/api/guest'], ['POST', '/api/guest/questions', { text: 'Which colour?' }]] as const) {
-      expect(await answer(h, both, m, u, b), u).toBe(await answer(h, unknown, m, u, b));
+      expect(await answer(h, both, `l_${guest}`, m, u, b), u).toBe(await answer(h, unknown, `l_${guest}`, m, u, b));
     }
-    expect(await answer(h, both)).toContain('keepsake_guest=;');
+    expect(await answer(h, both, `l_${guest}`)).not.toContain('set-cookie');
     expect(h.db.select().from(t.question).all()).toEqual([]);
     // The session is gone: without the household session along it opens nothing either.
     expect((await as(h, guest).get('/api/guest')).statusCode).toBe(401);
@@ -335,7 +384,7 @@ describe('a guest session left in a shared browser (review N1)', () => {
   it('with someone signed in who may see it (giving to its person), the guest session goes on', async () => {
     const h = await home();
     for (const [who, guest] of [['sam', 'gR'], ['robin', 'gM'], ['alex', 'gM']] as const) {
-      const r = await h.built.app.inject({ url: '/api/guest', headers: { cookie: `${h.cookies[guest]}; ${h.cookies[who]}` } });
+      const r = await h.built.app.inject({ url: '/api/guest', headers: { cookie: `${h.cookies[guest]}; ${h.cookies[who]}`, 'x-keepsake-link': `l_${guest}` } });
       expect([who, guest, r.statusCode, r.headers['set-cookie']]).toEqual([who, guest, 200, undefined]);
     }
   });
@@ -346,12 +395,13 @@ describe('a guest session left in a shared browser (review N1)', () => {
     db.insert(t.person).values({ id: 'p_quinn', name: 'Quinn', role: 'adult', createdAt: '2026-11-01T10:00:00.000Z' }).run();
     const s = await start(db);
     const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
-    const g = cookieOf(await s.exchange(made.url));
+    const g = await s.exchange(made.url);
+    const link = { 'x-keepsake-link': made.link.id };
     // A grown-up outside the draw: the session goes on.
-    const quinn = await s.inject({ url: '/api/guest', headers: { cookie: `${g}; ${sessionCookie(db, 'p_quinn')}` } });
+    const quinn = await s.inject({ url: '/api/guest', headers: { cookie: `${cookieOf(g)}; ${sessionCookie(db, 'p_quinn')}`, ...link } });
     expect(quinn.statusCode).toBe(200);
-    const sam = await s.inject({ url: '/api/guest', headers: { cookie: `${g}; ${sessionCookie(db, 'p_sam')}` } });
-    const unknown = await s.inject({ url: '/api/guest', headers: { cookie: `keepsake_guest=${'u'.repeat(43)}; ${sessionCookie(db, 'p_sam')}` } });
+    const sam = await s.inject({ url: '/api/guest', headers: { cookie: `${cookieOf(g)}; ${sessionCookie(db, 'p_sam')}`, ...link } });
+    const unknown = await s.inject({ url: '/api/guest', headers: { cookie: `keepsake_guest=${'u'.repeat(43)}; ${sessionCookie(db, 'p_sam')}`, ...link } });
     expect([sam.statusCode, sam.body, sam.headers['set-cookie']]).toEqual([unknown.statusCode, unknown.body, unknown.headers['set-cookie']]);
     expect((await s.guest(g).get('/api/guest')).statusCode).toBe(401);
   });
@@ -370,7 +420,7 @@ describe('personal draw links', () => {
     expect(made.json().link).toMatchObject({ kind: 'draw', label: 'Cousin Ada', celebration: { id: 'c_xmas', name: 'Christmas' } });
     const draw = (await s.person('p_alex').get('/api/celebrations/c_xmas/draw')).json();
     expect([draw.total, draw.guests]).toEqual([5, ['Cousin Ada']]);
-    const g = s.guest(cookieOf(await s.exchange(made.json().url)));
+    const g = s.guest(await s.exchange(made.json().url));
     const before = (await g.get('/api/guest')).json();
     expect(before).toMatchObject({ kind: 'draw', name: 'Cousin Ada', person: null, wishes: [], draw: { drawn: false, opened: false, total: 5 } });
     expect((await g.send('POST', '/api/guest/draw/open')).statusCode).toBe(409);
@@ -432,7 +482,7 @@ describe('personal draw links', () => {
     const s = await start(db);
     const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
     await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/draw/run'));
-    const g = s.guest(cookieOf(await s.exchange(made.url)));
+    const g = s.guest(await s.exchange(made.url));
     const page = (await ok(g.send('POST', '/api/guest/draw/open'))).json();
     const wish = page.wishes[0];
     expect(wish).toBeDefined();
@@ -476,7 +526,7 @@ describe('a guest\'s claims once they cannot manage them (review M1)', () => {
     const s = await start(db);
     const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
     await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/draw/run'));
-    const g = s.guest(cookieOf(await s.exchange(made.url)));
+    const g = s.guest(await s.exchange(made.url));
     const first = (await ok(g.send('POST', '/api/guest/draw/open'))).json().person.id as string;
     await ok(g.send('PUT', `/api/guest/wishes/w_${first.slice(2)}_xmas/claim`, { quantity: 1 }));
     const guestClaims = () => db.select().from(t.claim).all().filter((c) => c.guestId === made.link.id || (c.giverId === null && c.wishId.endsWith('_xmas')));
@@ -513,7 +563,7 @@ describe('a wish moved out of a draw guest\'s reach (review L-a)', () => {
     const s = await start(db);
     const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
     await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/draw/run'));
-    const g = s.guest(cookieOf(await s.exchange(made.url)));
+    const g = s.guest(await s.exchange(made.url));
     const person = (await ok(g.send('POST', '/api/guest/draw/open'))).json().person.id as string;
     const p = person.slice(2);
     // Whoever keeps the person's list moves the wishes: a kid's parent for Mia.
@@ -591,7 +641,7 @@ describe('names that show nothing, and members named like guests (review L-b)', 
     // A guest of a link to Alex's own wishes (made by Sam): Alex never lists it, so nothing tells him of it.
     const own = (await ok(as(h, 'sam').send('POST', '/api/people/p_alex/links', { label: 'Neighbours' }))).json();
     const g = await h.built.app.inject({ method: 'POST', url: '/api/guest/session', payload: { token: own.url.split('#')[1] }, headers: { origin: ORIGIN } });
-    await ok(h.built.app.inject({ method: 'PUT', url: '/api/guest/name', payload: { name: 'Bea' }, headers: { origin: ORIGIN, cookie: cookieOf(g) } }));
+    await ok(h.built.app.inject({ method: 'PUT', url: '/api/guest/name', payload: { name: 'Bea' }, headers: { origin: ORIGIN, cookie: cookieOf(g), 'x-keepsake-link': own.link.id } }));
     expect((await as(h, 'alex').send('POST', '/api/people', { name: 'Bea', role: 'adult' })).statusCode).toBe(201);
   });
 });
@@ -602,7 +652,7 @@ describe('a draw guest\'s profiles', () => {
     db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
     const s = await start(db);
     const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
-    const g = s.guest(cookieOf(await s.exchange(made.url)));
+    const g = s.guest(await s.exchange(made.url));
     const before = (await ok(g.get('/api/guest'))).body;
     expect(JSON.parse(before).profile).toBeNull();
     const ids = db.select().from(t.person).all().map((p) => p.id);

@@ -10,10 +10,12 @@
 // - The token (256 bits) travels in the link's #fragment, so no request line or log has it; the browser POSTs it once
 //   for a session (keepsake_guest, HttpOnly, Secure, SameSite=Strict). Both are kept as SHA-256 only. Every failure
 //   gets the one answer, and the exchange is rate limited like a sign-in.
-// - A link opens on one device (review N2): the first exchange spends the token and its session lasts as long as the
-//   link (up to GUEST_DAYS, a browser's limit); another exchange answers that it was opened on another device. Its
-//   maker sees it opened, and the opening is audited: someone who opens a link not meant for them locks its guest out,
-//   and the guest notices.
+// - A link opens on one device (review N2): the first exchange spends the token and records the device (review M-a:
+//   the cookie keepsake_guest is the device, and holds the sessions of every link it opened; a request names its link
+//   in the X-Keepsake-Link header). A session lasts as long as the link (up to GUEST_DAYS, a browser's limit) unless
+//   unused for GUEST_IDLE_DAYS; that device may exchange the token again, any other is told it was opened on another
+//   device. Its maker sees it opened, and the opening is audited: someone who opens a link not meant for them locks its
+//   guest out, and the guest notices.
 // - A guest may set their name, claim (then bought, given, back), open their draw and ask a question: nothing else, and
 //   only on the one person or draw their link reaches. Revoking a link ends its sessions at once.
 import { and, count, desc, eq, isNotNull, isNull } from 'drizzle-orm';
@@ -34,12 +36,16 @@ export type GuestLink = typeof t.guestLink.$inferSelect;
 export const GUEST_COOKIE = 'keepsake_guest';
 /** A guest session's longest life: a link's own end comes first (linkWorks); browsers keep a cookie 400 days at most. */
 export const GUEST_DAYS = 400;
+/** A guest session unused this long ends (review L-2: a session left in a browser nobody uses). */
+export const GUEST_IDLE_DAYS = 30;
+/** The request header naming the link a guest route is for (one device holds the sessions of several links). */
+export const LINK_HEADER = 'x-keepsake-link';
 /** Open share links one person may have. */
 export const MAX_SHARE_LINKS = 20; // the message says it
 const DAY = 86_400_000;
 const ts = () => new Date().toISOString();
 
-const audit = (db: Db, actorId: string, action: 'link_created' | 'link_revoked' | 'link_opened', id: string) =>
+const audit = (db: Db, actorId: string, action: 'link_created' | 'link_revoked' | 'link_opened' | 'link_reissued', id: string) =>
   db.insert(t.audit).values({ id: ulid(), at: ts(), actorId, action, subjectId: id }).run();
 
 export const linkUrl = (cfg: Pick<Config, 'origin'>, token: string) => `${cfg.origin}/guest#${token}`;
@@ -164,7 +170,7 @@ export function revokeLink(db: Db, me: Person, id: string, leave: (linkId: strin
 // --- The guest's side -----------------------------------------------------------------------------------------------
 
 const UNKNOWN = () => new Refused(401, 'this link is unknown, used or expired');
-const OPENED = () => new Refused(409, 'this link was opened on another device: ask whoever sent it for a new one');
+const OPENED = () => new Refused(409, 'this link was opened on another device: ask whoever sent it for a new address');
 
 /**
  * Whether a household member may hold a guest session of this link (defence in depth: they never receive the token
@@ -179,53 +185,90 @@ export function mayOpenAsGuest(db: Db, p: Pick<Person, 'id' | 'role'>, l: GuestL
 }
 
 type GuestSession = typeof t.guestSession.$inferSelect;
-/** The open session behind a guest cookie (an expired one is deleted). */
-function sessionOf(db: Db, cookie: string | undefined, now: Date): GuestSession | null {
-  if (!looksLikeToken(cookie)) return null;
-  const s = db.select().from(t.guestSession).where(eq(t.guestSession.id, hashToken(cookie))).get();
+const deviceOf = (cookie: string | undefined) => (looksLikeToken(cookie) ? hashToken(cookie) : null);
+
+/** The open session of a link on a device (one past its end or idle too long is deleted; use is noted once a minute). */
+function sessionFor(db: Db, device: string | null, linkId: unknown, now: Date): GuestSession | null {
+  if (!device || typeof linkId !== 'string') return null;
+  const s = db.select().from(t.guestSession).where(and(eq(t.guestSession.deviceHash, device), eq(t.guestSession.linkId, linkId))).get();
   if (!s) return null;
-  if (s.expiresAt <= now.toISOString()) {
+  if (s.expiresAt <= now.toISOString() || now.getTime() - new Date(s.lastSeenAt).getTime() > GUEST_IDLE_DAYS * DAY) {
     db.delete(t.guestSession).where(eq(t.guestSession.id, s.id)).run();
     return null;
   }
+  if (now.getTime() - new Date(s.lastSeenAt).getTime() > 60_000) db.update(t.guestSession).set({ lastSeenAt: now.toISOString() }).where(eq(t.guestSession.id, s.id)).run();
   return s;
 }
 
+const newSession = (db: Db, linkId: string, device: string, now: Date) => {
+  const expiresAt = new Date(now.getTime() + GUEST_DAYS * DAY);
+  db.insert(t.guestSession).values({ id: ulid(), linkId, deviceHash: device, createdAt: now.toISOString(), lastSeenAt: now.toISOString(), expiresAt: expiresAt.toISOString() }).run();
+  return expiresAt;
+};
+
 /**
- * A link's token for a session, on one device (review N2). One answer for every failure, also to a household member
- * it is not for (`by`, the browser's own household session, if any); after those, a link opened already answers so,
- * unless this very browser holds its session (`current`, its guest cookie: the guest followed the link again), which
- * then goes on. The first exchange spends the token, in one statement, and is audited (`by` as the actor, else the
- * link). Returns the session's token and when it ends.
+ * A link's first exchange, from `l` as read before (review N2): spends it in one statement (`opened_at` set only while
+ * unset, so a stale read can never open it twice), records the device, ends any session it had and audits it.
  */
-export function startGuestSession(db: Db, token: unknown, today: string, now = new Date(), by?: Pick<Person, 'id' | 'role'> | null, current?: string): { token: string; expiresAt: Date; link: GuestLink } {
+export function openLink(db: Db, l: GuestLink, device: string, now: Date, actorId: string): Date {
+  return db.transaction((tx) => {
+    const spent = tx.update(t.guestLink).set({ openedAt: now.toISOString(), openedBy: device }).where(and(eq(t.guestLink.id, l.id), isNull(t.guestLink.openedAt))).run();
+    if (spent.changes !== 1) throw OPENED();
+    tx.delete(t.guestSession).where(eq(t.guestSession.linkId, l.id)).run();
+    audit(tx as unknown as Db, actorId, 'link_opened', l.id);
+    return newSession(tx as unknown as Db, l.id, device, now);
+  });
+}
+
+/**
+ * A link's token for a session, on one device (review N2, M-a). One answer for every failure, also to a household
+ * member it is not for (`by`, the browser's own household session, if any). After those: a link opened already opens
+ * again only on the device that opened it (`deviceCookie`, the browser's keepsake_guest), else it answers so; a link
+ * not opened yet is spent (openLink). Returns the device cookie (the browser's own, or a new one) and the link.
+ */
+export function startGuestSession(db: Db, token: unknown, today: string, now = new Date(), by?: Pick<Person, 'id' | 'role'> | null, deviceCookie?: string): { device: string; expiresAt: Date; link: GuestLink } {
   if (!looksLikeToken(token)) throw UNKNOWN();
   const l = db.select().from(t.guestLink).where(eq(t.guestLink.tokenHash, hashToken(token))).get();
   if (!l || !linkWorks(db, l, today) || (by && !mayOpenAsGuest(db, by, l))) throw UNKNOWN();
-  const mine = sessionOf(db, current, now);
-  if (mine && mine.linkId === l.id) return { token: current!, expiresAt: new Date(mine.expiresAt), link: l };
-  if (l.openedAt) throw OPENED();
-  const s = newToken();
-  const expiresAt = new Date(now.getTime() + GUEST_DAYS * DAY);
-  db.transaction((tx) => {
-    const spent = tx.update(t.guestLink).set({ openedAt: now.toISOString() }).where(and(eq(t.guestLink.id, l.id), isNull(t.guestLink.openedAt))).run();
-    if (spent.changes !== 1) throw OPENED();
-    tx.insert(t.guestSession).values({ id: hashToken(s), linkId: l.id, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString() }).run();
-    audit(tx as unknown as Db, by?.id ?? l.id, 'link_opened', l.id);
-  });
-  return { token: s, expiresAt, link: { ...l, openedAt: now.toISOString() } };
+  const cookie = looksLikeToken(deviceCookie) ? deviceCookie : newToken();
+  const device = hashToken(cookie);
+  if (l.openedAt) {
+    if (l.openedBy !== device) throw OPENED();
+    const s = sessionFor(db, device, l.id, now);
+    return { device: cookie, expiresAt: s ? new Date(s.expiresAt) : newSession(db, l.id, device, now), link: l };
+  }
+  const expiresAt = openLink(db, l, device, now, by?.id ?? l.id);
+  return { device: cookie, expiresAt, link: { ...l, openedAt: now.toISOString(), openedBy: device } };
 }
 
-/** The guest behind a session cookie: an open session of a link that still works. */
-export function liveGuest(db: Db, cookie: string | undefined, today: string, now = new Date()): GuestLink | null {
-  const s = sessionOf(db, cookie, now);
+/** The guest behind a request: the device's open session of the named link, a link that still works. */
+export function liveGuest(db: Db, deviceCookie: string | undefined, linkId: unknown, today: string, now = new Date()): GuestLink | null {
+  const s = sessionFor(db, deviceOf(deviceCookie), linkId, now);
   if (!s) return null;
   const l = getLink(db, s.linkId);
   return l && linkWorks(db, l, today) ? l : null;
 }
 
-export function endGuestSession(db: Db, cookie: string | undefined): void {
-  if (looksLikeToken(cookie)) db.delete(t.guestSession).where(eq(t.guestSession.id, hashToken(cookie))).run();
+/** The device's session of one link ends (review N1: a household session it is not for came along). */
+export function endGuestSession(db: Db, deviceCookie: string | undefined, linkId: string): void {
+  const device = deviceOf(deviceCookie);
+  if (device) db.delete(t.guestSession).where(and(eq(t.guestSession.deviceHash, device), eq(t.guestSession.linkId, linkId))).run();
+}
+
+/** "Forget this link on this device": its session ends and no device holds the link any more (a new address opens it). */
+export function forgetLink(db: Db, deviceCookie: string | undefined, linkId: string): void {
+  const device = deviceOf(deviceCookie);
+  if (!device) return;
+  db.transaction((tx) => {
+    tx.delete(t.guestSession).where(and(eq(t.guestSession.deviceHash, device), eq(t.guestSession.linkId, linkId))).run();
+    tx.update(t.guestLink).set({ openedBy: null }).where(and(eq(t.guestLink.id, linkId), eq(t.guestLink.openedBy, device))).run();
+  });
+}
+
+/** A household sign-in in this browser (review L-2): every guest session of its device ends (the cookie is cleared). */
+export function endDeviceSessions(db: Db, deviceCookie: string | undefined): void {
+  const device = deviceOf(deviceCookie);
+  if (device) db.delete(t.guestSession).where(eq(t.guestSession.deviceHash, device)).run();
 }
 
 export function setGuestName(db: Db, l: GuestLink, name: string): void {

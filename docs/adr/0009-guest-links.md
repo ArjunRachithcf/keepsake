@@ -83,3 +83,15 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
 - **Known and accepted**: a host in the draw (or anyone sent a link to their own wishes) who opens it before its guest
   does sees what it shows; Keepsake cannot tell them from the guest. The guest then finds the link opened elsewhere and
   asks for a new one, and the maker's list shows when it was opened. A lost device means a new link.
+
+**Third review of PR #11, decided 2026-11-25**:
+
+- **The device, not the cookie, is what opens** (M-a): `keepsake_guest` is one random device cookie (400 days, SHA-256
+  at rest) that holds the sessions of every link the browser opened. The first exchange records it on the link
+  (`opened_by`); a session is found by link and device, and each guest request names its link (`X-Keepsake-Link`,
+  the link's id, which the guest page keeps in its address after the exchange). So the godmother with links to two
+  people's wishes goes back and forth in one browser; another device still gets the 409. A first exchange ends any
+  session the link had (none should remain), and a household sign-in ends the device's sessions.
+- **Idle sessions** (L-2): a guest session ends after 30 days without use, on top of the link's own end (and the 400
+  days); a household sign-in in the browser clears `keepsake_guest` and ends its sessions.
+- **Forget this link on this device** ends its session and leaves no device holding the link: it opens nowhere any more.

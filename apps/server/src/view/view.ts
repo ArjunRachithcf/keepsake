@@ -530,7 +530,7 @@ export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'se
       const receiver = own && own !== 'unreadable' ? ps.find((p) => p.id === own) : undefined;
       const person = reach ? mustGetPerson(db, reach.personId) : null;
       return answer({
-        kind: l.kind, name: l.guestName, currency: currency(db),
+        link: l.id, kind: l.kind, name: l.guestName, currency: currency(db),
         person: person ? { id: person.id, name: person.name } : null,
         // A godmother buying clothes needs the sizes: the reached person's only (a draw guest's once opened).
         profile: person ? profile(getProfile(db, person.id)) : null,

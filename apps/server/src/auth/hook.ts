@@ -9,7 +9,7 @@ import type { Db } from '../db/open';
 import { getPerson, syncHomersLabPerson, type Person } from '../household/people';
 import { resolveIdentity } from '../identity';
 import { SESSION_COOKIE, liveSession, type Session } from './sessions';
-import { GUEST_COOKIE, endGuestSession, liveGuest, mayOpenAsGuest, type GuestLink } from '../guests/guests';
+import { GUEST_COOKIE, LINK_HEADER, endGuestSession, liveGuest, mayOpenAsGuest, type GuestLink } from '../guests/guests';
 import { today } from '../celebrations/dates';
 
 export type AuthMode = 'public' | 'person' | 'guest';
@@ -43,22 +43,20 @@ export function authHook(cfg: Config, db: Db) {
     }
     const auth = req.routeOptions.config.auth ?? 'person';
     if (auth === 'public') return;
-    // A guest's route (ADR 0009): only the guest session acts there, in both modes. A household session along with it
-    // counts only to refuse (review N1): a guest session left in a shared browser never opens for someone who may not
-    // see what it shows (its person, a kid; for a draw link, anyone in that draw). That session ends, and every refusal
-    // here clears the guest cookie, so a leftover one answers exactly like an unknown one.
+    // A guest's route (ADR 0009): only the guest session acts there, in both modes: the device's (cookie
+    // keepsake_guest) session of the link the request names (X-Keepsake-Link, review M-a). A household session along
+    // with it counts only to refuse (review N1): a guest session left in a shared browser never opens for someone who
+    // may not see what it shows (its person, a kid; for a draw link, anyone in that draw). That session ends, and the
+    // answer is the one an unknown session gets.
     if (auth === 'guest') {
       const cookie = req.cookies?.[GUEST_COOKIE];
-      const refuse = () => {
-        if (cookie !== undefined) void reply.clearCookie(GUEST_COOKIE, { path: '/' });
-        return reply.code(401).send({ error: 'this link is unknown, used or expired' });
-      };
-      const g = liveGuest(db, cookie, today(cfg.timezone));
+      const refuse = () => reply.code(401).send({ error: 'this link is unknown, used or expired' });
+      const g = liveGuest(db, cookie, req.headers[LINK_HEADER], today(cfg.timezone));
       if (!g) return refuse();
       const c = callerOf(cfg, db, req);
       const by = c === 'no-role' ? { id: '', role: 'kid' as const } : c?.person;
       if (by && !mayOpenAsGuest(db, by, g)) {
-        endGuestSession(db, cookie);
+        endGuestSession(db, cookie, g.id);
         return refuse();
       }
       req.guest = g;

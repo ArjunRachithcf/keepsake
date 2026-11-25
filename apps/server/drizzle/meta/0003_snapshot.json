@@ -58,7 +58,7 @@
       "checkConstraints": {
         "audit_action": {
           "name": "audit_action",
-          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened')"
+          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued')"
         }
       }
     },
@@ -1181,6 +1181,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "opened_by": {
+          "name": "opened_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1277,8 +1284,22 @@
           "notNull": true,
           "autoincrement": false
         },
+        "device_hash": {
+          "name": "device_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -1299,6 +1320,14 @@
             "link_id"
           ],
           "isUnique": false
+        },
+        "guest_session_device": {
+          "name": "guest_session_device",
+          "columns": [
+            "device_hash",
+            "link_id"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {
