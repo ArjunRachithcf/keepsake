@@ -16,5 +16,9 @@ reservation** (review L1: so nobody buys it twice; givers see "An imported reser
 audited); Bought (or Given) rows are skipped; Priority "High", "Most wanted" or "1" is most wanted. Limits:
 512 KB, 2000 rows. A cell's leading `=`, `+`, `-`, `@`, tab or CR is dropped. A fictional sample is in `seed-sample/`.
 
+**Accepted (second review of PR #11)**: an imported reservation on an admin's own wish is released by another admin
+only: its person is refused like any giving, before any claim is read, so the answer says nothing. A household whose
+only admin has one keeps it (the wish stays taken for givers) until a second admin releases it or the wish goes.
+
 **Accepted (review L2)**: the dry run's plan shows the admin who runs it the claims and buyers of every row, their own
 wishes' included. They hold the file, which says the same; Keepsake keeps none of it.

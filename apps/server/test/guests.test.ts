@@ -1,7 +1,9 @@
-// Guests by link (ADR 0009): the token lives in the link's #fragment and is exchanged once by a POST for a short
-// session; tokens are hashed at rest; revoking ends the session at once; a kid's own link waits for a parent; a guest
-// reaches one person (or one draw and their own person's list for it), claims, asks and names themselves, nothing else;
-// a draw link joins the draw under its rules and ends with the draw's day. The person never learns a guest's claim.
+// Guests by link (ADR 0009): the token lives in the link's #fragment and is exchanged by a POST for a session on one
+// device (the first exchange spends it); tokens are hashed at rest; revoking ends the session at once; a share link is
+// another grown-up's (a kid's: a parent's), never the person's; a guest session never opens with a household session
+// it is not for; a guest reaches one person (or one draw and their own person's list for it), claims, asks and names
+// themselves, nothing else; a draw link joins the draw under its rules and ends with the draw's day. The person never
+// learns a guest's claim.
 import { eq } from 'drizzle-orm';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
