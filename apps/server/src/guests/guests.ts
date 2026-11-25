@@ -70,15 +70,26 @@ export function createShareLink(db: Db, me: Person, personId: string, label: str
   return made;
 }
 
-/** A name as compared with the household's: case, accents and spacing aside. */
+/** A name as compared with the household's: case, accents, spacing and characters that show nothing (review L-b) aside. */
 export const sameName = (a: string, b: string) => {
-  const n = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en');
+  const n = (s: string) => s.normalize('NFKD').replace(/[\p{M}\p{Default_Ignorable_Code_Point}]/gu, '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en');
   return n(a) === n(b);
 };
 /** A guest's name never passes for someone of the household (review M2): their claims would read as that person's. */
 function checkGuestName(db: Db, name: string): void {
   if (db.select({ name: t.person.name }).from(t.person).all().some((p) => sameName(p.name, name))) {
     throw new Refused(409, 'someone in the household has that name: add something to tell them apart');
+  }
+}
+
+/**
+ * The other way round (review L-b): a new member, or a new name, like a guest's that the caller already sees (the
+ * guests of links they manage, so nobody learns of a link to their own wishes) is refused until confirmed.
+ */
+export function checkMemberName(db: Db, me: Person, name: string): void {
+  const guests = db.select().from(t.guestLink).where(isNull(t.guestLink.revokedAt)).all().filter((l) => managesLink(db, me, l));
+  if (guests.some((l) => [l.guestName, l.kind === 'draw' ? l.label : null].some((g) => g && sameName(g, name)))) {
+    throw new Refused(409, 'a guest by link has that name: add something to tell them apart, or confirm');
   }
 }
 

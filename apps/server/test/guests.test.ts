@@ -547,6 +547,37 @@ describe('guests\' names (review M2)', () => {
   });
 });
 
+describe('names that show nothing, and members named like guests (review L-b)', () => {
+  it('format characters are refused in guests\' names and labels, and characters that show nothing never tell a name apart', async () => {
+    const h = await home();
+    for (const name of ['Robin\u200B', 'Ro\u200Bbin', 'Ro\u00ADbin', 'Rob\u2060in', 'Ada\u200D', 'Ada\uFEFF', 'Ad\u3164a', 'Ada\u180E'])
+      expect((await as(h, 'gR').send('PUT', '/api/guest/name', { name })).json().error, JSON.stringify(name)).toBe('name: 1 to 60 characters, without control characters');
+    expect((await as(h, 'alex').send('POST', '/api/people/p_robin/links', { label: 'Gran\u00ADny' })).json().error).toBe('label: 1 to 60 characters, without control characters');
+    // Invisible marks that are not format characters (a grapheme joiner, a variation selector) still compare away.
+    for (const name of ['Ro\u034Fbin', 'Robin\uFE0F']) expect((await as(h, 'gR').send('PUT', '/api/guest/name', { name })).json().error, JSON.stringify(name)).toBe('someone in the household has that name: add something to tell them apart');
+    const { sameName } = await import('../src/guests/guests');
+    expect(sameName('Ro\u00ADbin', 'robin')).toBe(true);
+    expect(sameName('Rob\u2060in', 'ROBIN')).toBe(true);
+  });
+
+  it('a new member (or a new name) like a guest the admin sees is refused until confirmed; a guest on the admin\'s own wishes never shows', async () => {
+    const h = await home();
+    await ok(as(h, 'gR').send('PUT', '/api/guest/name', { name: 'Ada' }));
+    for (const name of ['Ada', ' ada ', 'Guest gM']) {
+      const r = await as(h, 'alex').send('POST', '/api/people', { name, role: 'adult' });
+      expect([name, r.statusCode, r.json().error]).toEqual([name, 409, 'a guest by link has that name: add something to tell them apart, or confirm']);
+    }
+    expect((await as(h, 'alex').send('PATCH', '/api/people/p_quinn', { name: 'ADA' })).statusCode).toBe(409);
+    expect((await ok(as(h, 'alex').send('PATCH', '/api/people/p_quinn', { name: 'ADA', confirmName: true }))).json().name).toBe('ADA');
+    expect((await as(h, 'alex').send('POST', '/api/people', { name: 'Ada', role: 'adult', confirmName: true })).statusCode).toBe(201);
+    // A guest of a link to Alex's own wishes (made by Sam): Alex never lists it, so nothing tells him of it.
+    const own = (await ok(as(h, 'sam').send('POST', '/api/people/p_alex/links', { label: 'Neighbours' }))).json();
+    const g = await h.built.app.inject({ method: 'POST', url: '/api/guest/session', payload: { token: own.url.split('#')[1] }, headers: { origin: ORIGIN } });
+    await ok(h.built.app.inject({ method: 'PUT', url: '/api/guest/name', payload: { name: 'Bea' }, headers: { origin: ORIGIN, cookie: cookieOf(g) } }));
+    expect((await as(h, 'alex').send('POST', '/api/people', { name: 'Bea', role: 'adult' })).statusCode).toBe(201);
+  });
+});
+
 describe('a draw guest\'s profiles', () => {
   it('none before their draw is opened, then their own person\'s only: nobody else\'s changes a byte', async () => {
     const db = withDraws(household());

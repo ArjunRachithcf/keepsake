@@ -28,7 +28,10 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
 - **What the household sees**: a guest's claim, marked as a guest's, with the name the guest gave and the link's label
   ("Ada (guest: Godmother)"), except while a draw keeps its people's gifts unnamed (guests count as its people).
   Claims wait until the guest has given a name; a guest's name is never a household member's (case and accents aside)
-  and carries no control or bidi characters (review M2).
+  and carries no control or bidi characters (review M2). Since the second review (L-b): no format character at all
+  (Cf: zero-width spaces and joiners, the word joiner, the soft hyphen too) nor a Hangul filler, and names compare
+  without the characters that show nothing (Default_Ignorable_Code_Point). The other way round, a new member or a new
+  name like a guest's that the admin sees (the guests of links they manage) is refused until they confirm it.
 - **Draw links**: inviting a guest after the names are drawn is a re-draw under the re-draw rules; the draw's rules
   count the guests. The link ends with the draw's day (household time). Revoking a guest before the draw takes them
   out; once drawn they stay in it and only the link stops. Removing the draw revokes its links.

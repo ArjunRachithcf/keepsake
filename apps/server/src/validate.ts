@@ -19,9 +19,13 @@ export function text(b: Body, field: string, max: number, o: { required?: boolea
   return v;
 }
 
-/** Control characters and the bidi overrides and isolates, which make a name read as another. */
-const CONTROL = /[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
-/** A name or label shown to others (a guest's, a link's): text without control or bidi characters. */
+/**
+ * Characters that make a name read as another: control characters, and every format character (Cf: the bidi marks,
+ * overrides and isolates, zero-width spaces and joiners, the word joiner, the soft hyphen, review L-b), and the
+ * Hangul fillers, letters that show nothing.
+ */
+const CONTROL = /[\p{Cc}\p{Cf}\u115F\u1160\u3164\uFFA0]/u;
+/** A name or label shown to others (a guest's, a link's): text without control, format or invisible characters. */
 export function plainText(b: Body, field: string, max: number, o: { required?: boolean } = {}): string | undefined {
   const v = text(b, field, max, o);
   if (v !== undefined && CONTROL.test(v)) return bad(field, '1 to # characters, without control characters', max);

@@ -1,7 +1,7 @@
 // Family (spec §4): the grown-ups and the kids (with how many wishes wait for you); for admins, the household:
 // people, roles, kids' managers, one-time links, the currency, every guest link, and the sheet's one-time import.
 import { useEffect, useId, useState } from 'react';
-import { api, message, type Celebration, type Home, type OneTimeLink, type Passkeys, type Person } from '../api';
+import { api, ApiError, message, type Celebration, type Home, type OneTimeLink, type Passkeys, type Person } from '../api';
 import { roleLabel, useHousehold } from '../household';
 import { Field, Group, Link, Notice, PageHead, Sheet } from '../ui';
 import { LinksList } from '../links';
@@ -45,6 +45,18 @@ export function Family({ onSignOut }: { onSignOut?: () => void }) {
   );
 }
 
+/** Adds someone; a name like a guest's by link is asked about first (their claims would read alike). */
+async function addPerson(name: string, role: Person['role']): Promise<boolean> {
+  try {
+    await api('/people', { method: 'POST', body: { name, role } });
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 409 && e.message.startsWith('a guest by link has that name'))) throw e;
+    if (!confirm(`A guest by link is called ${name} too, so their claims would read alike. Add ${name} anyway?`)) return false;
+    await api('/people', { method: 'POST', body: { name, role, confirmName: true } });
+  }
+  return true;
+}
+
 function ManageHousehold() {
   const { household, me, reload } = useHousehold();
   const id = useId();
@@ -72,7 +84,7 @@ function ManageHousehold() {
       </form>
 
       {standalone && (
-        <form className="stack" onSubmit={(e) => { e.preventDefault(); void run(async () => { await api('/people', { method: 'POST', body: { name: name.trim(), role } }); setName(''); }); }}>
+        <form className="stack" onSubmit={(e) => { e.preventDefault(); void run(async () => { if (await addPerson(name.trim(), role)) setName(''); }); }}>
           <h3 className="sub-title">Add someone</h3>
           <Field label="Name" id={`${id}-name`}><input className="input" id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} maxLength={60} /></Field>
           <Field label="Role" id={`${id}-role`}>

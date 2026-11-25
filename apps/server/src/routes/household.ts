@@ -5,7 +5,7 @@ import type { Config } from '../config';
 import type { Data } from '../data';
 import { Refused } from '../errors';
 import type { Req, Router } from '../router';
-import { ids, object, oneOf, sizes, strings, text } from '../validate';
+import { bool, ids, object, oneOf, sizes, strings, text } from '../validate';
 
 export function householdRoutes(api: Router, cfg: Config, data: Data) {
   const admin = (r: Req) => {
@@ -29,8 +29,8 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
   api.post('/people', (r, res) => {
     admin(r);
     standalone();
-    const b = object(r.body, ['name', 'role']);
-    const id = data.people.add(r, { name: text(b, 'name', 60, { required: true })!, role: oneOf(b, 'role', ROLES, { required: true })! });
+    const b = object(r.body, ['name', 'role', 'confirmName']);
+    const id = data.people.add(r, { name: text(b, 'name', 60, { required: true })!, role: oneOf(b, 'role', ROLES, { required: true })! }, bool(b, 'confirmName') ?? false);
     res.created();
     return data.view(r).person(id);
   });
@@ -40,8 +40,8 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
   api.patch('/people/:personId', (r) => {
     admin(r);
     standalone();
-    const b = object(r.body, ['name', 'role']);
-    data.people.edit(r, r.params.personId, { name: text(b, 'name', 60), role: oneOf(b, 'role', ROLES) });
+    const b = object(r.body, ['name', 'role', 'confirmName']);
+    data.people.edit(r, r.params.personId, { name: text(b, 'name', 60), role: oneOf(b, 'role', ROLES) }, bool(b, 'confirmName') ?? false);
     return data.view(r).person(r.params.personId);
   });
 

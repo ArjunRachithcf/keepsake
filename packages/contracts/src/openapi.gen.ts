@@ -1122,10 +1122,14 @@ export interface components {
         PersonInput: {
             name: string;
             role: components["schemas"]["Role"];
+            /** @description true: the name is like a guest's by link (409 without it), and that is meant */
+            confirmName?: boolean;
         };
         PersonPatch: {
             name?: string;
             role?: components["schemas"]["Role"];
+            /** @description true: the new name is like a guest's by link (409 without it), and that is meant */
+            confirmName?: boolean;
         };
         ManagersInput: {
             managerIds: components["schemas"]["Id"][];

@@ -36,7 +36,7 @@ import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from '
 import { answerQuestion, answerWithWish, ask, declineQuestion, removeQuestion } from './questions/questions';
 import { addIdea, removeIdea } from './ideas/ideas';
 import {
-  createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endGuestSession, getLink, GUEST_COOKIE, guestGiving, linkUrl, reachOf, revokeLink, setGuestName,
+  checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endGuestSession, getLink, GUEST_COOKIE, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
   startGuestSession, type GuestLink,
 } from './guests/guests';
 import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
@@ -157,8 +157,17 @@ export function dataFor(cfg: Config, db: Db) {
       },
     },
     people: {
-      add: (r: Req, i: PersonInput) => { admin(r); return addPerson(db, i).id; },
-      edit: (r: Req, id: string, patch: Partial<PersonInput>) => { admin(r); editPerson(db, id, patch); },
+      /** A name like a guest's the admin sees is refused until confirmed (review L-b). */
+      add: (r: Req, i: PersonInput, confirmed: boolean) => {
+        const by = admin(r);
+        if (!confirmed) checkMemberName(db, by, i.name);
+        return addPerson(db, i).id;
+      },
+      edit: (r: Req, id: string, patch: Partial<PersonInput>, confirmed: boolean) => {
+        const by = admin(r);
+        if (patch.name !== undefined && !confirmed && !sameName(mustGetPerson(db, id).name, patch.name)) checkMemberName(db, by, patch.name);
+        editPerson(db, id, patch);
+      },
       /** Someone in a drawn draw leaves it first, under the re-draw rules (draws/draws.ts), in the same transaction. */
       remove: (r: Req, id: string) => {
         const by = admin(r);

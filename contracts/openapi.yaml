@@ -1454,6 +1454,7 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 60 }
         role: { $ref: '#/components/schemas/Role' }
+        confirmName: { type: boolean, description: 'true: the name is like a guest''s by link (409 without it), and that is meant' }
 
     PersonPatch:
       type: object
@@ -1461,6 +1462,7 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 60 }
         role: { $ref: '#/components/schemas/Role' }
+        confirmName: { type: boolean, description: 'true: the new name is like a guest''s by link (409 without it), and that is meant' }
 
     ManagersInput:
       type: object
