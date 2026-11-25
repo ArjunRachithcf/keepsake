@@ -29,7 +29,7 @@ export function App() {
   const reload = useCallback(async () => setHousehold(await api<Household>('/household')), []);
   useEffect(() => { if (route.tab !== 'guest') api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e))); }, [route.tab]);
   useEffect(() => { if (session?.signedIn) reload().catch((e) => setError(message(e))); }, [session, reload]);
-  useKeepSubscription(Boolean(session?.signedIn) && route.tab !== 'guest');
+  useKeepSubscription(session?.signedIn && route.tab !== 'guest' ? household?.me.id ?? null : null);
 
   const signedIn = (s: AuthSession) => { setSession(s); go('/'); };
   const signOut = async () => {

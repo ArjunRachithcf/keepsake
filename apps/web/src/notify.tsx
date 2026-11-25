@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useId, useState } from 'react';
 import { api, message, type Notice as NoticeT, type Notices, type PushInfo, type Thanks } from './api';
 import { day } from './format';
-import { b64uToBytes, freshSubscription, syncSubscription, type PushServer } from './push';
+import { b64uToBytes, browserOwner, freshSubscription, syncSubscription, type PushServer } from './push';
 import { useHousehold } from './household';
 import { Group, Link, Notice, Switch } from './ui';
 
@@ -47,28 +47,28 @@ export function NoticesGroup({ refresh }: { refresh: number }) {
 }
 
 const server: PushServer = {
-  put: (subscription) => api('/push/subscription', { method: 'PUT', body: subscription }),
+  put: (subscription, sync) => api('/push/subscription', { method: 'PUT', body: sync ? { ...subscription, sync: true } : subscription }),
   drop: (endpoint) => api('/push/unsubscribe', { method: 'POST', body: { endpoint } }),
 };
 
 /** Sends this device's subscription again at the app's start and whenever it is shown (PR #12 review, M2, L7). */
-export function useKeepSubscription(signedIn: boolean): void {
+export function useKeepSubscription(me: string | null): void {
   useEffect(() => {
-    if (!signedIn || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (!me || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
     let key: string | null | undefined;
     const sync = async () => {
       try {
         const reg = await navigator.serviceWorker.getRegistration();
         if (!reg) return;
         key ??= (await api<PushInfo>('/push')).publicKey;
-        await syncSubscription(reg.pushManager, key, server);
+        await syncSubscription(reg.pushManager, key, server, me, browserOwner);
       } catch { /* the next start or showing tries again */ }
     };
     const shown = () => { if (document.visibilityState === 'visible') void sync(); };
     void sync();
     document.addEventListener('visibilitychange', shown);
     return () => document.removeEventListener('visibilitychange', shown);
-  }, [signedIn]);
+  }, [me]);
 }
 
 /** This device's push subscription, if the browser has one for Keepsake. */
@@ -84,18 +84,20 @@ export async function unsubscribeThisDevice(): Promise<void> {
   if (!sub) return;
   await api('/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }).catch(() => undefined);
   await sub.unsubscribe().catch(() => undefined);
+  browserOwner.set(null);
 }
 
 /** "Notifications on this device": a push says only "Something new in Keepsake", never what or who. */
 export function PushSwitch() {
+  const { me } = useHousehold();
   const [info, setInfo] = useState<PushInfo | null>(null);
   const [on, setOn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const supported = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   useEffect(() => {
     api<PushInfo>('/push').then(setInfo, () => setInfo(null));
-    void currentSubscription().then((s) => setOn(Boolean(s)), () => setOn(false));
-  }, []);
+    void currentSubscription().then((s) => setOn(Boolean(s) && browserOwner.get() === me.id), () => setOn(false));
+  }, [me.id]);
   if (!info) return null;
   const set = async (want: boolean) => {
     setError(null);
@@ -105,6 +107,7 @@ export function PushSwitch() {
       const reg = await navigator.serviceWorker.ready;
       const sub = await freshSubscription(reg.pushManager, b64uToBytes(info.publicKey!), server);
       await server.put(sub.toJSON());
+      browserOwner.set(me.id);
       setOn(true);
     } catch (e) { setError(message(e)); }
   };

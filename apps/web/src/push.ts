@@ -11,8 +11,11 @@ const sameKey = (a: ArrayBuffer | null | undefined, b: Uint8Array): boolean => {
 };
 
 export interface PushServer {
-  /** PUT /api/push/subscription: keeps it for this person and confirms it (the server drops one unconfirmed for 30 days). */
-  put: (subscription: PushSubscriptionJSON) => Promise<unknown>;
+  /**
+   * PUT /api/push/subscription: keeps it for this person and confirms it (the server drops one unconfirmed for 30
+   * days). `sync`: the app's own re-sending, which never moves a device from another person (only the switch does).
+   */
+  put: (subscription: PushSubscriptionJSON, sync?: boolean) => Promise<unknown>;
   /** POST /api/push/unsubscribe. */
   drop: (endpoint: string) => Promise<unknown>;
 }
@@ -28,14 +31,24 @@ export async function freshSubscription(pm: PushManager, key: Uint8Array, server
   return pm.subscribe({ userVisibleOnly: true, applicationServerKey: key as BufferSource });
 }
 
+/** Which person turned notifications on in this browser (PR #12 second review, N-M2): the only one it re-sends for. */
+export interface Owner { get: () => string | null; set: (personId: string | null) => void }
+const OWNER_KEY = 'keepsake.push.person';
+export const browserOwner: Owner = {
+  get: () => { try { return localStorage.getItem(OWNER_KEY); } catch { return null; } },
+  set: (p) => { try { if (p) localStorage.setItem(OWNER_KEY, p); else localStorage.removeItem(OWNER_KEY); } catch { /* nothing kept: no re-sending */ } },
+};
+
 /**
  * At every start of the app and whenever it is shown again (M2): the subscription this device already has goes to the
  * server again, so a session that ended (idle, 30 days) or a server that lost it gets it back, and its confirmation
- * stays fresh. A device without a subscription is left alone: only the switch asks for notifications.
+ * stays fresh. A device without a subscription, or one another person turned on, is left alone: only the switch asks
+ * for notifications, and only the switch moves a device from one person to another.
  */
-export async function syncSubscription(pm: PushManager, publicKey: string | null | undefined, server: PushServer): Promise<boolean> {
-  if (!publicKey || !(await pm.getSubscription())) return false;
+export async function syncSubscription(pm: PushManager, publicKey: string | null | undefined, server: PushServer, me: string, owner: Owner): Promise<boolean> {
+  // Someone else turned them on in this browser (a family computer): theirs stay theirs; the switch shows off for me.
+  if (!publicKey || owner.get() !== me || !(await pm.getSubscription())) return false;
   const sub = await freshSubscription(pm, b64uToBytes(publicKey), server);
-  await server.put(sub.toJSON());
+  await server.put(sub.toJSON(), true);
   return true;
 }
