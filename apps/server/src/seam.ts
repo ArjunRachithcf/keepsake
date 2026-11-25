@@ -5,13 +5,14 @@
 //   it is refused with a 500;
 // - 3xx: refused (Keepsake's API never redirects);
 // - 400 and above: `{ error }` only, the message from the fixed catalogue (src/errors.ts);
-// - headers: only the names below, and no cookie but the session's.
+// - headers: only the names below, and no cookie but the session's and the guest session's.
 // Both hooks sit on each route (installSeam's onRoute), so they run after every scope-level hook.
 // At start-up it refuses any /api route not made by the router (src/router.ts), and any route-level hook, serializer or
 // error handler. This guards against mistakes in our own code, not against deliberately hostile code in the server:
 // test/architecture.test.ts's source bans (no Fastify, raw request, socket or reply in a route file) are the backstop.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { SESSION_COOKIE } from './auth/sessions';
+import { GUEST_COOKIE } from './guests/guests';
 import { isCatalogued, Refused } from './errors';
 import { isRouted } from './router';
 import { SECURITY_HEADERS } from './security-headers';
@@ -47,7 +48,7 @@ function wrong(req: FastifyRequest, reply: FastifyReply, payload: unknown): stri
   const extra = Object.keys(reply.getHeaders()).filter((h) => !API_HEADERS.has(h.toLowerCase()));
   if (extra.length) return `headers ${extra.join(', ')}`;
   const cookies = [reply.getHeader('set-cookie') ?? []].flat().map(String);
-  if (cookies.some((c) => !c.startsWith(`${SESSION_COOKIE}=`))) return 'a cookie other than the session';
+  if (cookies.some((c) => !c.startsWith(`${SESSION_COOKIE}=`) && !c.startsWith(`${GUEST_COOKIE}=`))) return 'a cookie other than the sessions';
   if (status >= 300 && status < 400) return 'a redirect';
   if (empty(payload)) return null;
   if (!isJson(reply)) return 'not JSON';

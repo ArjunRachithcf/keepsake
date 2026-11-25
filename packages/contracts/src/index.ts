@@ -50,3 +50,16 @@ export const ROLES = ['admin', 'adult', 'kid'] as const satisfies readonly Role[
 export const CLAIM_STATES = ['claimed', 'bought', 'given'] as const satisfies readonly ClaimState[];
 export const GROUP_STATES = ['open', 'bought', 'given'] as const satisfies readonly GroupState[];
 export const POSTERS = ['pine', 'berry', 'night', 'gold'] as const satisfies readonly Poster[];
+
+// M4
+export type AskedQuestion = S['AskedQuestion'];
+export type QuestionToAnswer = S['QuestionToAnswer'];
+export type WishRef = S['WishRef'];
+export type Idea = S['Idea'];
+export type GuestLink = S['GuestLink'];
+export type GuestLinks = S['GuestLinks'];
+export type GuestLinkMade = S['GuestLinkMade'];
+export type GuestPage = S['GuestPage'];
+export type ImportPlan = S['ImportPlan'];
+export type ImportDone = S['ImportDone'];
+export type AnswerWishInput = S['AnswerWishInput'];

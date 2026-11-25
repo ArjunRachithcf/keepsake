@@ -32,7 +32,16 @@ import { asDb } from './db/open';
 import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
 import { isId } from './validate';
-import { linkAnswer, publicViewFor, viewFor, type ListFor } from './view/view';
+import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from './view/view';
+import { answerQuestion, answerWithWish, ask, declineQuestion, removeQuestion } from './questions/questions';
+import { addIdea, removeIdea } from './ideas/ideas';
+import {
+  approveLink, createShareLink, drawLinkWriter, endGuestSession, getLink, GUEST_COOKIE, GUEST_HOURS, guestGiving, linkUrl, reachOf, revokeLink, setGuestName,
+  startGuestSession, type GuestLink,
+} from './guests/guests';
+import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
+import { claimFor, setClaimStateFor, unclaimFor } from './gifts/gifts';
+import { applyImport, dryRun, type ImportInput } from './import/import';
 import { addWish, approveWish, declineWish, editWish, orderWishes, removeWish, type WishInput } from './wishes/wishes';
 
 export type { CelebrationInput } from './celebrations/celebrations';
@@ -41,6 +50,8 @@ export type { ClaimState, GroupState } from './gifts/gifts';
 export type { DrawInput } from './draws/draws';
 export { MAX_EXCLUSIONS } from './draws/draws';
 export { MAX_WISHES } from './wishes/wishes';
+export type { ImportInput } from './import/import';
+export { MAX_CSV } from './import/import';
 export { RESET_FRESH_MINUTES } from './auth/passkeys';
 
 export function dataFor(cfg: Config, db: Db) {
@@ -68,6 +79,14 @@ export function dataFor(cfg: Config, db: Db) {
     const s = fastifyRequestOf(r).caller?.session;
     if (!s || !isFresh(s, new Date(), minutes)) throw new Refused(403, 'sign in again to do this');
   };
+
+  /** The guest behind a guest route's request (the auth hook has refused requests without one). */
+  const guestOf = (r: Req): GuestLink => {
+    const g = fastifyRequestOf(r).guest;
+    if (!g) throw new Refused(401, 'this link is unknown, used or expired');
+    return g;
+  };
+  const viewOf = (r: Req) => viewFor(db, cfg, me(r), fastifyRequestOf(r));
 
   return {
     /** The view layer for the request's person. One-off celebrations whose day has passed let go of their wishes first (ADR 0007). */
@@ -179,6 +198,70 @@ export function dataFor(cfg: Config, db: Db) {
       remove: (r: Req, celebrationId: string) => removeDraw(db, me(r), celebrationId, day()),
       run: (r: Req, celebrationId: string) => runDraw(db, me(r), celebrationId, day(), keyring(cfg)),
       open: (r: Req, celebrationId: string) => openDraw(db, me(r), celebrationId, new Date(), keyring(cfg)),
+    },
+    /** Anonymous questions (questions/questions.ts): each returns an id for the view layer, never the asker. */
+    questions: {
+      ask: (r: Req, personId: string, text: string) => { const p = me(r); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
+      answer: (r: Req, id: string, text: string) => { answerQuestion(db, me(r), id, text); },
+      decline: (r: Req, id: string) => { declineQuestion(db, me(r), id); },
+      withWish: (r: Req, id: string, i: WishInput) => changed(answerWithWish(db, me(r), id, i)),
+      remove: (r: Req, id: string) => removeQuestion(db, me(r), id),
+    },
+    ideas: {
+      add: (r: Req, personId: string, text: string) => addIdea(db, me(r), personId, text),
+      remove: (r: Req, id: string) => { removeIdea(db, me(r), id); },
+    },
+    /** Guest links (guests/guests.ts): a new link's address is built here and shown once. */
+    links: {
+      share: (r: Req, personId: string, label: string) => {
+        const made = createShareLink(db, me(r), personId, label);
+        return viewOf(r).linkMade(made.id, linkUrl(cfg, made.token));
+      },
+      /** A personal draw link: the guest joins the draw in the same transaction (a re-draw once drawn). */
+      invite: (r: Req, celebrationId: string, name: string) => {
+        const out: { id?: string; token?: string } = {};
+        addGuest(db, me(r), celebrationId, drawLinkWriter(me(r), celebrationId, name, out), day(), keyring(cfg));
+        changed(0);
+        return viewOf(r).linkMade(out.id!, linkUrl(cfg, out.token!));
+      },
+      revoke: (r: Req, id: string) => { revokeLink(db, me(r), id, (linkId) => guestLeaves(db, linkId)); changed(0); },
+      approve: (r: Req, id: string) => { approveLink(db, me(r), id); return id; },
+    },
+    /** The sheet import (import/import.ts): admins only, checked there too. */
+    imports: {
+      dryRun: (r: Req, i: ImportInput) => viewOf(r).importPlan(dryRun(db, admin(r), i)),
+      apply: (r: Req, i: ImportInput) => viewOf(r).importDone(changed(applyImport(db, admin(r), i))),
+    },
+    /** What a guest does (ADR 0009), as the request's guest: only on what their link reaches. */
+    guest: {
+      /** Read again: a change in this request (their name) shows in its answer. */
+      view: (r: Req) => guestViewFor(db, cfg, getLink(db, guestOf(r).id) ?? guestOf(r), fastifyRequestOf(r)),
+      /** A link's token for a session: the cookie's token, its age, and the page for that guest. */
+      start: (r: Req, token: unknown) => {
+        const s = startGuestSession(db, token, day());
+        return { cookie: s.token, maxAge: GUEST_HOURS * 3600, page: guestViewFor(db, cfg, s.link, fastifyRequestOf(r)).page() };
+      },
+      signOut: (r: Req) => endGuestSession(db, fastifyRequestOf(r).cookies?.[GUEST_COOKIE]),
+      setName: (r: Req, name: string) => { setGuestName(db, guestOf(r), name); },
+      openDraw: (r: Req) => openDrawAsGuest(db, guestOf(r).id, new Date(), keyring(cfg)),
+      claim: (r: Req, wishId: string, quantity: number) => {
+        const g = guestOf(r);
+        return changed(claimFor(db, guestGiving(db, g, keyring(cfg), wishId), { guestId: g.id }, quantity).id);
+      },
+      setState: (r: Req, wishId: string, state: ClaimState) => {
+        const g = guestOf(r);
+        return changed(setClaimStateFor(db, guestGiving(db, g, keyring(cfg), wishId), { guestId: g.id }, state, day()).id);
+      },
+      unclaim: (r: Req, wishId: string) => {
+        const g = guestOf(r);
+        changed(unclaimFor(db, guestGiving(db, g, keyring(cfg), wishId), { guestId: g.id }));
+      },
+      ask: (r: Req, text: string) => {
+        const g = guestOf(r);
+        const reach = reachOf(db, g, keyring(cfg));
+        if (!reach) throw new Refused(409, 'open your draw first: then you can ask your person');
+        return ask(db, cfg.timezone, { guestId: g.id }, reach.personId, text);
+      },
     },
     celebrations: {
       add: (r: Req, i: CelebrationInput) => changed(addCelebration(db, me(r), i).id),

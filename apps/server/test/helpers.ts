@@ -7,6 +7,7 @@ import addFormats from 'ajv-formats';
 import { parse } from 'yaml';
 import { expect } from 'vitest';
 import { createSession } from '../src/auth/sessions';
+import { hashToken } from '../src/auth/tokens';
 import type { WebAuthn } from '../src/auth/webauthn';
 import { loadConfig } from '../src/config';
 import { openDb, type Db } from '../src/db/open';
@@ -14,6 +15,9 @@ import * as t from '../src/db/schema';
 import { nextDate } from '../src/celebrations/dates';
 
 export const ORIGIN = 'http://localhost:8080';
+/** A guest link's token in the tests (made up; 43 characters like every token). */
+export const GUEST_TOKEN = 'G'.repeat(43);
+
 /** The tests' sealing key (made up for them; never a real one). */
 export const TEST_KEY = Buffer.alloc(32, 7).toString('base64');
 export const standalone = (env: NodeJS.ProcessEnv = {}) => loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: '/nonexistent', KEEPSAKE_SEALING_KEY: TEST_KEY, ...env });
@@ -79,6 +83,12 @@ const PARAMS: Record<string, Record<string, string>> = {
   // withDraws(): Christmas has a draw (Alex hosts it; Alex, Sam, Robin, Mia); the cousins' exchange has none yet
   getDraw: { celebrationId: 'c_xmas' }, createDraw: { celebrationId: 'c_cousins' }, editDraw: { celebrationId: 'c_xmas' },
   removeDraw: { celebrationId: 'c_cousins' }, runDraw: { celebrationId: 'c_xmas' }, openDraw: { celebrationId: 'c_xmas' },
+  // withM4(): questions to Alex (delivered), one to Robin to remove, an idea for Sam, links, a guest of Sam's
+  askQuestion: { personId: 'p_sam' }, removeQuestion: { questionId: 'q_robin' }, answerQuestion: { questionId: 'q_answer' },
+  declineQuestion: { questionId: 'q_decline' }, answerWithWish: { questionId: 'q_wish' },
+  addIdea: { personId: 'p_sam' }, removeIdea: { ideaId: 'i_sam' },
+  revokeLink: { linkId: 'l_alex' }, approveLink: { linkId: 'l_leo' }, shareLink: { personId: 'p_alex' }, inviteGuest: { celebrationId: 'c_xmas' },
+  guestClaim: { wishId: 'w_sam_book' }, guestEditClaim: { wishId: 'w_sam_book' }, guestUnclaim: { wishId: 'w_sam_book' },
 };
 
 /** Bodies that name something real where a bare sample would be refused. */
@@ -100,6 +110,19 @@ const BODIES: Record<string, unknown> = {
   chipIn: { amountMinor: 2500 },
   createDraw: { people: ['p_alex', 'p_sam', 'p_robin'], budgetMinor: null },
   editDraw: { drawTogetherAt: null },
+  askQuestion: { text: 'Leather or wool?' },
+  answerQuestion: { text: 'Wool, please' },
+  answerWithWish: { name: 'A reading lamp', celebrationId: null },
+  addIdea: { text: 'Warm gloves' },
+  shareLink: { label: 'Godmother' },
+  inviteGuest: { name: 'Cousin Ada' },
+  importDryRun: { csv: 'Person,Item,Occasion\nAlex,A kite,Christmas\n' },
+  importSheet: { csv: 'Person,Item,Occasion\nAlex,A kite,Christmas\n' },
+  startGuest: { token: GUEST_TOKEN },
+  setGuestName: { name: 'Ada' },
+  guestClaim: { quantity: 1 },
+  guestEditClaim: { state: 'bought' },
+  guestAsk: { text: 'Which colour?' },
 };
 
 export function request(o: SpecOp) {
@@ -193,6 +216,22 @@ export function withDraws(db: Db): Db {
   const year = Number(nextDate('2024-12-24', 'yearly', inDays(0)).slice(0, 4));
   db.insert(t.draw).values({ id: 'd_xmas', celebrationId: 'c_xmas', year, rulesVersion: 1, kidsDraw: 1, createdBy: 'p_alex', createdAt: NOW, updatedAt: NOW }).run();
   for (const p of ['alex', 'sam', 'robin', 'mia']) db.insert(t.drawParticipant).values({ id: `dp_${p}`, drawId: 'd_xmas', kind: 'person', personId: `p_${p}`, createdAt: NOW }).run();
+  return db;
+}
+
+const PAST = '2026-01-01T07:00:00.000Z';
+/**
+ * M4's things for the contract tests: questions to Alex (delivered: to answer, decline, answer with a wish), one to
+ * Robin (Alex removes it as an admin), an idea for Sam, Alex's share link (revoked), Leo's own one waiting for a parent
+ * (the admins, as he has none set), and Sam's share link for a guest who gave the name Ada (GUEST_TOKEN).
+ */
+export function withM4(db: Db): Db {
+  const q = (id: string, personId: string) => ({ id, personId, askerId: 'p_sam', text: 'Which size?', askedAt: PAST, deliverAt: PAST, state: 'open' as const });
+  db.insert(t.question).values([q('q_answer', 'p_alex'), q('q_decline', 'p_alex'), q('q_wish', 'p_alex'), { ...q('q_robin', 'p_robin'), askerId: 'p_mia' }]).run();
+  db.insert(t.idea).values({ id: 'i_sam', personId: 'p_sam', authorId: 'p_alex', text: 'A pasta machine', createdAt: NOW }).run();
+  const link = (id: string, personId: string, approved: boolean, token: string, guestName: string | null = null) =>
+    ({ id, kind: 'share' as const, personId, label: 'Friends', guestName, tokenHash: hashToken(token), createdBy: personId, approvedAt: approved ? NOW : null, createdAt: NOW });
+  db.insert(t.guestLink).values([link('l_alex', 'p_alex', true, 'a'.repeat(43)), link('l_leo', 'p_leo', false, 'b'.repeat(43)), link('l_sam', 'p_sam', true, GUEST_TOKEN, 'Ada')]).run();
   return db;
 }
 

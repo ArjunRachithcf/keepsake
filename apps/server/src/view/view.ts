@@ -28,6 +28,12 @@ import {
 } from '../draws/draws';
 import { keyring } from '../draws/sealed';
 import { Refused } from '../errors';
+import * as t from '../db/schema';
+import { answersFor, getQuestion, givesTo, isAsker, isDelivered, questionsFor, seesQuestion, type Question } from '../questions/questions';
+import { getIdea, ideasFor, seesIdeas } from '../ideas/ideas';
+import { approvesLink, getLink, lastDayOf, linksFor, managesLink, reachOf, reaches, type GuestLink } from '../guests/guests';
+import { guestPlace } from '../draws/draws';
+import type { Plan } from '../import/import';
 
 /** Each answer with the request it was built for (the seam lets it out on that request only). */
 const VIEWED = new WeakMap<object, object>();
@@ -114,6 +120,25 @@ export function publicViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 's
   };
 }
 
+/** The names guests gave (or their link's label), by link id. */
+function guestNamesOf(db: Db): Map<string, string> {
+  return new Map(db.select({ id: t.guestLink.id, label: t.guestLink.label, name: t.guestLink.guestName }).from(t.guestLink).all().map((g) => [g.id, g.name ?? g.label]));
+}
+/** A question as a giver sees it (ADR 0008): never who asked; `mine` says only whether the viewer did. */
+function askedOf(q: Question, mine: boolean, now: Date, tz: string, wishName: (id: string) => string | null): api.AskedQuestion {
+  const delivered = isDelivered(q, now);
+  const name = q.answerWishId ? wishName(q.answerWishId) : null;
+  return {
+    id: q.id, text: q.text, on: today(tz, new Date(q.deliverAt)),
+    state: delivered ? q.state : 'waiting',
+    answer: q.state === 'answered' ? q.answer : null,
+    wish: q.answerWishId && name ? { id: q.answerWishId, name } : null,
+    mine, arrivesAt: mine && !delivered ? q.deliverAt : null,
+  };
+}
+/** Newest morning first; within a morning by id (random, so the order says nothing about who asked or when). */
+const byMorning = (a: Question, b: Question) => b.deliverAt.localeCompare(a.deliverAt) || a.id.localeCompare(b.id);
+
 /** A one-time link, from what createInvite returned (data.ts hands it over; routes never get one to pass). */
 export const linkAnswer = (owner: object, i: { url: string; expiresAt: Date }): Viewed<api.OneTimeLink> => mark(owner, { url: str(i.url), expiresAt: i.expiresAt.toISOString() });
 
@@ -142,9 +167,12 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
    * The counts stay, so nobody buys twice. This depends on who is in which draw, never on who drew whom.
    */
   const live = lazy(() => unrevealedDraws(db, now));
-  const unnamed = (w: Wish, giverId: string | null, at: string) => giverId !== null && giverId !== viewer.id
-    && live().some((d) => d.people.has(giverId) && d.people.has(w.personId) && dayOfInstant(cfg.timezone, at) <= d.on);
-  const giverRef = (w: Wish, giverId: string | null, at: string) => (unnamed(w, giverId, at) ? null : ref(giverId));
+  /** `key`: a person's id, or `g:<link id>` for a guest (gifts/gifts.ts giverKey). The same rule holds for ideas. */
+  const unnamed = (personId: string, key: string | null, at: string) => key !== null && key !== viewer.id
+    && live().some((d) => d.people.has(key) && d.people.has(personId) && dayOfInstant(cfg.timezone, at) <= d.on);
+  const giverRef = (w: Wish, giverId: string | null, at: string) => (unnamed(w.personId, giverId, at) ? null : ref(giverId));
+  const guestNames = lazy(() => guestNamesOf(db));
+  const guestRef = (w: Wish, guestId: string | null, at: string) => (!guestId || unnamed(w.personId, `g:${guestId}`, at) ? null : guestNames().get(guestId) ?? null);
   /** What the viewer may see of a wish's gifts: everything for a giver (others' shares as names only), else nothing. */
   const gift = (w: Wish, g: Gifts): api.Gift => {
     const byTime = <T extends { createdAt: string; id: string }>(xs: T[]) => [...xs].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
@@ -157,7 +185,9 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       claimed,
       left: g.group ? 0 : Math.max(0, w.quantity - claimed),
       given: fullyGiven(w, g),
-      claims: byTime(g.claims).map((c) => ({ giver: giverRef(w, c.giverId, c.createdAt), quantity: c.quantity, state: c.state, mine: c.giverId === viewer.id })),
+      claims: byTime(g.claims).map((c) => ({
+        giver: giverRef(w, c.giverId, c.createdAt), guest: guestRef(w, c.guestId, c.createdAt), quantity: c.quantity, state: c.state, mine: c.giverId === viewer.id,
+      })),
       group: g.group ? {
         organizer: giverRef(w, g.group.organizerId, g.group.createdAt), targetMinor: g.group.targetMinor, state: g.group.state,
         totalMinor: g.shares.reduce((n, x) => n + x.amountMinor, 0),
@@ -253,6 +283,25 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
     pleaseNo: json(r.pleaseNoJson), pleaseNoUpdatedAt: r.pleaseNoUpdatedAt,
   });
 
+  // Questions (ADR 0008): what the viewer may see, the asker never (only `mine`, about the viewer themselves).
+  const wishName = (id: string) => { const w = getWish(db, id); return w && canSee(db, viewer, w) ? w.name : null; };
+  const asked = (q: Question) => askedOf(q, isAsker(q, { personId: viewer.id }), instant, cfg.timezone, wishName);
+  const questionsOf = (personId: string) => questionsFor(db, [personId]).filter((q) => seesQuestion(db, viewer, q, instant)).sort(byMorning).map(asked);
+  // Ideas: only for a viewer who `seesIdeas`; for anyone else none is read. Named as gifts are (review H1).
+  const ideasOf = (personId: string): api.Idea[] => ideasFor(db, [personId])
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
+    .map((i) => ({ id: i.id, text: i.text, by: unnamed(personId, i.authorId, i.createdAt) ? null : ref(i.authorId), mine: i.authorId === viewer.id, createdAt: i.createdAt }));
+  const link = (l: GuestLink): api.GuestLink => ({
+    id: l.id, kind: l.kind, label: l.label, guestName: l.guestName,
+    person: l.personId ? ref(l.personId) : null, celebration: celebrationRef(l.celebrationId),
+    approved: l.approvedAt !== null, lastDay: lastDayOf(db, l), createdAt: l.createdAt, canApprove: approvesLink(db, viewer, l),
+  });
+  const mustLink = (id: string) => {
+    const l = getLink(db, id);
+    if (!l || l.revokedAt || !(managesLink(db, viewer, l) || approvesLink(db, viewer, l))) throw new Refused(404, 'no such link');
+    return l;
+  };
+
   // Every helper builds its own answer from ids, for this viewer: none takes a person, a row or a ready object.
   return {
     signedIn: (): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),
@@ -287,6 +336,13 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
           return (row ? seen([row]) : []).filter((s) => s.gift)
             .map((s) => ({ wish: wish(s), celebration: celebrationRef(x.celebrationId), on: x.on, named: x.named }));
         }),
+        // Delivered and waiting for an answer, for the viewer and the kids they are a parent of; kids answer none.
+        questions: viewer.role === 'kid' ? [] : (() => {
+          const mine = [...people().values()].filter((p) => answersFor(db, viewer, p));
+          const byId = new Map(mine.map((p) => [p.id, p]));
+          return questionsFor(db, mine.map((p) => p.id)).filter((q) => q.state === 'open' && isDelivered(q, instant)).sort(byMorning)
+            .map((q) => ({ id: q.id, text: q.text, on: today(cfg.timezone, new Date(q.deliverAt)), for: { id: q.personId, name: byId.get(q.personId)!.name } }));
+        })(),
       });
     },
     personPage: (id: string, f: ListFor): Viewed<api.PersonPage> => {
@@ -297,6 +353,9 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         celebrations: upcoming(celebrationsOf(p.id)),
         wishes: listOf(p.id, f),
         keeps: keeps(db, viewer, p),
+        // Only for someone giving to them: absent (never read) for the person and for kids.
+        ...(givesTo(viewer, p.id) ? { questions: questionsOf(p.id) } : {}),
+        ...(seesIdeas(viewer, p.id) ? { ideas: ideasOf(p.id) } : {}),
       });
     },
     celebrations: (): Viewed<api.Celebrations> => {
@@ -318,7 +377,12 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       if (!d) throw new Refused(404, 'this celebration has no draw');
       const ps = participantsOf(db, [d.id]);
       const byId = new Map(ps.map((p) => [p.id, p]));
-      const pref = (pid: string) => { const p = byId.get(pid); return p?.personId ? ref(p.personId) : null; };
+      // A guest (M4) by their name, with their participant id: they have no page in the household.
+      const pref = (pid: string) => {
+        const p = byId.get(pid);
+        if (p?.kind === 'guest' && p.guestId) { const name = guestNames().get(p.guestId); return name ? { id: p.id, name } : null; }
+        return p?.personId ? ref(p.personId) : null;
+      };
       const manages = managesDraw(viewer, c, hostRoleOf(db, c));
       const mine = ps.find(isMine);
       const revealed = revealedNow(db, c, d, now);
@@ -333,6 +397,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         budgetMinor: d.budgetMinor, kidsDraw: d.kidsDraw === 1, notLastYear: d.notLastYear === 1,
         drawTogetherAt: d.drawTogetherAt, revealOn: d.revealOn,
         people: ps.filter((p) => p.kind === 'person').map((p) => ref(p.personId!)).filter((r): r is api.PersonRef => r !== null).sort(byName),
+        guests: ps.filter((p) => p.kind === 'guest' && p.guestId).map((p) => guestNames().get(p.guestId!) ?? '').filter(Boolean).sort((a, b) => a.localeCompare(b)),
         exclusions: manages
           ? exclusionsOf(db, d.id).map((e) => [pref(e.a), pref(e.b)].sort(byName)).filter((x): x is [api.PersonRef, api.PersonRef] => x.every(Boolean))
             .sort((x, y) => byName(x[0], y[0]) || byName(x[1], y[1]))
@@ -344,11 +409,41 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         canRedraw: manages && canRedraw(db, viewer, c, d, now),
         mine: mine ? {
           opened: mine.openedAt !== null, canOpen: mine.openedAt === null && opensNow(d, instant), receiver: receiver ? pref(receiver) : null,
+          receiverGuest: receiver ? byId.get(receiver)?.kind === 'guest' : false,
           unreadable: own === 'unreadable',
         } : null,
         pairs,
       });
     },
+    /** A question the viewer asked or may see (404 otherwise). */
+    question: (id: string): Viewed<api.AskedQuestion> => {
+      const q = getQuestion(db, id);
+      if (!q || !seesQuestion(db, viewer, q, instant)) throw new Refused(404, 'no such question');
+      return answer(asked(q));
+    },
+    idea: (id: string): Viewed<api.Idea> => {
+      const i = getIdea(db, id);
+      if (!i || !seesIdeas(viewer, i.personId)) throw new Refused(404, 'no such idea');
+      return answer(ideasOf(i.personId).find((x) => x.id === id)!);
+    },
+    links: (): Viewed<api.GuestLinks> => {
+      const all = linksFor(db, viewer);
+      // A kid's own links waiting for a parent: the kid sees them too (they made them).
+      const waiting = db.select().from(t.guestLink).all().filter((l) => !l.revokedAt && !all.some((x) => x.id === l.id) && approvesLink(db, viewer, l));
+      return answer({ links: [...all, ...waiting].map(link) });
+    },
+    link: (id: string): Viewed<api.GuestLink> => answer(link(mustLink(id))),
+    /** A link just made, with its address: shown this once (data.ts hands the token's url over, never a route). */
+    linkMade: (id: string, url: string): Viewed<api.GuestLinkMade> => answer({ link: link(mustLink(id)), url: str(url) }),
+    importPlan: (p: Plan): Viewed<api.ImportPlan> => answer({
+      rows: p.rows, wishes: p.wishes, claims: p.claims, ready: p.ready,
+      people: p.people.map((x) => ({ name: x.name, personId: x.personId, status: x.status, rows: x.rows })),
+      occasions: p.occasions.map((x) => ({ name: x.name, celebrationId: x.celebrationId, status: x.status, rows: x.rows })),
+      buyers: p.buyers.map((x) => ({ name: x.name, personId: x.personId, rows: x.rows })),
+      skipped: p.skipped.map((x) => ({ row: x.row, reason: x.reason })),
+      warnings: p.warnings.map((x) => ({ row: x.row, kind: x.kind })),
+    }),
+    importDone: (d: { wishes: number; claims: number; skipped: number }): Viewed<api.ImportDone> => answer({ wishes: d.wishes, claims: d.claims, skipped: d.skipped }),
     celebrationPage: (id: string): Viewed<api.CelebrationPage> => {
       const view = celebration(mustGetCelebration(db, id));
       return answer({
@@ -362,3 +457,92 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
 }
 
 export type View = ReturnType<typeof viewFor>;
+
+/**
+ * What a guest sees (ADR 0009): only what their link reaches (one person's listed wishes; a draw guest's own person's
+ * list for the celebration, once opened), as a giver sees it but with nobody's name on a gift (their own claims marked
+ * mine), questions without askers (theirs marked mine), no ideas, no profile, nothing else of the household.
+ */
+export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealingKey' | 'sealingKeyPrevious'>, l: GuestLink, owner: object) {
+  const answer = marker(owner);
+  const instant = new Date();
+  const now = today(cfg.timezone, instant);
+  const ring = keyring(cfg);
+  let cal: ReturnType<typeof calendarOf> | undefined;
+  const calendar = () => (cal ??= calendarOf(db));
+  const reachNow = () => reachOf(db, l, ring);
+
+  const gift = (w: Wish, g: Gifts): api.Gift => {
+    const byTime = <T extends { createdAt: string; id: string }>(xs: T[]) => [...xs].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    const claimed = g.claims.reduce((n, c) => n + c.quantity, 0);
+    const mine = g.group ? undefined : g.claims.find((c) => c.guestId === l.id);
+    return {
+      claimed, left: g.group ? 0 : Math.max(0, w.quantity - claimed), given: fullyGiven(w, g),
+      claims: byTime(g.claims).map((c) => ({ giver: null, guest: null, quantity: c.quantity, state: c.state, mine: c.guestId === l.id })),
+      group: g.group ? {
+        organizer: null, targetMinor: g.group.targetMinor, state: g.group.state, totalMinor: g.shares.reduce((n, x) => n + x.amountMinor, 0),
+        givers: byTime(g.shares).map(() => ({ giver: null, mine: false })), myShareMinor: null, canManage: false,
+      } : null,
+      mine: mine ? (() => {
+        const occ = occasionOf(w, mine.givenOn ?? now, calendar());
+        if (mine.occasionOn && (!occ.date || mine.occasionOn > occ.date)) occ.date = mine.occasionOn;
+        return { state: mine.state, named: false, over: isOver(w, mine, calendar(), now), celebrationId: occ.celebrationId, forDate: occ.date };
+      })() : null,
+    };
+  };
+  const wishOf = (w: Wish, g: Gifts): api.Wish => ({
+    id: w.id, personId: w.personId, celebrationId: w.celebrationId, name: w.name, link: w.link, priceMinor: w.priceMinor,
+    quantity: w.quantity, note: w.note, mostWanted: w.mostWanted === 1, state: w.state, addedBy: null,
+    createdAt: w.createdAt, updatedAt: w.updatedAt, canEdit: false, canApprove: false, gift: gift(w, g),
+  });
+  const wishes = (reach: ReturnType<typeof reachNow>) => {
+    const rows = reach ? wishesOf(db, [reach.personId]).filter((w) => reaches(reach, w)) : [];
+    const gifts = giftsOf(db, rows.map((w) => w.id));
+    return rows.map((w) => ({ w, g: gifts.get(w.id) ?? NO_GIFTS })).filter(({ w, g }) => !fullyGiven(w, g))
+      .sort((a, b) => a.w.position - b.w.position || a.w.createdAt.localeCompare(b.w.createdAt)).map(({ w, g }) => wishOf(w, g));
+  };
+  const questions = (reach: ReturnType<typeof reachNow>) => {
+    if (!reach) return [];
+    const wishName = (id: string) => { const w = getWish(db, id); return w && reaches(reach, w) ? w.name : null; };
+    return questionsFor(db, [reach.personId])
+      .filter((q) => isAsker(q, { guestId: l.id }) || (isDelivered(q, instant) && (q.state === 'open' || q.state === 'answered')))
+      .sort(byMorning).map((q) => askedOf(q, isAsker(q, { guestId: l.id }), instant, cfg.timezone, wishName));
+  };
+  const one = (q: Question | undefined, reach: ReturnType<typeof reachNow>) => {
+    const found = q && questions(reach).find((x) => x.id === q.id);
+    if (!found) throw new Refused(404, 'no such question');
+    return found;
+  };
+
+  return {
+    page: (): Viewed<api.GuestPage> => {
+      const reach = reachNow();
+      const place = l.kind === 'draw' ? guestPlace(db, l.id) : null;
+      const ps = place ? participantsOf(db, [place.d.id]) : [];
+      const own = place?.me.openedAt && place.d.drawnAt ? openOwn(db, ring, place.d, place.me) : null;
+      const receiver = own && own !== 'unreadable' ? ps.find((p) => p.id === own) : undefined;
+      const person = reach ? mustGetPerson(db, reach.personId) : null;
+      return answer({
+        kind: l.kind, name: l.guestName, currency: currency(db),
+        person: person ? { id: person.id, name: person.name } : null,
+        celebration: place ? { id: place.c.id, name: place.c.name, date: drawDay(place.c, place.d), place: place.c.place, poster: place.c.poster } : null,
+        draw: place ? {
+          drawn: place.d.drawnAt !== null, opened: place.me.openedAt !== null, canOpen: place.me.openedAt === null && opensNow(place.d, instant),
+          total: ps.length, openedCount: ps.filter((p) => p.openedAt).length, budgetMinor: place.d.budgetMinor, drawTogetherAt: place.d.drawTogetherAt,
+          receiverGuest: receiver?.kind === 'guest' && receiver.guestId ? guestNamesOf(db).get(receiver.guestId) ?? null : null,
+        } : null,
+        wishes: wishes(reach),
+        questions: questions(reach),
+        lastDay: lastDayOf(db, l),
+      });
+    },
+    /** One wish the guest reaches (404 otherwise). */
+    wish: (id: string): Viewed<api.Wish> => {
+      const reach = reachNow();
+      const w = getWish(db, id);
+      if (!w || !reaches(reach, w)) throw new Refused(404, 'no such wish');
+      return answer(wishOf(w, giftsOf(db, [w.id]).get(w.id) ?? NO_GIFTS));
+    },
+    question: (id: string): Viewed<api.AskedQuestion> => answer(one(getQuestion(db, id), reachNow())),
+  };
+}

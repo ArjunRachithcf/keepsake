@@ -1,7 +1,8 @@
 // The migrations in drizzle/, applied in order, build exactly the database src/db/schema.ts describes, and the latest
 // Drizzle snapshot is in sync (`pnpm db:generate` has nothing to add). A released migration never changes.
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
@@ -49,6 +50,42 @@ describe('migrations', () => {
     const fromTs = fromSql(await generateSQLiteMigration(await generateSQLiteDrizzleJson({}), await generateSQLiteDrizzleJson(schema)));
     expect(describeDb(migrated.$client)).toEqual(describeDb(fromTs));
     expect(migrated.$client.pragma('foreign_keys', { simple: true })).toBe(1);
+  });
+
+  it('0003 (M4) keeps an M3 database\'s draws: participants, exclusions and sealed rows survive, claims and audit too', () => {
+    // The database as M3 left it: only 0000-0002 applied.
+    const dir = mkdtempSync(join(tmpdir(), 'keepsake-mig-'));
+    try {
+      mkdirSync(join(dir, 'meta'));
+      const journal = JSON.parse(readFileSync(join(drizzleDir, 'meta/_journal.json'), 'utf8')) as { entries: { idx: number; tag: string }[] };
+      const m3 = journal.entries.filter((e) => e.idx <= 2);
+      writeFileSync(join(dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: m3 }));
+      for (const e of m3) copyFileSync(join(drizzleDir, `${e.tag}.sql`), join(dir, `${e.tag}.sql`));
+      const file = join(dir, 'k.sqlite');
+      process.env.KEEPSAKE_MIGRATIONS_DIR = dir;
+      const old = openDb(file);
+      const c = old.$client;
+      const at = '2026-11-01T10:00:00.000Z';
+      c.prepare("insert into person (id, name, role, created_at) values ('p1','A','admin',?),('p2','B','adult',?)").run(at, at);
+      c.prepare("insert into celebration (id, name, date, poster, recurrence, created_at) values ('c1','X','2026-12-24','pine','yearly',?)").run(at);
+      c.prepare("insert into wish (id, person_id, name, position, state, created_at, updated_at) values ('w1','p1','Kite',0,'listed',?,?)").run(at, at);
+      c.prepare("insert into claim (id, wish_id, giver_id, quantity, state, created_at, updated_at) values ('cl1','w1','p2',1,'claimed',?,?)").run(at, at);
+      c.prepare("insert into draw (id, celebration_id, year, rules_version, created_at, updated_at) values ('d1','c1',2026,1,?,?)").run(at, at);
+      c.prepare("insert into draw_participant (id, draw_id, kind, person_id, created_at) values ('dp1','d1','person','p1',?),('dp2','d1','person','p2',?)").run(at, at);
+      c.prepare("insert into draw_exclusion (draw_id, a, b) values ('d1','dp1','dp2')").run();
+      c.prepare("insert into draw_assignment (draw_id, giver_id, sealed, key_id) values ('d1','dp1',x'00','k'),('d1','dp2',x'01','k')").run();
+      c.prepare("insert into audit (id, at, actor_id, action, subject_id) values ('a1',?,'p1','drawn','d1')").run(at);
+      c.close();
+      delete process.env.KEEPSAKE_MIGRATIONS_DIR;
+      const now = openDb(file).$client;
+      const n = (table: string) => (now.prepare(`select count(*) n from ${table}`).get() as { n: number }).n;
+      expect([n('draw_participant'), n('draw_exclusion'), n('draw_assignment'), n('claim'), n('audit')]).toEqual([2, 1, 2, 1, 1]);
+      expect(now.prepare('select guest_id from claim').get()).toEqual({ guest_id: null });
+      now.close();
+    } finally {
+      delete process.env.KEEPSAKE_MIGRATIONS_DIR;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('the latest snapshot is in sync with the schema', async () => {

@@ -198,8 +198,18 @@ const overNow = (db: Db, w: Wish, g: Given, today: string) => isOver(w, g, calen
 const givenFields = (db: Db, w: Wish, given: boolean, today: string) =>
   (given ? { givenOn: today, occasionOn: occasionOf(w, today, calendarOf(db)).date } : { givenOn: null, occasionOn: null });
 
+/** Who gives: someone of the household, or a guest by their link (ADR 0009). */
+export type Giver = { personId: string } | { guestId: string };
+const giverIs = (who: Giver) => ('personId' in who ? eq(t.claim.giverId, who.personId) : eq(t.claim.guestId, who.guestId));
+const isGivers = (c: Pick<Claim, 'giverId' | 'guestId'>, who: Giver) => ('personId' in who ? c.giverId === who.personId : c.guestId !== null && c.guestId === who.guestId);
+/** One key per giver across people and guests (`g:<link id>` for a guest), as unrevealedDraws keeps them. */
+export const giverKey = (c: Pick<Claim, 'giverId' | 'guestId'>): string | null => c.giverId ?? (c.guestId ? `g:${c.guestId}` : null);
+
+function claimOf(db: Db, who: Giver, wishId: string): Claim | undefined {
+  return db.select().from(t.claim).where(and(eq(t.claim.wishId, wishId), giverIs(who))).get();
+}
 function myClaim(db: Db, me: Person, wishId: string): Claim | undefined {
-  return db.select().from(t.claim).where(and(eq(t.claim.wishId, wishId), eq(t.claim.giverId, me.id))).get();
+  return claimOf(db, { personId: me.id }, wishId);
 }
 function myShare(db: Db, me: Pick<Person, 'id'>, wishId: string): Share | undefined {
   return db.select().from(t.share).where(and(eq(t.share.wishId, wishId), eq(t.share.giverId, me.id))).get();
@@ -216,26 +226,36 @@ const ts = () => new Date().toISOString();
 
 /** "I'll get this" (or change how many): within what is left, not on a group gift, not once you have given it. */
 export function claimWish(db: Db, me: Person, wishId: string, quantity: number): Wish {
-  const w = giving(db, me, wishId);
+  return claimFor(db, giving(db, me, wishId), { personId: me.id }, quantity);
+}
+/** The same for any giver, on a wish already checked as theirs to give (giving(), or guests/guests.ts for a guest). */
+export function claimFor(db: Db, w: Wish, who: Giver, quantity: number): Wish {
   listed(w);
   db.transaction((tx0) => {
     const tx = asDb(tx0);
     if (groupOf(tx, w.id)) throw new Refused(409, 'it is a group gift: chip in instead');
     const claims = tx.select().from(t.claim).where(eq(t.claim.wishId, w.id)).all();
-    const mine = claims.find((c) => c.giverId === me.id);
+    const mine = claims.find((c) => isGivers(c, who));
     if (mine?.state === 'given') throw new Refused(409, 'you have given it already');
-    const others = claims.filter((c) => c.giverId !== me.id).reduce((n, c) => n + c.quantity, 0);
+    const others = claims.filter((c) => c !== mine).reduce((n, c) => n + c.quantity, 0);
     if (others + quantity > w.quantity) throw new Refused(409, others >= w.quantity ? 'someone is getting it already' : 'not that many are left to claim');
     if (mine) tx.update(t.claim).set({ quantity, updatedAt: ts() }).where(eq(t.claim.id, mine.id)).run();
-    else tx.insert(t.claim).values({ id: ulid(), wishId: w.id, giverId: me.id, quantity, state: 'claimed', createdAt: ts(), updatedAt: ts() }).run();
+    else {
+      tx.insert(t.claim).values({
+        id: ulid(), wishId: w.id, giverId: 'personId' in who ? who.personId : null, guestId: 'guestId' in who ? who.guestId : null,
+        quantity, state: 'claimed', createdAt: ts(), updatedAt: ts(),
+      }).run();
+    }
   });
   return w;
 }
 
 /** Bought, given (today), or back: a given gift its person has by now stays given. */
 export function setClaimState(db: Db, me: Person, wishId: string, state: ClaimState, today: string): Wish {
-  const w = giving(db, me, wishId);
-  const c = myClaim(db, me, w.id);
+  return setClaimStateFor(db, giving(db, me, wishId), { personId: me.id }, state, today);
+}
+export function setClaimStateFor(db: Db, w: Wish, who: Giver, state: ClaimState, today: string): Wish {
+  const c = claimOf(db, who, w.id);
   if (!c) throw new Refused(404, 'you have not claimed it');
   if (c.state === state) return w;
   if (overNow(db, w, c, today)) throw new Refused(409, 'it was given, and its celebration is over');
@@ -244,8 +264,10 @@ export function setClaimState(db: Db, me: Person, wishId: string, state: ClaimSt
 }
 
 export function unclaimWish(db: Db, me: Person, wishId: string): void {
-  const w = giving(db, me, wishId);
-  const c = myClaim(db, me, w.id);
+  unclaimFor(db, giving(db, me, wishId), { personId: me.id });
+}
+export function unclaimFor(db: Db, w: Wish, who: Giver): void {
+  const c = claimOf(db, who, w.id);
   if (!c) throw new Refused(404, 'you have not claimed it');
   if (c.state === 'given') throw new Refused(409, 'it is given: mark it not given first');
   db.delete(t.claim).where(eq(t.claim.id, c.id)).run();

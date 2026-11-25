@@ -9,14 +9,16 @@ import type { Db } from '../db/open';
 import { getPerson, syncHomersLabPerson, type Person } from '../household/people';
 import { resolveIdentity } from '../identity';
 import { SESSION_COOKIE, liveSession, type Session } from './sessions';
+import { GUEST_COOKIE, liveGuest, type GuestLink } from '../guests/guests';
+import { today } from '../celebrations/dates';
 
-export type AuthMode = 'public' | 'person';
+export type AuthMode = 'public' | 'person' | 'guest';
 
 export interface Caller { person: Person; via: 'homerslab' | 'session'; session?: Session }
 
 declare module 'fastify' {
   interface FastifyContextConfig { auth?: AuthMode; signIn?: boolean }
-  interface FastifyRequest { caller?: Caller }
+  interface FastifyRequest { caller?: Caller; guest?: GuestLink }
 }
 
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -39,7 +41,15 @@ export function authHook(cfg: Config, db: Db) {
     if (!SAFE.has(req.method) && req.headers.origin !== cfg.origin) {
       return reply.code(403).send({ error: 'request from another origin refused' });
     }
-    if ((req.routeOptions.config.auth ?? 'person') === 'public') return;
+    const auth = req.routeOptions.config.auth ?? 'person';
+    if (auth === 'public') return;
+    // A guest's route (ADR 0009): only the guest session counts there, in both modes; a person means nothing.
+    if (auth === 'guest') {
+      const g = liveGuest(db, req.cookies?.[GUEST_COOKIE], today(cfg.timezone));
+      if (!g) return reply.code(401).send({ error: 'this link is unknown, used or expired' });
+      req.guest = g;
+      return;
+    }
     const caller = callerOf(cfg, db, req);
     // Without a valid role Keepsake cannot tell an adult from a kid: refused, not guessed.
     if (caller === 'no-role') return reply.code(403).send({ error: 'not allowed' });
