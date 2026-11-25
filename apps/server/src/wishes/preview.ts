@@ -50,13 +50,39 @@ function product(v: unknown, depth = 0, seen = { n: 0 }): Record<string, unknown
 }
 const scalar = (v: unknown): string | null => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : null);
 
+/** At most this many tags of a kind are looked at, and a tag longer than this is skipped: a page cannot make the reading slow. */
+const MAX_TAGS = 2000;
+const MAX_TAG = 3000;
+/**
+ * The tags `<name …>` of a page, by plain scanning (no regular expression runs over the page itself, so no pattern can
+ * be made to backtrack): each with where its content starts.
+ */
+function* tagsOf(page: string, lower: string, name: string): Generator<{ tag: string; end: number }> {
+  let i = 0;
+  for (let n = 0; n < MAX_TAGS; n++) {
+    const at = lower.indexOf(`<${name}`, i);
+    if (at < 0) return;
+    const next = lower.charCodeAt(at + name.length + 1);
+    const end = lower.indexOf('>', at);
+    if (end < 0) return;
+    i = end + 1;
+    // <metadata> is not <meta>; a tag without its end in reach is skipped.
+    if (!(next === 0x20 || next === 0x09 || next === 0x0a || next === 0x0d || next === 0x2f || next === 0x3e) || end - at > MAX_TAG) continue;
+    yield { tag: page.slice(at, end + 1), end: end + 1 };
+  }
+}
+
 /** What a page says of its product (exported for the tests: pages from files, never the network). */
 export function readPage(html: string): Found {
   const page = html.slice(0, 1 << 20);
+  const lower = page.toLowerCase();
   const found: Found = { name: null, amount: null, currency: null };
-  for (const m of page.matchAll(/<script\b[^>]{0,500}type\s*=\s*["']?application\/ld\+json["']?[^>]{0,500}>([\s\S]{0,100000}?)<\/script>/gi)) {
+  for (const { tag, end } of tagsOf(page, lower, 'script')) {
+    if ((attrs(tag).type ?? '').trim().toLowerCase() !== 'application/ld+json') continue;
+    const close = lower.indexOf('</script', end);
+    if (close < 0 || close - end > 100_000) continue;
     let p: Record<string, unknown> | null = null;
-    try { p = product(JSON.parse(m[1]!)); } catch { /* not JSON: ignored */ }
+    try { p = product(JSON.parse(page.slice(end, close))); } catch { /* not JSON: ignored */ }
     if (!p) continue;
     found.name = scalar(p.name);
     const offers = Array.isArray(p.offers) ? p.offers[0] : p.offers;
@@ -68,15 +94,19 @@ export function readPage(html: string): Found {
     break;
   }
   const meta: Record<string, string> = {};
-  for (const m of page.matchAll(/<meta\b[^>]{0,3000}>/gi)) {
-    const a = attrs(m[0]);
+  for (const { tag } of tagsOf(page, lower, 'meta')) {
+    const a = attrs(tag);
     const key = (a.property ?? a.name ?? a.itemprop ?? '').toLowerCase();
     if (key && a.content !== undefined) meta[key] ??= a.content;
   }
   found.name ??= meta['og:title'] ?? meta['twitter:title'] ?? null;
   found.amount ??= meta['product:price:amount'] ?? meta['og:price:amount'] ?? meta.price ?? null;
   found.currency ??= meta['product:price:currency'] ?? meta['og:price:currency'] ?? meta.pricecurrency ?? null;
-  found.name ??= /<title\b[^>]{0,500}>([\s\S]{0,2000}?)<\/title>/i.exec(page)?.[1] ?? null;
+  if (found.name === null) {
+    const [t] = tagsOf(page, lower, 'title');
+    const close = t ? lower.indexOf('</title', t.end) : -1;
+    if (t && close >= 0 && close - t.end <= 2000) found.name = page.slice(t.end, close);
+  }
   return found;
 }
 

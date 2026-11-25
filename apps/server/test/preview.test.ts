@@ -31,6 +31,15 @@ describe('reading a page', () => {
     expect(readPage(html).name).toBe('Real');
   });
 
+  it('a page made to be slow to read is not: no pattern runs over the page, tags are counted and bounded', () => {
+    for (const html of ['<script'.repeat(150_000), `<script type="application/ld+json">${'['.repeat(90_000)}</script>`, '<meta '.repeat(170_000) + '>', `<meta content="${'"'.repeat(900_000)}`, '<title>'.repeat(140_000), `<${'a'.repeat(1 << 20)}`]) {
+      const t = performance.now();
+      readPage(html);
+      expect(performance.now() - t, html.slice(0, 20)).toBeLessThan(500);
+    }
+    expect(readPage('<metadata content="x" property="og:title"><meta property="og:title" content="Yes">').name).toBe('Yes');
+  });
+
   it.each([
     ['34.90', 'CHF', 3490], ['34,90', 'EUR', 3490], ['1,234.50', 'USD', 123450], ['1.234,50', 'EUR', 123450], ["1'234.50", 'CHF', 123450],
     ['25.–', 'CHF', 2500], ['CHF 25.00', 'CHF', 2500], ['12', 'CHF', 1200], ['1,234', 'USD', 123400], ['1500', 'JPY', 1500],
