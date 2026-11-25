@@ -89,8 +89,8 @@ export interface EgressOptions {
   resolve?: Resolve;
   timeoutMs?: number;
   /**
-   * Tests only (Philobiblos' harness): a CA to trust besides the system's, the local port that stands in for 443, and
-   * who counts as public (their servers are on 127.0.0.1). The connection is TLS as always, the certificate checked
+   * Tests only (Philobiblos' harness): the CA to trust instead of the system's (Node's `ca` replaces the default store,
+   * so in a test nothing else is trusted), the local port that stands in for 443, and who counts as public (their servers are on 127.0.0.1). The connection is TLS as always, the certificate checked
    * against the name (PR #12 review, L3).
    */
   test?: { isPublic?: (addr: string) => boolean; ca?: string; httpsPort?: number };

@@ -35,7 +35,11 @@ something is new.
   subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then); a 5xx, a
   timeout or our own failure never drops one; another 4xx drops it only after 3 days of failing.
 - **Kept in step** (M2, L7, N4): the app sends its subscription again at every start and whenever it is shown again, so
-  a session that ended takes the subscription only until the next start; one made for an earlier VAPID key is ended
+  a session that ended takes the subscription only until the next start. It does so only for the person who turned
+  the switch on in that browser (kept in `localStorage`), and marks it `sync`: a sync never moves a device from one
+  person to another (second review, N-M2), so on a family computer the next person to open Keepsake does not take
+  the notifications; only turning the switch on does. Sent again with the same keys, a subscription keeps when it was
+  made and since when it fails; one made for an earlier VAPID key is ended
   and made again; and a subscription its device has not sent again for 30 days goes.
 - **The VAPID key** is kept like the sealing key (ADR 0004): `KEEPSAKE_VAPID_KEY` or `_FILE`, under HomersLab a secret;
   standalone makes `keys/vapid.key` once (0600), never in `data/`; base64 or base64url, read as the sealing key is.
