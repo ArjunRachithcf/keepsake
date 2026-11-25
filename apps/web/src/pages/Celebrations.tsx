@@ -1,5 +1,6 @@
-// Celebrations (spec §4): coming up (date, "2 to approve") and past ones; a celebration's page with its poster and
-// everyone's list for it; a new celebration (the host: poster, date, place, people). The draw comes with M3.
+// Celebrations (spec §4): coming up (date, "2 to approve", the draw) and past ones; a celebration's page with its
+// poster, the sealed draw and everyone's state, and everyone's list for it; a new celebration (the host: poster, date,
+// place, people, and the draw's options).
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { POSTERS } from '@keepsake/contracts';
 import { api, message, type Celebration, type CelebrationInput, type CelebrationPage, type Celebrations as List, type Wish } from '../api';
@@ -8,6 +9,16 @@ import { useHousehold } from '../household';
 import { useGo } from '../router';
 import { Field, Group, Link, Loading, Notice, PageHead, POSTER_LABEL, Poster, Sheet, Switch, usePageTitle } from '../ui';
 import { WishForm, WishRow } from '../wish';
+import { DrawFields, DrawSection, defaultDrawOptions, drawInput, type DrawOptions } from '../draw';
+
+/** A celebration's draw, in a few words, for its row. */
+const drawLine = (c: Celebration) => {
+  const d = c.draw;
+  if (!d || !c.upcoming) return '';
+  if (d.mine === 'ready') return ' · your draw is ready to open';
+  if (d.drawn) return ` · ${d.opened} of ${d.total} opened their draw`;
+  return ' · names to draw';
+};
 
 function CelebrationRow({ c }: { c: Celebration }) {
   return (
@@ -16,7 +27,7 @@ function CelebrationRow({ c }: { c: Celebration }) {
         <Poster poster={c.poster} small />
         <span className="row-text">
           <span className="row-title">{c.name}</span>
-          <span className="row-sub">{celebrationLine(c)}{c.upcoming ? ` · ${inDays(c.daysUntil)}` : ''}{c.toApprove ? ` · ${c.toApprove} to approve` : ''}</span>
+          <span className="row-sub">{celebrationLine(c)}{c.upcoming ? ` · ${inDays(c.daysUntil)}` : ''}{c.toApprove ? ` · ${c.toApprove} to approve` : ''}{drawLine(c)}</span>
         </span>
         <span className="chevron" aria-hidden="true">›</span>
       </Link>
@@ -92,6 +103,7 @@ export function CelebrationView({ id }: { id: string }) {
           <button type="button" className="btn btn-danger" onClick={remove}>Remove</button>
         </div>
       )}
+      <DrawSection celebration={c} onChanged={load} />
       {inIt && (
         <div className="section">
           <button type="button" className="btn btn-primary btn-block" onClick={() => setSheet({ personId: me.id })}>Add a wish for {c.name}</button>
@@ -129,13 +141,22 @@ function CelebrationForm({ celebration, onDone }: { celebration?: Celebration; o
   const [people, setPeople] = useState<string[]>(celebration?.people ?? [me.id]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const kids = new Set(household.people.filter((p) => p.role === 'kid').map((p) => p.id));
+  const [drawing, setDrawing] = useState(false);
+  const [draw, setDraw] = useState<DrawOptions>(() => defaultDrawOptions([], kids, ''));
+  // The draw's people follow the celebration's until the host picks them.
+  const drawOpts: DrawOptions = { ...draw, people: draw.people.filter((p) => people.includes(p)), revealOn: draw.revealOn || (date ? defaultDrawOptions([], kids, date).revealOn : '') };
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     const body: CelebrationInput = { name: name.trim(), date, place: place.trim() || null, poster, recurrence: yearly ? 'yearly' : 'none', people };
+    const drawBody = drawing ? drawInput(drawOpts, household.currency) : null;
+    if (typeof drawBody === 'string') { setError(drawBody); return; }
     setBusy(true); setError(null);
     try {
       const c = celebration ? await api<Celebration>(`/celebrations/${celebration.id}`, { method: 'PATCH', body })
         : await api<Celebration>('/celebrations', { method: 'POST', body });
+      // The celebration is made; if its draw is refused, the host sets it up on the celebration's page (it says why).
+      if (!celebration && drawBody) await api(`/celebrations/${c.id}/draw`, { method: 'POST', body: drawBody }).catch(() => undefined);
       onDone(celebration ? undefined : c);
     } catch (err) { setError(message(err)); } finally { setBusy(false); }
   };
@@ -164,11 +185,23 @@ function CelebrationForm({ celebration, onDone }: { celebration?: Celebration; o
         <p className="hint">Whose wishes it has: the birthday person, or everyone at Christmas.</p>
         {household.people.map((p) => (
           <label key={p.id} className="check">
-            <input type="checkbox" checked={people.includes(p.id)} onChange={(e) => setPeople(e.target.checked ? [...people, p.id] : people.filter((x) => x !== p.id))} />
+            <input type="checkbox" checked={people.includes(p.id)} onChange={(e) => {
+              setPeople(e.target.checked ? [...people, p.id] : people.filter((x) => x !== p.id));
+              if (e.target.checked && (p.role !== 'kid' || draw.kidsDraw)) setDraw({ ...draw, people: [...draw.people, p.id] });
+            }} />
             {p.id === me.id ? `${p.name} (you)` : p.name}
           </label>
         ))}
       </fieldset>
+      {!celebration && (
+        <>
+          <Switch label="Draw names" hint="Each person draws someone to give to; only they learn who." checked={drawing} onChange={(v) => {
+            setDrawing(v);
+            if (v) setDraw({ ...draw, people: people.filter((p) => !kids.has(p) || draw.kidsDraw) });
+          }} />
+          {drawing && <DrawFields value={drawOpts} onChange={setDraw} people={people} yearly={yearly} />}
+        </>
+      )}
       {error && <Notice kind="error">{error}</Notice>}
       <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={busy || !name.trim() || !date || people.length === 0}>{celebration ? 'Save' : 'Add the celebration'}</button>
     </form>

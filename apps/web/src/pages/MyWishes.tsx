@@ -47,6 +47,7 @@ export function MyWishes() {
             <p className="next-eyebrow">Next</p>
             <p className="next-title">{home.next.name} {inDays(home.next.daysUntil)}</p>
             <p className="next-sub">{celebrationLine(home.next)}</p>
+            {home.next.draw?.mine === 'ready' && <p className="next-sub next-draw">Your draw is ready to open</p>}
           </Poster>
         </Link>
       )}
