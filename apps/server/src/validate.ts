@@ -1,42 +1,42 @@
 // Request bodies checked against what contracts/openapi.yaml declares (the contract tests send the spec's samples).
 // Each reader returns the value or throws Refused(400) with a message naming the field.
-import { Refused } from './errors';
+import { Refused, type Field, type Template } from './errors';
 
 export type Body = Record<string, unknown>;
 
 export function object(body: unknown, allowed: readonly string[]): Body {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Refused(400, 'a JSON object is needed');
-  for (const k of Object.keys(body)) if (!allowed.includes(k)) throw new Refused(400, `unknown field ${k}`);
+  for (const k of Object.keys(body)) if (!allowed.includes(k)) throw Refused.unknownField(k);
   return body as Body;
 }
 
-const bad = (field: string, what: string): never => { throw new Refused(400, `${field}: ${what}`); };
+const bad = (field: string, what: Template, ...fill: (number | readonly string[])[]): never => { throw Refused.field(field as Field, what, ...fill); };
 
 export function text(b: Body, field: string, max: number, o: { required?: boolean } = {}): string | undefined {
   const v = b[field];
   if (v === undefined) return o.required ? bad(field, 'required') : undefined;
-  if (typeof v !== 'string' || !v.trim() || v.length > max) return bad(field, `1 to ${max} characters`);
+  if (typeof v !== 'string' || !v.trim() || v.length > max) return bad(field, '1 to # characters', max);
   return v;
 }
 
 export function nullableText(b: Body, field: string, max: number): string | null | undefined {
   const v = b[field];
   if (v === undefined || v === null) return v;
-  if (typeof v !== 'string' || v.length > max) return bad(field, `up to ${max} characters, or null`);
+  if (typeof v !== 'string' || v.length > max) return bad(field, 'up to # characters, or null', max);
   return v.trim() ? v : null;
 }
 
 export function oneOf<T extends string>(b: Body, field: string, values: readonly T[], o: { required?: boolean } = {}): T | undefined {
   const v = b[field];
   if (v === undefined) return o.required ? bad(field, 'required') : undefined;
-  if (typeof v !== 'string' || !values.includes(v as T)) return bad(field, values.join(', '));
+  if (typeof v !== 'string' || !values.includes(v as T)) return bad(field, 'one of @', values);
   return v as T;
 }
 
 export function int(b: Body, field: string, min: number, max: number): number | undefined {
   const v = b[field];
   if (v === undefined) return undefined;
-  if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) return bad(field, `a whole number from ${min} to ${max}`);
+  if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) return bad(field, 'a whole number from # to #', min, max);
   return v as number;
 }
 
@@ -70,7 +70,7 @@ export function nullableId(b: Body, field: string, o: { required?: boolean } = {
 export function ids(b: Body, field: string, o: { min?: number; max: number }): string[] | undefined {
   const v = b[field];
   if (v === undefined) return undefined;
-  if (!Array.isArray(v) || v.length < (o.min ?? 0) || v.length > o.max || !v.every(isId)) return bad(field, `${o.min ?? 0} to ${o.max} ids`);
+  if (!Array.isArray(v) || v.length < (o.min ?? 0) || v.length > o.max || !v.every(isId)) return bad(field, '# to # ids', o.min ?? 0, o.max);
   return v as string[];
 }
 
@@ -78,7 +78,7 @@ export function strings(b: Body, field: string, o: { maxItems: number; maxLength
   const v = b[field];
   if (v === undefined) return undefined;
   if (!Array.isArray(v) || v.length > o.maxItems || !v.every((s) => typeof s === 'string' && s.trim() && s.length <= o.maxLength)) {
-    return bad(field, `up to ${o.maxItems} texts of 1 to ${o.maxLength} characters`);
+    return bad(field, 'up to # texts of 1 to # characters', o.maxItems, o.maxLength);
   }
   return (v as string[]).map((s) => s.trim());
 }
@@ -90,12 +90,12 @@ export function strings(b: Body, field: string, o: { maxItems: number; maxLength
 export function link(b: Body, field: string): string | null | undefined {
   const v = b[field];
   if (v === undefined || v === null) return v;
-  if (typeof v !== 'string' || v.length > 2000) return bad(field, 'a web address (http or https) of up to 2000 characters');
+  if (typeof v !== 'string' || v.length > 2000) return bad(field, 'a web address (http or https) of up to # characters', 2000);
   if (!v.trim()) return null;
   let u: URL;
   try { u = new URL(v.trim()); } catch { return bad(field, 'a web address (http or https)'); }
   if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password) return bad(field, 'a web address (http or https) without a user name or password');
-  return u.href.length > 2000 ? bad(field, 'up to 2000 characters') : u.href;
+  return u.href.length > 2000 ? bad(field, 'up to # characters', 2000) : u.href;
 }
 
 export function sizes(b: Body) {

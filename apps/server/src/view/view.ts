@@ -3,18 +3,24 @@
 // lists filtered by celebration, sorted or counted, so neither a filter, the order nor a count gives anything away.
 // M2 adds claims and group gifts here, cut for the person a wish is for before the same steps.
 //
-// The seam is enforced twice: a route answer that did not come from here is refused with a 500 by the API's
-// preSerialization hook (`isViewed`), and test/architecture.test.ts keeps routes away from the database rows.
+// The viewer is always the request's (data.view(r)); each helper takes ids and builds its own answer, so no route can
+// hand in a row, a ready object or somebody else to view as. The seam (src/seam.ts) then checks that the bytes sent are
+// exactly an answer built here, and test/architecture.test.ts keeps routes away from the database.
 import type * as api from '@keepsake/contracts';
+import type { PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialDescriptorJSON, PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/server';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { canChange, allCelebrations, peopleByCelebration, type Celebration } from '../celebrations/celebrations';
+import { passkeysOf } from '../auth/passkeys';
+import { canChange, allCelebrations, mustGetCelebration, peopleByCelebration, type Celebration } from '../celebrations/celebrations';
 import { daysBetween, nextDate, today } from '../celebrations/dates';
-import { currency, hasPasskey, household, keeps, managersOf, type Person } from '../household/people';
+import { currency, hasPasskey, household, keeps, managersOf, mustGetPerson, type Person } from '../household/people';
 import { getProfile, type ProfileRow } from '../household/profile';
-import { allWaiting, canApprove, canEdit, canSee, wishesAddedBy, wishesOf, type Wish } from '../wishes/wishes';
+import { allWaiting, canApprove, canEdit, canSee, seeWish, wishesAddedBy, wishesOf, type Wish } from '../wishes/wishes';
 
 const VIEWED = new WeakSet<object>();
+declare const VIEWED_BRAND: unique symbol;
+/** An answer the view layer built (the router takes only these; the seam checks the bytes as well). */
+export type Viewed<T extends object = object> = T & { readonly [VIEWED_BRAND]: true };
 function deepFreeze<T>(v: T): T {
   if (v && typeof v === 'object' && !Object.isFrozen(v)) {
     Object.freeze(v);
@@ -23,25 +29,73 @@ function deepFreeze<T>(v: T): T {
   return v;
 }
 /** Marks an answer as built by the view layer (only this module can) and freezes it: nothing can be added after. */
-function answer<T extends object>(body: T): T {
+function answer<T extends object>(body: T): Viewed<T> {
   VIEWED.add(deepFreeze(body));
-  return body;
+  return body as Viewed<T>;
 }
-/** Whether a route's answer came from the view layer (checked for every /api answer below 400). */
+/** Whether an answer came from the view layer (the seam asks before serializing it; src/seam.ts). */
 export const isViewed = (payload: unknown): boolean => typeof payload === 'object' && payload !== null && VIEWED.has(payload);
 
 /** `for`: a celebration's list (its wishes and the any-time ones), the any-time wishes only, or everything. */
 export type ListFor = { celebration: string } | 'any' | null;
 
 const json = <T>(s: string): T => JSON.parse(s) as T;
-
-/** Answers that need no viewer: the server's health and the sign-in steps. */
-export const publicView = {
-  health: (cfg: Pick<Config, 'mode'>, version: string): api.Health => answer({ ok: true, version, mode: cfg.mode }),
-  signInStart: (challengeId: string, options: object): api.SignInStart => answer({ challengeId, options: options as Record<string, unknown> }),
-  enrolStart: (challengeId: string, options: object, name: string): api.EnrolStart => answer({ challengeId, options: options as Record<string, unknown>, person: { name } }),
-  signedOut: (cfg: Pick<Config, 'mode'>, setupNeeded: boolean): api.AuthSession => answer({ mode: cfg.mode, signedIn: false, setupNeeded }),
+const str = (v: unknown): string => {
+  if (typeof v !== 'string') throw new Error('view: not a string');
+  return v;
 };
+const opt = <T>(v: T | undefined, f: (x: T) => unknown) => (v === undefined ? undefined : f(v));
+const strings = (v: readonly unknown[] | undefined) => opt(v, (l) => l.map(str));
+const defined = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+const descriptor = (d: PublicKeyCredentialDescriptorJSON) => defined({ id: str(d.id), type: str(d.type), transports: strings(d.transports) });
+
+/**
+ * WebAuthn's registration options, copied field by field into the shape the browser needs: whatever else the object
+ * carried stays behind.
+ */
+function creationOptions(o: PublicKeyCredentialCreationOptionsJSON): Record<string, unknown> {
+  return defined({
+    rp: defined({ name: str(o.rp.name), id: opt(o.rp.id, str) }),
+    user: { id: str(o.user.id), name: str(o.user.name), displayName: str(o.user.displayName) },
+    challenge: str(o.challenge),
+    pubKeyCredParams: o.pubKeyCredParams.map((p) => ({ alg: Number(p.alg), type: str(p.type) })),
+    timeout: opt(o.timeout, Number),
+    excludeCredentials: opt(o.excludeCredentials, (l) => l.map(descriptor)),
+    authenticatorSelection: opt(o.authenticatorSelection, (a) => defined({
+      authenticatorAttachment: opt(a.authenticatorAttachment, str), residentKey: opt(a.residentKey, str),
+      requireResidentKey: opt(a.requireResidentKey, Boolean), userVerification: opt(a.userVerification, str),
+    })),
+    hints: strings(o.hints),
+    attestation: opt(o.attestation, str),
+    extensions: opt(o.extensions?.credProps, (c) => ({ credProps: Boolean(c) })),
+  });
+}
+/** The same for a sign-in's options. */
+function requestOptions(o: PublicKeyCredentialRequestOptionsJSON): Record<string, unknown> {
+  return defined({
+    challenge: str(o.challenge),
+    timeout: opt(o.timeout, Number),
+    rpId: opt(o.rpId, str),
+    allowCredentials: opt(o.allowCredentials, (l) => l.map(descriptor)),
+    userVerification: opt(o.userVerification, str),
+    hints: strings(o.hints),
+  });
+}
+
+/** Answers that need no viewer: the server's health, the sign-in steps, and the person a passkey has just signed in. */
+export function publicViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>) {
+  return {
+    health: (version: string): Viewed<api.Health> => answer({ ok: true, version, mode: cfg.mode }),
+    signInStart: (challengeId: string, o: PublicKeyCredentialRequestOptionsJSON): Viewed<api.SignInStart> => answer({ challengeId, options: requestOptions(o) }),
+    enrolStart: (challengeId: string, o: PublicKeyCredentialCreationOptionsJSON): Viewed<api.EnrolStart> =>
+      answer({ challengeId, options: creationOptions(o), person: { name: str(o.user.name) } }),
+    signedOut: (setupNeeded: boolean): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: false, setupNeeded }),
+    signedIn: (personId: string): Viewed<api.AuthSession> => viewFor(db, cfg, mustGetPerson(db, personId)).signedIn(),
+  };
+}
+
+/** A one-time link, from what createInvite returned (data.ts hands it over; routes never get one to pass). */
+export const linkAnswer = (i: { url: string; expiresAt: Date }): Viewed<api.OneTimeLink> => answer({ url: str(i.url), expiresAt: i.expiresAt.toISOString() });
 
 export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: Person) {
   const now = today(cfg.timezone);
@@ -101,19 +155,17 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
     pleaseNo: json(r.pleaseNoJson), pleaseNoUpdatedAt: r.pleaseNoUpdatedAt,
   });
 
+  // Every helper builds its own answer from ids, for this viewer: none takes a person, a row or a ready object.
   return {
-    signedIn: (): api.AuthSession => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),
-    household: (): api.Household => answer({ mode: cfg.mode, me: person(viewer), people: [...people().values()].map(person), currency: currency(db) }),
-    person: (p: Person): api.Person => answer(person(p)),
-    profile: (r: ProfileRow): api.Profile => answer(profile(r)),
-    link: (url: string, expiresAt: Date): api.OneTimeLink => answer({ url, expiresAt: expiresAt.toISOString() }),
-    passkeys: (keys: api.Passkey[]): api.Passkeys => answer({ passkeys: keys.map((k) => ({ ...k })) }),
-    /** One wish the viewer may see (the domain modules have checked; checked again here). */
-    wish: (w: Wish): api.Wish => {
-      if (!canSee(db, viewer, w)) throw new Error('view: a wish the viewer may not see');
-      return answer(wish(w));
-    },
-    home: (f: ListFor): api.Home => {
+    signedIn: (): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),
+    household: (): Viewed<api.Household> => answer({ mode: cfg.mode, me: person(viewer), people: [...people().values()].map(person), currency: currency(db) }),
+    person: (id: string): Viewed<api.Person> => answer(person(mustGetPerson(db, id))),
+    profile: (personId: string): Viewed<api.Profile> => answer(profile(getProfile(db, mustGetPerson(db, personId).id))),
+    /** The viewer's own passkeys: nobody lists someone else's. */
+    passkeys: (): Viewed<api.Passkeys> => answer({ passkeys: passkeysOf(db, viewer.id).map((k) => ({ ...k })) }),
+    /** One wish the viewer may see (404 otherwise, the same answer whether it exists or is hidden). */
+    wish: (id: string): Viewed<api.Wish> => answer(wish(seeWish(db, viewer, id))),
+    home: (f: ListFor): Viewed<api.Home> => {
       const mine = upcoming(celebrationsOf(viewer.id));
       const approvals = waiting();
       return answer({
@@ -125,28 +177,31 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
         suggested: wishes(wishesAddedBy(db, viewer.id, 'suggested')).filter((w) => w.personId !== viewer.id),
       });
     },
-    personPage: (p: Person, f: ListFor): api.PersonPage => answer({
-      person: person(p),
-      profile: profile(getProfile(db, p.id)),
-      celebrations: upcoming(celebrationsOf(p.id)),
-      wishes: listOf(p.id, f),
-      keeps: keeps(db, viewer, p),
-    }),
-    celebrations: (): api.Celebrations => {
+    personPage: (id: string, f: ListFor): Viewed<api.PersonPage> => {
+      const p = mustGetPerson(db, id);
+      return answer({
+        person: person(p),
+        profile: profile(getProfile(db, p.id)),
+        celebrations: upcoming(celebrationsOf(p.id)),
+        wishes: listOf(p.id, f),
+        keeps: keeps(db, viewer, p),
+      });
+    },
+    celebrations: (): Viewed<api.Celebrations> => {
       const all = celebrationsOf(null);
       return answer({
         upcoming: upcoming(all),
         past: all.filter((c) => !c.upcoming).sort((a, b) => b.nextDate.localeCompare(a.nextDate)),
       });
     },
-    celebration: (c: Celebration): api.Celebration => answer(celebration(c)),
-    celebrationPage: (c: Celebration): api.CelebrationPage => {
-      const view = celebration(c);
+    celebration: (id: string): Viewed<api.Celebration> => answer(celebration(mustGetCelebration(db, id))),
+    celebrationPage: (id: string): Viewed<api.CelebrationPage> => {
+      const view = celebration(mustGetCelebration(db, id));
       return answer({
         celebration: view,
-        lists: view.people.map((id) => people().get(id)).filter((p): p is Person => Boolean(p))
+        lists: view.people.map((pid) => people().get(pid)).filter((p): p is Person => Boolean(p))
           .sort((a, b) => a.name.localeCompare(b.name))
-          .map((p) => ({ person: person(p), wishes: listOf(p.id, { celebration: c.id }) })),
+          .map((p) => ({ person: person(p), wishes: listOf(p.id, { celebration: id }) })),
       });
     },
   };

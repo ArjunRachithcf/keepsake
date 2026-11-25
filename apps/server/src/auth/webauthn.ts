@@ -2,7 +2,8 @@
 // and at every sign-in, no attestation. Challenges live in memory for 5 minutes and are used once.
 import {
   generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse,
-  type AuthenticationResponseJSON, type AuthenticatorTransport, type RegistrationResponseJSON,
+  type AuthenticationResponseJSON, type AuthenticatorTransport, type PublicKeyCredentialCreationOptionsJSON,
+  type PublicKeyCredentialRequestOptionsJSON, type RegistrationResponseJSON,
 } from '@simplewebauthn/server';
 import { randomBytes } from 'node:crypto';
 import type { Config } from '../config';
@@ -12,9 +13,9 @@ export interface StoredCredential { id: string; publicKey: Uint8Array; counter: 
 
 /** The WebAuthn operations Keepsake needs; tests swap in a fake, production uses @simplewebauthn/server. */
 export interface WebAuthn {
-  registrationOptions(i: { userId: string; userName: string; exclude: StoredCredential[] }): Promise<{ challenge: string; options: object }>;
+  registrationOptions(i: { userId: string; userName: string; exclude: StoredCredential[] }): Promise<{ challenge: string; options: PublicKeyCredentialCreationOptionsJSON }>;
   verifyRegistration(i: { response: unknown; challenge: string }): Promise<NewCredential | null>;
-  authenticationOptions(): Promise<{ challenge: string; options: object }>;
+  authenticationOptions(): Promise<{ challenge: string; options: PublicKeyCredentialRequestOptionsJSON }>;
   /** The credential id the response claims, before any verification (to look the passkey up). */
   credentialId(response: unknown): string | null;
   verifyAuthentication(i: { response: unknown; challenge: string; credential: StoredCredential }): Promise<{ newCounter: number } | null>;

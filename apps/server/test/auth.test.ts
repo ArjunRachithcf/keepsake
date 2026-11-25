@@ -124,6 +124,26 @@ describe('sign-in', () => {
     for (let i = 0; i < 21; i++) last = (await post('/api/auth/sign-in/options')).statusCode;
     expect(last).toBe(429);
   });
+
+  it('one address cannot use up another\'s budget: refused tries do not count towards the global 300', async () => {
+    const from = (remoteAddress: string) => app.inject({ method: 'POST', url: '/api/auth/sign-in/options', headers: H, remoteAddress });
+    // 400 tries from one address: 20 let through, the rest refused by its own limit (and not counted globally).
+    const flood = [];
+    for (let i = 0; i < 400; i++) flood.push((await from('192.0.2.7')).statusCode);
+    expect(flood.filter((c) => c === 200)).toHaveLength(20);
+    // Another client still has all of its own 20.
+    const other = [];
+    for (let i = 0; i < 20; i++) other.push((await from('198.51.100.9')).statusCode);
+    expect(other.every((c) => c === 200)).toBe(true);
+  });
+
+  it('IPv6 counts by /64: one host cannot spread its tries over its addresses', async () => {
+    const from = (remoteAddress: string) => app.inject({ method: 'POST', url: '/api/auth/sign-in/options', headers: H, remoteAddress });
+    const codes = [];
+    for (let i = 0; i < 21; i++) codes.push((await from(`2001:db8:7:7::${(i + 1).toString(16)}`)).statusCode);
+    expect(codes.at(-1)).toBe(429);
+    expect((await from('2001:db8:7:8::1')).statusCode).toBe(200);
+  });
 });
 
 describe('invites', () => {
@@ -275,6 +295,35 @@ describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
     expect(v.statusCode, v.body).toBe(200);
     expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_alex')).all().map((k) => k.id)).toEqual(['cred-new']);
     expect((await call('GET', '/api/household', old)).statusCode).toBe(401);
+  });
+
+  it('recovery also takes the admin\'s open invites: the lost device cannot use one', async () => {
+    const inv = await call('POST', '/api/people/p_sam/invites', sessionCookie(hh, 'p_alex'));
+    expect(inv.statusCode).toBe(201);
+    const file = createRecoveryLink(hh, cfg, 'p_alex');
+    const token = readFileSync(file, 'utf8').trim().split('#')[1]!;
+    const o = (await call('POST', '/api/auth/enrol/options', '', { token })).json();
+    expect((await call('POST', '/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: 'cred-new', challenge: o.options.challenge } })).statusCode).toBe(200);
+    expect((await call('POST', '/api/auth/enrol/options', '', { token: inv.json().url.split('#')[1] })).statusCode).toBe(401);
+  });
+
+  it('an admin, just signed in with a passkey, resets the passkeys of someone who lost every device; audited', async () => {
+    hh.insert(t.passkey).values({ id: 'pk-sam', personId: 'p_sam', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
+    const sams = pkSession('p_sam', 'pk-sam');
+    const old = (personId: string) => `keepsake_session=${createSession(hh, personId, 'pk1', new Date(Date.now() - 6 * 60_000)).token}`;
+    // not someone else, not with a sign-in older than 5 minutes, never an admin's
+    expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_robin', 'pk1'))).statusCode).toBe(403);
+    expect((await call('POST', '/api/people/p_sam/passkeys/reset', old('p_alex'))).statusCode).toBe(403);
+    const admin = await call('POST', '/api/people/p_alex/passkeys/reset', pkSession('p_alex', 'pk1'));
+    expect(admin.statusCode).toBe(409);
+    expect(admin.json().error).toBe('an admin recovers with keepsake recover');
+    expect((await call('POST', '/api/people/p_nobody/passkeys/reset', pkSession('p_alex', 'pk1'))).statusCode).toBe(404);
+    // the reset: passkeys and sessions gone, then the usual invite works again
+    expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'))).statusCode).toBe(204);
+    expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toEqual([]);
+    expect((await call('GET', '/api/household', sams)).statusCode).toBe(401);
+    expect(hh.select().from(t.audit).all()).toEqual([expect.objectContaining({ actorId: 'p_alex', action: 'passkeys_reset', subjectId: 'p_sam' })]);
+    expect((await call('POST', '/api/people/p_sam/invites', pkSession('p_alex', 'pk1'))).statusCode).toBe(201);
   });
 
   it('an admin who stops being one takes their unused invites along', async () => {

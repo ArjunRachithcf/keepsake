@@ -1,39 +1,30 @@
 // Sign-in (Philobiblos ADR 0010), standalone only: under HomersLab these answer 404 (HomersLab signs people in).
 // The setup link makes the first admin; nobody becomes admin by arriving first. Your passkeys and sessions are yours
-// to list, remove and end; a kid's parent (or an admin) can end someone's sessions when a device is lost.
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+// to list, remove and end; a kid's parent (or an admin) can end someone's sessions when a device is lost; an admin,
+// just signed in, can reset the passkeys of someone who lost them all.
 import { ulid } from 'ulid';
 import type { Challenges, WebAuthn } from '../auth/webauthn';
 import type { Config } from '../config';
-import { SESSION_COOKIE, SESSION_DAYS, cookieOptions, isFresh, type Data } from '../data';
+import { RESET_FRESH_MINUTES, type Data } from '../data';
 import { Refused } from '../errors';
+import type { Req, Res, Router } from '../router';
 import { object, text } from '../validate';
 
-export async function authRoutes(app: FastifyInstance, cfg: Config, data: Data, webauthn: WebAuthn, challenges: Challenges, limited: object) {
+export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAuthn, challenges: Challenges) {
   const standaloneOnly = () => {
     if (cfg.mode !== 'standalone') throw new Refused(404, 'HomersLab signs people in');
   };
-  const key = (req: FastifyRequest) => data.clientKey(req);
   // A sign-in replaces this browser's earlier session and remembers the passkey.
-  const signIn = (req: FastifyRequest, reply: FastifyReply, personId: string, passkeyId: string) => {
-    data.auth.endSession(req.cookies?.[SESSION_COOKIE]);
-    const { token } = data.auth.createSession(personId, passkeyId);
-    void reply.setCookie(SESSION_COOKIE, token, cookieOptions(SESSION_DAYS * 86_400));
-    return data.view(data.people.get(personId)).signedIn();
-  };
-  const fresh = (req: FastifyRequest) => {
-    const s = req.caller!.session;
-    if (!s || !isFresh(s)) throw new Refused(403, 'sign in again to do this');
+  const signIn = (r: Req, res: Res, personId: string, passkeyId: string) => {
+    res.startSession(data.auth.signIn(r, personId, passkeyId));
+    return data.publicView.signedIn(personId);
   };
 
-  app.get('/auth/session', { config: { auth: 'public' } }, async (req) => {
-    const c = data.caller(req);
-    return c && c !== 'no-role' ? data.view(c.person).signedIn() : data.publicView.signedOut(cfg, cfg.mode === 'standalone' && data.setupNeeded());
-  });
+  api.get('/auth/session', { public: true }, (r) => data.session(r));
 
-  app.post('/auth/enrol/options', { config: limited }, async (req) => {
+  api.post('/auth/enrol/options', { public: true, signIn: true }, async (r) => {
     standaloneOnly();
-    const b = object(req.body, ['token', 'name']);
+    const b = object(r.body, ['token', 'name']);
     const invite = data.auth.findInvite(b.token);
     if (!invite) throw new Refused(401, 'this link is unknown, used or expired');
     if (invite.kind === 'setup') {
@@ -41,17 +32,17 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, data: Data, 
       // The first admin's id is chosen now, so the authenticator's user handle is the person's id.
       const newPersonId = ulid();
       const { challenge, options } = await webauthn.registrationOptions({ userId: newPersonId, userName: name, exclude: [] });
-      return data.publicView.enrolStart(challenges.put({ challenge, kind: 'enrol', inviteId: invite.id, name, newPersonId }, key(req)), options, name);
+      return data.publicView.enrolStart(challenges.put({ challenge, kind: 'enrol', inviteId: invite.id, name, newPersonId }, data.clientKey(r)), options);
     }
     const p = data.auth.invitee(b.token);
     if (!p) throw new Refused(401, 'this link is unknown, used or expired');
     const { challenge, options } = await webauthn.registrationOptions({ userId: p.id, userName: p.name, exclude: data.auth.credentialsOf(p.id) });
-    return data.publicView.enrolStart(challenges.put({ challenge, kind: 'enrol', inviteId: invite.id }, key(req)), options, p.name);
+    return data.publicView.enrolStart(challenges.put({ challenge, kind: 'enrol', inviteId: invite.id }, data.clientKey(r)), options);
   });
 
-  app.post('/auth/enrol/verify', { config: limited }, async (req, reply) => {
+  api.post('/auth/enrol/verify', { public: true, signIn: true }, async (r, res) => {
     standaloneOnly();
-    const b = (req.body ?? {}) as { challengeId?: unknown; response?: unknown; label?: unknown };
+    const b = (r.body ?? {}) as { challengeId?: unknown; response?: unknown; label?: unknown };
     const pending = challenges.take(b.challengeId, 'enrol');
     if (!pending?.inviteId) throw new Refused(401, 'this sign-in step expired; start again');
     const cred = await webauthn.verifyRegistration({ response: b.response, challenge: pending.challenge });
@@ -60,18 +51,18 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, data: Data, 
     const personId = data.auth.enrol({ inviteId: pending.inviteId, name: pending.name, newPersonId: pending.newPersonId }, cred, label);
     if (personId === 'taken') throw new Refused(409, 'this passkey is already enrolled');
     if (!personId) throw new Refused(401, 'this link is unknown, used or expired');
-    return signIn(req, reply, personId, cred.id);
+    return signIn(r, res, personId, cred.id);
   });
 
-  app.post('/auth/sign-in/options', { config: limited }, async (req) => {
+  api.post('/auth/sign-in/options', { public: true, signIn: true }, async (r) => {
     standaloneOnly();
     const { challenge, options } = await webauthn.authenticationOptions();
-    return data.publicView.signInStart(challenges.put({ challenge, kind: 'sign-in' }, key(req)), options);
+    return data.publicView.signInStart(challenges.put({ challenge, kind: 'sign-in' }, data.clientKey(r)), options);
   });
 
-  app.post('/auth/sign-in/verify', { config: limited }, async (req, reply) => {
+  api.post('/auth/sign-in/verify', { public: true, signIn: true }, async (r, res) => {
     standaloneOnly();
-    const b = (req.body ?? {}) as { challengeId?: unknown; response?: unknown };
+    const b = (r.body ?? {}) as { challengeId?: unknown; response?: unknown };
     // One answer for every failure: which passkeys exist is nobody's business.
     const refuse = () => new Refused(401, 'that passkey did not sign you in');
     const pending = challenges.take(b.challengeId, 'sign-in');
@@ -82,51 +73,55 @@ export async function authRoutes(app: FastifyInstance, cfg: Config, data: Data, 
     const ok = await webauthn.verifyAuthentication({ response: b.response, challenge: pending.challenge, credential: found.credential });
     if (!ok) throw refuse();
     data.auth.usedPasskey(found.credential.id, ok.newCounter);
-    return signIn(req, reply, found.person.id, found.credential.id);
+    return signIn(r, res, found.person.id, found.credential.id);
   });
 
-  app.post('/auth/sign-out', { config: { auth: 'public' } }, async (req, reply) => {
-    data.auth.endSession(req.cookies?.[SESSION_COOKIE]);
-    return reply.clearCookie(SESSION_COOKIE, { path: '/' }).code(204).send();
+  api.post('/auth/sign-out', { public: true }, (r, res) => {
+    data.auth.endThisSession(r);
+    res.endSession();
   });
 
   // Your own link for another device: needs a sign-in of the last few minutes (an old, stolen cookie cannot).
-  app.post('/me/passkeys/invite', async (req, reply) => {
+  api.post('/me/passkeys/invite', (r, res) => {
     standaloneOnly();
-    fresh(req);
-    const me = req.caller!.person;
-    const { url, expiresAt } = data.auth.createInvite({ kind: 'self', personId: me.id, createdBy: me.id });
-    return reply.code(201).send(data.view(me).link(url, expiresAt));
+    data.fresh(r);
+    res.created();
+    return data.auth.invite(r, 'self', data.me(r).id);
   });
 
-  app.get('/me/passkeys', async (req) => {
+  api.get('/me/passkeys', (r) => {
     standaloneOnly();
-    const me = req.caller!.person;
-    return data.view(me).passkeys(data.auth.passkeysOf(me.id));
+    return data.view(r).passkeys();
   });
 
   // Removing a passkey ends the sessions it signed in (they cascade); your last one stays.
-  app.delete<{ Params: { passkeyId: string } }>('/me/passkeys/:passkeyId', async (req, reply) => {
+  api.delete('/me/passkeys/:passkeyId', (r) => {
     standaloneOnly();
-    data.auth.removePasskey(req.caller!.person.id, req.params.passkeyId);
-    return reply.code(204).send();
+    data.auth.removeMyPasskey(r, r.params.passkeyId);
   });
 
   // "Sign out everywhere": every session of yours ends, this one too.
-  app.post('/me/sessions/end', async (req, reply) => {
+  api.post('/me/sessions/end', (r, res) => {
     standaloneOnly();
-    data.auth.endAllSessions(req.caller!.person.id);
-    return reply.clearCookie(SESSION_COOKIE, { path: '/' }).code(204).send();
+    data.auth.endMySessions(r);
+    res.endSession();
   });
 
   // A lost device: a kid's parent, or an admin, ends someone else's sessions (their passkeys stay; a device lock still
   // guards them, and the person removes one on another device).
-  app.post<{ Params: { personId: string } }>('/people/:personId/sessions/end', async (req, reply) => {
+  api.post('/people/:personId/sessions/end', (r) => {
     standaloneOnly();
-    const me = req.caller!.person;
-    const p = data.people.get(req.params.personId);
-    if (me.role !== 'admin' && !data.people.managesKid(me, p)) throw new Refused(403, 'a kid\'s parent or an admin only');
-    data.auth.endAllSessions(p.id);
-    return reply.code(204).send();
+    if (data.me(r).role !== 'admin' && !data.people.managesKid(r, r.params.personId)) throw new Refused(403, 'a kid\'s parent or an admin only');
+    data.auth.endSessionsOf(r.params.personId);
+  });
+
+  // Every device lost: an admin who signed in with a passkey in the last 5 minutes removes someone's passkeys (their
+  // sessions end with them), then sends the usual invite. Not an admin's: an admin recovers with `keepsake recover`.
+  // Recorded in the audit table.
+  api.post('/people/:personId/passkeys/reset', (r) => {
+    standaloneOnly();
+    if (data.me(r).role !== 'admin') throw new Refused(403, 'admins only');
+    data.fresh(r, RESET_FRESH_MINUTES);
+    data.auth.resetPasskeys(r, r.params.personId);
   });
 }

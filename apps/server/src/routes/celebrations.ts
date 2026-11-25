@@ -1,20 +1,18 @@
 // Celebrations (spec §3, ADR 0007): everyone sees them; grown-ups host; the host or an admin changes them.
-import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { POSTERS } from '@keepsake/contracts';
-import type { Config } from '../config';
 import type { CelebrationInput, Data } from '../data';
 import { Refused } from '../errors';
+import type { Router } from '../router';
 import { ids, isDate, nullableText, object, oneOf, text, type Body } from '../validate';
 
-type C = { Params: { celebrationId: string } };
 const FIELDS = ['name', 'date', 'place', 'poster', 'recurrence', 'people'];
 const RECURRENCES = ['none', 'yearly'] as const;
 
 function fields(b: Body, required: boolean): Partial<CelebrationInput> {
   if (b.date !== undefined && !isDate(b.date)) throw new Refused(400, 'date: a day, YYYY-MM-DD');
-  if (required && b.date === undefined) throw new Refused(400, 'date: required');
+  if (required && b.date === undefined) throw Refused.field('date', 'required');
   const people = ids(b, 'people', { min: 1, max: 100 });
-  if (required && !people) throw new Refused(400, 'people: required');
+  if (required && !people) throw Refused.field('people', 'required');
   const out: Partial<CelebrationInput> = {
     name: text(b, 'name', 60, { required }),
     date: b.date as string | undefined,
@@ -26,25 +24,22 @@ function fields(b: Body, required: boolean): Partial<CelebrationInput> {
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined));
 }
 
-export async function celebrationRoutes(app: FastifyInstance, _cfg: Config, data: Data) {
-  const me = (req: FastifyRequest) => req.caller!.person;
-  const view = (req: FastifyRequest) => data.view(me(req));
+export function celebrationRoutes(api: Router, data: Data) {
+  api.get('/celebrations', (r) => data.view(r).celebrations());
 
-  app.get('/celebrations', async (req) => view(req).celebrations());
-
-  app.post('/celebrations', async (req, reply) => {
-    const f = fields(object(req.body, FIELDS), true) as CelebrationInput;
-    const c = data.celebrations.add(me(req), { ...f, place: f.place ?? null });
-    return reply.code(201).send(view(req).celebration(c));
+  api.post('/celebrations', (r, res) => {
+    const f = fields(object(r.body, FIELDS), true) as CelebrationInput;
+    const id = data.celebrations.add(r, { ...f, place: f.place ?? null });
+    res.created();
+    return data.view(r).celebration(id);
   });
 
-  app.get<C>('/celebrations/:celebrationId', async (req) => view(req).celebrationPage(data.celebrations.get(req.params.celebrationId)));
+  api.get('/celebrations/:celebrationId', (r) => data.view(r).celebrationPage(r.params.celebrationId));
 
-  app.patch<C>('/celebrations/:celebrationId', async (req) =>
-    view(req).celebration(data.celebrations.edit(me(req), req.params.celebrationId, fields(object(req.body, FIELDS), false))));
-
-  app.delete<C>('/celebrations/:celebrationId', async (req, reply) => {
-    data.celebrations.remove(me(req), req.params.celebrationId);
-    return reply.code(204).send();
+  api.patch('/celebrations/:celebrationId', (r) => {
+    data.celebrations.edit(r, r.params.celebrationId, fields(object(r.body, FIELDS), false));
+    return data.view(r).celebration(r.params.celebrationId);
   });
+
+  api.delete('/celebrations/:celebrationId', (r) => data.celebrations.remove(r, r.params.celebrationId));
 }

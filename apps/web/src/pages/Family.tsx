@@ -108,6 +108,17 @@ function ManageHousehold() {
                 Sign out their devices<span className="sr-only"> ({p.name})</span>
               </button>
             )}
+            {standalone && p.signsIn && p.role !== 'admin' && (
+              <button type="button" className="btn btn-sm" onClick={() => {
+                if (!confirm(`Lost every device? This removes ${p.name}’s passkeys and signs them out everywhere; then you send them a new sign-in link.`)) return;
+                void run(async () => {
+                  await api(`/people/${p.id}/passkeys/reset`, { method: 'POST' });
+                  setLink({ name: p.name, link: await api<OneTimeLink>(`/people/${p.id}/invites`, { method: 'POST' }) });
+                });
+              }}>
+                Reset passkeys<span className="sr-only"> ({p.name})</span>
+              </button>
+            )}
             {standalone && p.id !== me.id && (
               <button type="button" className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Remove ${p.name} and all their wishes?`)) void run(() => api(`/people/${p.id}`, { method: 'DELETE' })); }}>
                 Remove<span className="sr-only"> {p.name}</span>

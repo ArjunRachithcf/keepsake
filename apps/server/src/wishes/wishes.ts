@@ -80,14 +80,14 @@ function checkPrice(db: Db, priceMinor: number | null): void {
 }
 
 /** At most this many wishes on a person's list (listed and waiting), and this many of one person's suggestions waiting for another. */
-export const MAX_WISHES = 300;
+export const MAX_WISHES = 300; // the messages below say these numbers
 export const MAX_SUGGESTIONS = 30;
 
 function onList(db: Db, personId: string): number {
   return db.select({ n: count() }).from(t.wish).where(and(eq(t.wish.personId, personId), inArray(t.wish.state, ['listed', 'awaiting_parent']))).get()?.n ?? 0;
 }
 function checkRoom(db: Db, personId: string): void {
-  if (onList(db, personId) >= MAX_WISHES) throw new Refused(409, `a list holds at most ${MAX_WISHES} wishes`);
+  if (onList(db, personId) >= MAX_WISHES) throw new Refused(409, 'a list holds at most 300 wishes');
 }
 
 const nextPosition = (db: Db, personId: string) =>
@@ -102,7 +102,7 @@ export function addWish(db: Db, me: Person, personId: string, i: WishInput): Wis
   if (state === 'suggested') {
     const waiting = db.select({ n: count() }).from(t.wish)
       .where(and(eq(t.wish.personId, owner.id), eq(t.wish.addedBy, me.id), eq(t.wish.state, 'suggested'))).get()?.n ?? 0;
-    if (waiting >= MAX_SUGGESTIONS) throw new Refused(409, `at most ${MAX_SUGGESTIONS} suggestions wait for one person`);
+    if (waiting >= MAX_SUGGESTIONS) throw new Refused(409, 'at most 30 suggestions wait for one person');
   } else checkRoom(db, owner.id);
   const now = new Date().toISOString();
   const id = ulid();

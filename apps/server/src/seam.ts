@@ -1,43 +1,79 @@
-// ADR 0003's seam, at run time. Every /api answer below 400 with a body must be one the view layer built: the flag
-// is set only when the object Fastify is about to serialize is a viewed (and frozen) answer, and the last hook before
-// the bytes leave (onSend) refuses anything else with a 500: a string, a Buffer, a stream, an object that bypassed the
-// view. Answers of 400 and above carry only `{ error }`. (`reply.hijack()` and `reply.raw` skip hooks: the routes may
-// not use them, test/architecture.test.ts.)
+// ADR 0003's seam, at run time, for every /api answer:
+// - below 400 with a body: the bytes Fastify is about to send must be exactly the serialization of a view answer, as
+//   this module recorded it before serializing (a private WeakMap, out of the routes' reach). A string, a Buffer, a
+//   stream, a copy, or anything changed after the view built it is refused with a 500;
+// - 3xx: refused (Keepsake's API never redirects);
+// - 400 and above: `{ error }` only, the message from the fixed catalogue (src/errors.ts);
+// - headers: only the names below.
+// At start-up it refuses any /api route not made by the router (src/router.ts), and any route-level hook, serializer or
+// error handler. This guards against mistakes in our own code, not against deliberately hostile code in the server:
+// test/architecture.test.ts's source bans (no Fastify, raw request, socket or reply in a route file) are the backstop.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { Refused } from './errors';
+import { isCatalogued, Refused } from './errors';
+import { isRouted } from './router';
+import { SECURITY_HEADERS } from './security-headers';
 import { isViewed } from './view/view';
 
-declare module 'fastify' {
-  interface FastifyRequest { viewed: boolean }
-}
-
+const RECORDED = new WeakMap<FastifyRequest, string>();
 const REFUSED = JSON.stringify({ error: 'something went wrong' });
 
-function isErrorBody(payload: unknown): boolean {
+/** The response headers an /api answer may carry. */
+export const API_HEADERS = new Set([
+  'content-type', 'content-length', 'cache-control', 'set-cookie', 'connection',
+  'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'retry-after',
+  ...Object.keys(SECURITY_HEADERS).map((h) => h.toLowerCase()),
+]);
+
+/** What a route may not set on itself: hooks, serializers, its own error handler. */
+const ROUTE_LEVEL = ['preParsing', 'preValidation', 'preHandler', 'preSerialization', 'onSend', 'onResponse', 'onError', 'onTimeout', 'onRequestAbort', 'errorHandler', 'serializerCompiler', 'childLoggerFactory'] as const;
+
+function errorBody(payload: unknown): boolean {
   if (typeof payload !== 'string') return false;
   try {
     const v = JSON.parse(payload) as unknown;
-    return Boolean(v) && typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 1 && typeof (v as { error?: unknown }).error === 'string';
+    return Boolean(v) && typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 1 && isCatalogued((v as { error?: unknown }).error);
   } catch { return false; }
 }
 
 const empty = (payload: unknown) => payload === undefined || payload === null || payload === '' || (Buffer.isBuffer(payload) && payload.length === 0);
+const isJson = (reply: FastifyReply) => /^application\/json(?:;|$)/.test(String(reply.getHeader('content-type') ?? ''));
 
-/** The guard as a function (tested on its own and installed by installSeam). */
+/** Why an answer may not leave, or null when it may. */
+function wrong(req: FastifyRequest, reply: FastifyReply, payload: unknown): string | null {
+  const status = reply.statusCode;
+  const extra = Object.keys(reply.getHeaders()).filter((h) => !API_HEADERS.has(h.toLowerCase()));
+  if (extra.length) return `headers ${extra.join(', ')}`;
+  if (status >= 300 && status < 400) return 'a redirect';
+  if (empty(payload)) return null;
+  if (!isJson(reply)) return 'not JSON';
+  if (status >= 400) return errorBody(payload) ? null : 'an error body outside the catalogue';
+  const recorded = RECORDED.get(req);
+  return typeof payload === 'string' && recorded !== undefined && payload === recorded ? null : 'an answer that did not come from the view layer';
+}
+
+/** The guard as a function (installed by installSeam as the API's last onSend hook). */
 export async function guardAnswer(req: FastifyRequest, reply: FastifyReply, payload: unknown): Promise<unknown> {
-  const ok = reply.statusCode >= 400 ? empty(payload) || isErrorBody(payload) : empty(payload) || req.viewed === true;
-  if (ok) return payload;
+  const why = wrong(req, reply, payload);
+  if (!why) return payload;
   (payload as { destroy?: () => void } | null)?.destroy?.();
-  req.log.error({ url: req.routeOptions.url, status: reply.statusCode }, 'an answer that did not come from the view layer');
-  if (reply.statusCode < 400) void reply.code(500);
-  void reply.type('application/json; charset=utf-8');
+  req.log.error({ url: req.routeOptions.url, status: reply.statusCode, why }, 'an answer refused at the seam');
+  for (const h of Object.keys(reply.getHeaders())) if (!API_HEADERS.has(h.toLowerCase()) || h.toLowerCase() === 'set-cookie') reply.removeHeader(h);
+  void reply.code(500).type('application/json; charset=utf-8');
   return REFUSED;
 }
 
 export function installSeam(api: FastifyInstance): void {
-  api.decorateRequest('viewed', false);
+  api.addHook('onRoute', (r) => {
+    if (!isRouted(r.handler)) throw new Error(`${r.url}: an /api route must come from the router (src/router.ts)`);
+    for (const k of ROUTE_LEVEL) if ((r as unknown as Record<string, unknown>)[k]) throw new Error(`${r.url}: no route-level ${k}`);
+    if (r.schema?.response) throw new Error(`${r.url}: no response schema (Fastify would serialize the answer itself)`);
+    // The only route-level onRequest is the rate limit's, on the sign-in steps.
+    if (r.onRequest && !r.config?.signIn) throw new Error(`${r.url}: no route-level onRequest`);
+  });
   api.addHook('preSerialization', async (req, _reply, payload) => {
-    if (isViewed(payload)) req.viewed = true;
+    // Fastify serializes with JSON.stringify (no route may bring a serializer or a response schema): this string is
+    // what has to leave.
+    if (isViewed(payload)) RECORDED.set(req, JSON.stringify(payload));
     return payload;
   });
   api.addHook('onSend', guardAnswer);

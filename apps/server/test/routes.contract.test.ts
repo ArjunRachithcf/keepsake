@@ -27,7 +27,7 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
 
   // In spec order, as the household's admin (public operations without credentials). Under HomersLab, people and
   // passkeys are HomersLab's: those answer 409 or 404, which the spec declares.
-  const elsewhere = new Set(['addPerson', 'editPerson', 'removePerson', 'invitePerson', 'inviteSelf', 'listPasskeys', 'removePasskey', 'signOutEverywhere', 'endSessions']);
+  const elsewhere = new Set(['addPerson', 'editPerson', 'removePerson', 'invitePerson', 'inviteSelf', 'listPasskeys', 'removePasskey', 'signOutEverywhere', 'endSessions', 'resetPasskeys']);
   it.each(ops.map((o) => [`${o.method} ${o.path} (${o.op.operationId})`, o] as const))('%s', async (_name, o) => {
     const req = request(o);
     // Signing out everywhere would end the admin's sessions for the operations after it: someone else signs out.

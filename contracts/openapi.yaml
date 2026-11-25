@@ -206,6 +206,23 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /people/{personId}/passkeys/reset:
+    parameters:
+      - { $ref: '#/components/parameters/personId' }
+    post:
+      tags: [sign-in]
+      operationId: resetPasskeys
+      summary: >-
+        Removes the passkeys of someone who lost every device, ending their sessions and spending their open links;
+        then an admin sends the usual invite. An admin who signed in with a passkey in the last 5 minutes, for someone
+        who is not an admin (an admin recovers with `keepsake recover`). Recorded in the audit table. Standalone.
+      responses:
+        '204': { description: Their passkeys and sessions are gone }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
   /household:
     get:
       tags: [household]

@@ -8,6 +8,15 @@ assignment of a draw other than the one where they give (ADR 0004).
 
 - **One view layer.** Every route that returns wishes, claims, group gifts, ideas, questions or draws builds its
   answer with `viewFor(viewer)`; routes never serialize database rows themselves (an architecture test keeps it so).
+  The viewer is always the request's (`data.view(req)`), and each view helper takes ids and builds its own answer: no
+  route hands in a person, a row or a ready object.
+- **The seam** (M1, `apps/server/src/seam.ts`, `router.ts`). Route files get a narrow router, never the Fastify
+  instance, request or reply. Before an answer leaves, the seam compares the bytes about to be sent with what it
+  serialized itself from a view answer, refuses redirects, error bodies outside a fixed catalogue and unknown headers,
+  and at start-up refuses any route the router did not make and any route-level hook or serializer. **It guards
+  against mistakes in our own code, not against deliberately hostile code in the server**: code that sets out to get
+  around it can (the server is one process). The source bans in the architecture test (no Fastify, raw request,
+  socket, reply or hand-made bytes in a route file) are the backstop, and review is the rest.
 - **"Meant for them"**: the wish's person; for a kid's wish, the kid too. Managers of a kid see its claims (they
   coordinate), unless they are the one it's for. A guest is a viewer like any giver, never "meant for".
 - **Before filtering and sorting**: claims and shares are removed before any filter, count, sort, celebration list or

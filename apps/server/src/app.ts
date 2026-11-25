@@ -9,13 +9,14 @@ import { Challenges, simpleWebAuthn, type WebAuthn } from './auth/webauthn';
 import type { Config } from './config';
 import type { Db } from './db/open';
 import { dataFor } from './data';
-import { dropUntrustedIdentity } from './identity';
+import { clientKey, dropUntrustedIdentity } from './identity';
 import { isApi, servesPage } from './paths';
 import { authRoutes } from './routes/auth';
 import { celebrationRoutes } from './routes/celebrations';
 import { systemRoutes } from './routes/system';
 import { householdRoutes } from './routes/household';
 import { wishRoutes } from './routes/wishes';
+import { routerFor } from './router';
 import { installSeam } from './seam';
 import { SECURITY_HEADERS } from './security-headers';
 
@@ -47,28 +48,27 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   const webauthn = opts.webauthn ?? simpleWebAuthn(cfg);
   const challenges = new Challenges();
   const data = dataFor(cfg, db);
-  // The sign-in steps: 20 a minute per client (its socket address, or the address a configured proxy saw) and 300 a
-  // minute for everyone together, so neither a flood nor one client sharing an address with others stops sign-in for
-  // long (docs/security.md).
+  // The sign-in steps: 20 a minute per client (its socket address or the address a configured proxy saw; IPv6 by /64),
+  // and 300 a minute for everyone together, counting only the tries a client's own limit let through: one client's
+  // flood uses up its own budget and nobody else's (docs/security.md).
+  const signInLimit = { max: 20, timeWindow: '1 minute', keyGenerator: (req: FastifyRequest) => clientKey(cfg, req.socket.remoteAddress, req.headers) };
   const signInWindow = { start: 0, n: 0 };
-  const limited = {
-    auth: 'public' as const, signIn: true,
-    rateLimit: { max: 20, timeWindow: '1 minute', keyGenerator: (req: FastifyRequest) => data.clientKey(req) },
-  };
   await app.register(async (api) => {
     installSeam(api);
     api.addHook('onRequest', authHook(cfg, db));
-    api.addHook('onRequest', async (req, reply) => {
+    // preHandler: after the per-client limit (an onRequest hook on each sign-in route), so refused tries do not count.
+    api.addHook('preHandler', async (req, reply) => {
       if (!req.routeOptions.config.signIn) return;
       const now = Date.now();
       if (now - signInWindow.start > 60_000) { signInWindow.start = now; signInWindow.n = 0; }
       if (++signInWindow.n > 300) return reply.code(429).send({ error: 'too many tries; wait a minute' });
     });
-    await systemRoutes(api, cfg, data);
-    await authRoutes(api, cfg, data, webauthn, challenges, limited);
-    await householdRoutes(api, cfg, data);
-    await wishRoutes(api, cfg, data);
-    await celebrationRoutes(api, cfg, data);
+    const router = routerFor(api, signInLimit);
+    systemRoutes(router, data);
+    authRoutes(router, cfg, data, webauthn, challenges);
+    householdRoutes(router, cfg, data);
+    wishRoutes(router, data);
+    celebrationRoutes(router, data);
   }, { prefix: '/api' });
   const notFound = { error: 'not found' };
   const webDir = cfg.webDir && existsSync(cfg.webDir) ? cfg.webDir : null;

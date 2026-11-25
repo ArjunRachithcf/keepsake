@@ -212,6 +212,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/people/{personId}/passkeys/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Removes the passkeys of someone who lost every device, ending their sessions and spending their open links; then an admin sends the usual invite. An admin who signed in with a passkey in the last 5 minutes, for someone who is not an admin (an admin recovers with `keepsake recover`). Recorded in the audit table. Standalone. */
+        post: operations["resetPasskeys"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/household": {
         parameters: {
             query?: never;
@@ -1082,6 +1101,30 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    resetPasskeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Their passkeys and sessions are gone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     getHousehold: {

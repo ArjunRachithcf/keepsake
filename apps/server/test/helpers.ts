@@ -66,7 +66,7 @@ const PARAMS: Record<string, Record<string, string>> = {
   setWishOrder: { personId: 'p_alex' },
   editWish: { wishId: 'w_alex_tent' }, removeWish: { wishId: 'w_alex_old' },
   approveWish: { wishId: 'w_leo_kite' }, declineWish: { wishId: 'w_sug_for_alex' },
-  removePasskey: { passkeyId: 'pk2' }, endSessions: { personId: 'p_mia' },
+  removePasskey: { passkeyId: 'pk2' }, endSessions: { personId: 'p_mia' }, resetPasskeys: { personId: 'p_leo' },
   getCelebration: { celebrationId: 'c_xmas' }, editCelebration: { celebrationId: 'c_xmas' }, removeCelebration: { celebrationId: 'c_old' },
 };
 
@@ -170,12 +170,15 @@ export const hl = (id: string, name: string, role: string) => ({ 'x-homerslab-pe
 export function fakeWebAuthn(): WebAuthn {
   const challenge = () => randomBytes(16).toString('base64url');
   return {
-    async registrationOptions({ userId, userName }) { const c = challenge(); return { challenge: c, options: { challenge: c, user: { id: userId, name: userName } } }; },
+    async registrationOptions({ userId, userName }) {
+      const c = challenge();
+      return { challenge: c, options: { challenge: c, rp: { name: 'Keepsake', id: 'localhost' }, user: { id: userId, name: userName, displayName: userName }, pubKeyCredParams: [{ alg: -7, type: 'public-key' }] } };
+    },
     async verifyRegistration({ response, challenge: c }) {
       const r = response as { id?: string; challenge?: string } | undefined;
       return r?.challenge === c && r.id ? { id: r.id, publicKey: new Uint8Array([9]), counter: 0, transports: ['internal'], backedUp: true } : null;
     },
-    async authenticationOptions() { const c = challenge(); return { challenge: c, options: { challenge: c } }; },
+    async authenticationOptions() { const c = challenge(); return { challenge: c, options: { challenge: c, rpId: 'localhost', userVerification: 'required' } }; },
     credentialId(response) { const id = (response as { id?: unknown } | undefined)?.id; return typeof id === 'string' ? id : null; },
     async verifyAuthentication({ response, challenge: c, credential }) {
       const r = response as { id?: string; challenge?: string } | undefined;
