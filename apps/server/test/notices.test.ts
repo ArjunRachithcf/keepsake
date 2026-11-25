@@ -13,6 +13,8 @@ import { ORIGIN, TEST_P256DH, TEST_VAPID, sessionCookie } from './helpers';
 import { GUESTS, PEOPLE, as, makeHome, ok, pin, reads, setNow, type Guest, type Home, type Who } from './m4';
 import { vapidFrom } from '../src/push/webpush';
 import { subscribe } from '../src/push/push';
+import { buildApp } from '../src/app';
+import { standalone } from './helpers';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
 const BATCH = new Date('2026-12-02T08:00:00.000Z');
@@ -179,6 +181,35 @@ describe('a push says nothing', () => {
     expect([count(), calls]).toEqual([before, []]);
     await h.built.pusher.tick();
     expect([count(), calls]).toEqual([before + 1, ['p_quinn']]);
+  });
+
+  describe('the queue is durable: a stop or a crash before the tick loses nothing (PR #12 second review, N-M1)', () => {
+    const answered = async () => {
+      const h = await makeHome(ON);
+      const q = (await ok(as(h, 'quinn').send('POST', '/api/people/p_robin/questions', { text: 'Which size?' }))).json().id;
+      travel(h, BATCH); h.built.morning(BATCH); await h.built.pusher.idle();
+      await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'M' }));
+      const told = () => h.db.select().from(t.notice).where(eq(t.notice.kind, 'answered')).all().map((n) => n.personId);
+      expect([told(), h.db.select().from(t.pendingNotice).all().length]).toEqual([[], 1]);
+      return { h, told };
+    };
+
+    it('a stop (SIGTERM: app.close) makes what is pending into its notices first', async () => {
+      const { h, told } = await answered();
+      await h.built.app.close();
+      expect([told(), h.db.select().from(t.pendingNotice).all()]).toEqual([['p_quinn'], []]);
+    });
+
+    it('after a crash, the next start makes them', async () => {
+      const { h, told } = await answered();
+      // The process dies: no close, the queue's memory is gone; the database stays.
+      const next = await buildApp(standalone(ON), h.db, { pushTransport: async () => 201 });
+      try {
+        await next.pusher.tick();
+        expect([told(), h.db.select().from(t.pendingNotice).all()]).toEqual([['p_quinn'], []]);
+      } finally { await next.app.close(); await h.built.app.close(); }
+    });
+
   });
 });
 

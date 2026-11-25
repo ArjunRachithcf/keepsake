@@ -19,6 +19,16 @@ CREATE TABLE `notice` (
 );
 --> statement-breakpoint
 CREATE INDEX `notice_person` ON `notice` (`person_id`,`day`);--> statement-breakpoint
+CREATE TABLE `pending_notice` (
+	`id` text PRIMARY KEY NOT NULL,
+	`kind` text NOT NULL,
+	`subject_id` text NOT NULL,
+	`day` text NOT NULL,
+	`again` integer DEFAULT 0 NOT NULL,
+	`people` text,
+	`created_at` text NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE `push_subscription` (
 	`id` text PRIMARY KEY NOT NULL,
 	`person_id` text NOT NULL,

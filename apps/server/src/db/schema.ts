@@ -492,6 +492,21 @@ export const thankYou = sqliteTable('thank_you', {
 }, (t) => [uniqueIndex('thank_you_wish').on(t.wishId)]);
 
 /** The days a job ran (the morning batch, ADR 0010), so a restart after 08:00 runs it once and only once. */
+/**
+ * A change that tells someone, kept until the push queue's tick has made its notices (ADR 0010; PR #12 review, N-M1):
+ * a stop or a crash before the tick loses nothing. One row per change, whoever and however many are told; who is told
+ * is found at the tick (`people` only where the change itself names them: a draw's own people).
+ */
+export const pendingNotice = sqliteTable('pending_notice', {
+  id: text('id').primaryKey(),
+  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked'] }).notNull(),
+  subjectId: text('subject_id').notNull(),
+  day: text('day').notNull(),
+  again: integer('again').notNull().default(0),
+  people: text('people'),
+  createdAt: text('created_at').notNull(),
+});
+
 export const jobRun = sqliteTable('job_run', {
   name: text('name').notNull(),
   day: text('day').notNull(),

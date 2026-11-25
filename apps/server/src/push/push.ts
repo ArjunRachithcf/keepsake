@@ -9,10 +9,10 @@
 //   timing never depends on push services.
 // - The key (VAPID) is kept like the sealing key (push/keys.ts): outside the database and its backup.
 // - A standalone subscription is the session's: it ends when that session ends (sign-out, a lost device).
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, asc, count, eq, inArray, lt, or } from 'drizzle-orm';
 import { tell, type NoticeKind } from '../notices/notices';
-import type { Db } from '../db/open';
+import { asDb, type Db } from '../db/open';
 import * as t from '../db/schema';
 import { Refused } from '../errors';
 import { allowed, EgressError, PUSH_HOSTS, type Egress } from '../net/egress';
@@ -89,7 +89,13 @@ export function webPushTransport(egress: Egress, vapid: () => Vapid | null, subj
 }
 
 /** A notice to make in the queue (ADR 0010): who is told is worked out there, never in the request that caused it. */
-export interface Telling { kind: NoticeKind; subjectId: string; day: string; people: () => string[]; again?: boolean }
+/**
+ * A change that tells someone. `people` only where the change itself names them (a draw's people); otherwise who is
+ * told is found at the tick by the kind's resolver (`resolve`), so the request's work never depends on it.
+ */
+export interface Telling { kind: NoticeKind; subjectId: string; day: string; people?: string[]; again?: boolean }
+/** Who a pending change of this kind tells, found at the tick from its subject and day. */
+export type Resolver = (subjectId: string, day: string) => string[];
 
 /** A push service failing with a 4xx other than 404, 410 or 429 for this long drops the subscription. */
 export const FAILING_DAYS = 3;
@@ -108,15 +114,25 @@ const DAY = 86_400_000;
  * drops it (PR #12 review, L4). A subscription not confirmed for CONFIRM_DAYS goes (N4).
  */
 export class Pusher {
-  private tellings: Telling[] = [];
+  private resolvers: Partial<Record<NoticeKind, Resolver>> = {};
   private waiting = new Set<string>();
   private held = new Set<string>();
   private running: Promise<void> | null = null;
   private timer: NodeJS.Timeout | undefined;
   constructor(private readonly db: Db, private readonly transport: Transport | null, private readonly o: { tickMs?: number; jitterMs?: number } = {}) {}
 
-  /** A notice to make (and push) at the next tick. */
-  tell(t: Telling): void { this.tellings.push(t); }
+  /**
+   * A notice to make (and push) at the next tick: one durable row (pending_notice), the same work however many are
+   * told, so a stop or a crash before the tick loses nothing (PR #12 review, N-M1).
+   */
+  tell(x: Telling): void {
+    this.db.insert(t.pendingNotice).values({
+      id: randomUUID(), kind: x.kind, subjectId: x.subjectId, day: x.day, again: x.again ? 1 : 0,
+      people: x.people ? JSON.stringify(x.people) : null, createdAt: new Date().toISOString(),
+    }).run();
+  }
+  /** How a kind finds who it tells (data.ts). */
+  resolve(kind: NoticeKind, r: Resolver): void { this.resolvers[kind] = r; }
   /** People already told (the morning batch): pushed at the next tick. */
   wake(personIds: Iterable<string>): void { if (this.transport) for (const p of personIds) this.waiting.add(p); }
 
@@ -129,7 +145,30 @@ export class Pusher {
     };
     arm();
   }
-  stop(): void { clearTimeout(this.timer); this.timer = undefined; }
+  /** Stops ticking; what is pending becomes its notices first (their pushes wait for the next start's morning). */
+  async stop(): Promise<void> {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    await this.running;
+    this.makeNotices();
+  }
+
+  /** The pending changes become notices; returns who was told something new. Each row goes once its notices exist. */
+  private makeNotices(): string[] {
+    const told: string[] = [];
+    for (const x of this.db.select().from(t.pendingNotice).orderBy(asc(t.pendingNotice.createdAt), asc(t.pendingNotice.id)).all()) {
+      this.db.transaction((tx0) => {
+        const tx = asDb(tx0);
+        const named = x.people ? (JSON.parse(x.people) as string[]) : (this.resolvers[x.kind]?.(x.subjectId, x.day) ?? []);
+        // Someone who left the household since the change is told nothing.
+        const people = named.length ? tx.select({ id: t.person.id }).from(t.person).where(inArray(t.person.id, named)).all().map((p) => p.id) : [];
+        told.push(...tell(tx, people, x.kind, x.subjectId, x.day, { again: Boolean(x.again) }));
+        tx.delete(t.pendingNotice).where(eq(t.pendingNotice.id, x.id)).run();
+      });
+    }
+    return told;
+  }
+  private pending(): boolean { return Boolean(this.db.select({ id: t.pendingNotice.id }).from(t.pendingNotice).limit(1).get()); }
 
   /** One tick: what was handed over so far is told and pushed. */
   tick(): Promise<void> {
@@ -138,13 +177,12 @@ export class Pusher {
   }
   /** Ticks until nothing handed over is left (what a 429 held back waits for a real next tick). */
   async idle(): Promise<void> {
-    while (this.running || this.tellings.length || this.waiting.size) await this.tick();
+    while (this.running || this.pending() || this.waiting.size) await this.tick();
   }
 
   private async run(): Promise<void> {
     const now = Date.now();
-    const tellings = this.tellings.splice(0);
-    for (const x of tellings) for (const p of tell(this.db, x.people(), x.kind, x.subjectId, x.day, { again: x.again })) if (this.transport) this.waiting.add(p);
+    for (const p of this.makeNotices()) if (this.transport) this.waiting.add(p);
     if (!this.transport) { this.waiting.clear(); return; }
     // A session that has ended takes its device's subscription with it (the foreign key); unconfirmed ones go.
     pruneSessions(this.db);

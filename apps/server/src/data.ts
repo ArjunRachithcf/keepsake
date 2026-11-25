@@ -33,7 +33,7 @@ import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
 import { isId } from './validate';
 import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from './view/view';
-import { answerQuestion, answerWithWish, ask, declineQuestion, removeQuestion } from './questions/questions';
+import { answerQuestion, answerWithWish, ask, askersOf, declineQuestion, removeQuestion } from './questions/questions';
 import { addIdea, removeIdea } from './ideas/ideas';
 import {
   checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endDeviceSessions, forgetLink, getLink, GUEST_COOKIE, GUEST_DAYS, reissueLink, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
@@ -112,13 +112,16 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
 
   /** Notices (ADR 0010): made in the changing request, pushed from the queue after it. */
   // The request only hands over what to tell; who is told, and the push, are the queue's (PR #12 review, L6).
-  const tellLater = (people: () => string[], kind: NoticeKind, subjectId: string, o?: { again?: boolean }) => pusher.tell({ kind, subjectId, day: day(), people, again: o?.again });
+  // One durable row per change; who is told is found at the tick (PR #12 review, N-M1).
+  const tellLater = (kind: NoticeKind, subjectId: string, o?: { again?: boolean; people?: string[] }) => pusher.tell({ kind, subjectId, day: day(), people: o?.people, again: o?.again });
+  pusher.resolve('answered', (id) => askersOf(db, id));
+  pusher.resolve('thanked', (id, on) => thankRecipients(db, id, on));
   /** A change that may draw names, draw them again or clear them: the draw's people (but whoever did it) are told. */
   const drawsTold = <T>(r: Req, f: () => T): T => {
     const before = drawStamps(db);
     const v = f();
     const by = me(r).id;
-    for (const d of drawsChanged(db, before)) tellLater(() => d.people.filter((p) => p !== by), 'draw', d.celebrationId, { again: true });
+    for (const d of drawsChanged(db, before)) tellLater('draw', d.celebrationId, { again: true, people: d.people.filter((p) => p !== by) });
     return v;
   };
   const previews = { inFlight: new Set<string>(), all: 0, recent: new Map<string, number[]>() };
@@ -251,9 +254,9 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     questions: {
       ask: (r: Req, personId: string, text: string) => { const p = me(r); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
       // Its asker (someone of the household) is told it was answered: questions.ts hands the id to the notice only.
-      answer: (r: Req, id: string, text: string) => { answerQuestion(db, me(r), id, text, new Date(), (askers) => tellLater(askers, 'answered', id)); },
-      decline: (r: Req, id: string) => { declineQuestion(db, me(r), id, new Date(), (askers) => tellLater(askers, 'answered', id)); },
-      withWish: (r: Req, id: string, i: WishInput) => changed(answerWithWish(db, me(r), id, i, new Date(), (askers) => tellLater(askers, 'answered', id))),
+      answer: (r: Req, id: string, text: string) => { answerQuestion(db, me(r), id, text, new Date(), () => tellLater('answered', id)); },
+      decline: (r: Req, id: string) => { declineQuestion(db, me(r), id, new Date(), () => tellLater('answered', id)); },
+      withWish: (r: Req, id: string, i: WishInput) => changed(answerWithWish(db, me(r), id, i, new Date(), () => tellLater('answered', id))),
       remove: (r: Req, id: string) => removeQuestion(db, me(r), id),
     },
     ideas: {
@@ -330,8 +333,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     thanks: {
       say: (r: Req, wishId: string, text: string) => {
         const id = writeThanks(db, me(r), wishId, text, day());
-        const on = day();
-        tellLater(() => thankRecipients(db, id, on), 'thanked', id);
+        tellLater('thanked', id);
         return wishId;
       },
     },

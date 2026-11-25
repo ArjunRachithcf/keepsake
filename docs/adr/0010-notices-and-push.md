@@ -24,11 +24,13 @@ something is new.
   the push; Keepsake opens on My wishes and reads the news through the API, as the person. One topic (`keepsake`), a
   day to live: a push not yet delivered is replaced, not stacked.
 - **A queue, on a fixed tick** (PR #12 review, L6): the request that causes a notice only hands the queue who and
-  what; the queue writes the notices and encrypts and sends the pushes every 30 s (plus up to 30 s of jitter), so
+  what, as one durable row (`pending_notice`, the same work however many are told; second review, N-M1); the queue
+  turns the rows into notices and encrypts and sends the pushes every 30 s (plus up to 30 s of jitter), so
   neither an answer's time nor the moment a push arrives depends on, or points at, the request that caused it. Pushes
   go only through the egress client (ADR 0011) and only to a known push service (Google, Mozilla, Apple, Microsoft): a
   subscription's endpoint is checked when it is made, so a subscription cannot point Keepsake at the household's
-  network.
+  network. A stop (SIGTERM) makes what is pending into its notices before it ends; after a crash, the rows are still
+  there for the next start.
 - **What a push service answers** (L4; only its status is read, the body is never parsed): 404 or 410 drops the
   subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then); a 5xx, a
   timeout or our own failure never drops one; another 4xx drops it only after 3 days of failing.

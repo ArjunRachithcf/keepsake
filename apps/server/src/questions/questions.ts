@@ -99,12 +99,18 @@ function answerable(db: Db, me: Person, id: string, now: Date): Question {
 }
 
 /**
- * Who to tell that their question was answered (or declined), ADR 0010: the asker, if someone of the household. Handed
- * over as a function the push queue calls later, for every answer alike, guest asker or not (PR #12 review, L6); the
- * id goes to the asker's own notice and nowhere else: no answer carries it.
+ * That a question was answered (or declined), ADR 0010: handed to the push queue the same way for every answer, guest
+ * asker or not (PR #12 review, L6); the queue finds its asker at the tick (`askersOf`). The id goes to the asker's own
+ * notice and nowhere else: no answer carries it.
  */
-export type TellAsker = (askers: () => string[]) => void;
-const tellAsker = (q: Question, tellIt?: TellAsker) => { if (tellIt) tellIt(() => (q.askerId ? [q.askerId] : [])); };
+export type TellAsker = () => void;
+const tellAsker = (_q: Question, tellIt?: TellAsker) => { tellIt?.(); };
+
+/** Who is told that a question was answered: its asker, if someone of the household (a guest has no inbox). */
+export function askersOf(db: Db, questionId: string): string[] {
+  const q = db.select({ askerId: t.question.askerId }).from(t.question).where(eq(t.question.id, questionId)).get();
+  return q?.askerId ? [q.askerId] : [];
+}
 
 export function answerQuestion(db: Db, me: Person, id: string, text: string, now = new Date(), tellIt?: TellAsker): string {
   const q = answerable(db, me, id, now);
