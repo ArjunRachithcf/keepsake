@@ -5,6 +5,8 @@ CREATE TABLE `claim` (
 	`quantity` integer NOT NULL,
 	`state` text NOT NULL,
 	`given_on` text,
+	`occasion_on` text,
+	`revealed_on` text,
 	`named` integer DEFAULT 0 NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
@@ -24,6 +26,8 @@ CREATE TABLE `group_gift` (
 	`target_minor` integer NOT NULL,
 	`state` text NOT NULL,
 	`given_on` text,
+	`occasion_on` text,
+	`revealed_on` text,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
 	FOREIGN KEY (`wish_id`) REFERENCES `wish`(`id`) ON UPDATE no action ON DELETE cascade,
@@ -48,4 +52,5 @@ CREATE TABLE `share` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `share_wish_giver` ON `share` (`wish_id`,`giver_id`);--> statement-breakpoint
-CREATE INDEX `share_giver` ON `share` (`giver_id`);
+CREATE INDEX `share_giver` ON `share` (`giver_id`);--> statement-breakpoint
+ALTER TABLE `wish` ADD `was_for` text REFERENCES celebration(id) ON UPDATE no action ON DELETE set null;

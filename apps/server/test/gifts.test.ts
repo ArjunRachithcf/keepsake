@@ -5,7 +5,7 @@
 // and kids), every answer is byte for byte the answer in a twin household with the same changes but no gifts at all,
 // until the gift reaches its person (the day after the later of its occasion and the day it was given).
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { today } from '../src/celebrations/dates';
 import type { Db } from '../src/db/open';
@@ -19,6 +19,12 @@ const NOW = '2026-11-01T10:00:00.000Z';
 const TODAY = () => today(standalone().timezone);
 /** The household's day `n` days from today. */
 const D = (n: number) => new Date(Date.parse(`${TODAY()}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+// The clock stands still at one moment for every household of the file: both households of a comparison make their
+// changes at the same time, so a time in an answer can only differ if a gift changed it.
+const PINNED = new Date();
+beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(PINNED); });
+afterAll(() => { vi.useRealTimers(); });
 
 let built: BuiltApp | undefined;
 let db: Db;
@@ -91,11 +97,17 @@ const claim = async (w: string, state?: 'bought' | 'given', who: Who = 'quinn') 
   if (state) await ok(as(who).send('PATCH', `/api/wishes/${w}/claim`, { state }));
 };
 const groupGiven = async (w: string) => { await group(w); await ok(as('quinn').send('PATCH', `/api/wishes/${w}/group`, { state: 'given' })); };
-/** Given `n` days ago (the database's given_on: time travel). */
-const givenAgo = (w: string, n: number) => direct(() => {
-  db.update(t.claim).set({ givenOn: D(-n) }).where(eq(t.claim.wishId, w)).run();
-  db.update(t.groupGift).set({ givenOn: D(-n) }).where(eq(t.groupGift.wishId, w)).run();
-});
+/**
+ * Given `n` days ago (the database's given_on: time travel). `look`: whoever looks next sees today's state (a rebuild,
+ * which also latches what is revealed); without it, the next change comes first, before anyone has looked.
+ */
+const givenAgo = (w: string, n: number, look = true) => {
+  const f = () => {
+    db.update(t.claim).set({ givenOn: D(-n) }).where(eq(t.claim.wishId, w)).run();
+    db.update(t.groupGift).set({ givenOn: D(-n) }).where(eq(t.groupGift.wishId, w)).run();
+  };
+  if (look) direct(f); else f();
+};
 const dateOf = (cel: string, day: string) => ok(as('alex').send('PATCH', `/api/celebrations/${cel}`, { date: day }));
 const moveTo = (w: string, cel: string | null) => ok(as('sam').send('PATCH', `/api/wishes/${w}`, { celebrationId: cel }));
 const named = (w: string) => ok(as('quinn').send('PUT', `/api/wishes/${w}/named`, { named: true }));
@@ -134,8 +146,8 @@ const STATES: Record<string, State> = {
   'group gift after the occasion, Quinn named': {
     pre: (w) => dateOf(TARGETS[w].cel, D(-8)).then(), gifts: async (w) => { await groupGiven(w); givenAgo(w, 10); await named(w); }, over: yes, named: true, given: true, group: true, uma: true,
   },
-  'the celebration postponed after the gift': {
-    pre: (w) => dateOf(TARGETS[w].cel, D(-3)).then(), gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5); },
+  'the celebration postponed after the gift, before its day': {
+    pre: (w) => dateOf(TARGETS[w].cel, D(-3)).then(), gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5, false); },
     post: (w) => dateOf(TARGETS[w].cel, D(10)).then(), over: no, given: true,
   },
   'the wish moved to a later celebration after the gift': {
@@ -146,16 +158,31 @@ const STATES: Record<string, State> = {
       });
       await moveTo(w, 'c_soon');
     },
-    gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5); },
+    gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5, false); },
     post: (w) => moveTo(w, TARGETS[w].cel).then(), over: no, given: true,
   },
   'the celebration removed after the gift': {
-    gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5); },
+    gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5, false); },
     post: (w) => ok(as('alex').send('DELETE', `/api/celebrations/${TARGETS[w].cel}`)).then(),
-    // Sam is in no other celebration: the day after it was given. Mia has Christmas still to come.
-    over: (w) => w === 'w_sam_book', given: true,
+    // The occasion kept when it was given still holds: the reveal never moves earlier.
+    over: no, given: true,
   },
-  'the giver removed (claimed)': {
+  'the wish moved to any time after the gift (an earlier celebration in between)': {
+    pre: () => Promise.resolve(direct(() => {
+      db.insert(t.celebration).values({ id: 'c_dinner', name: 'Dinner', date: D(-2), poster: 'night', recurrence: 'yearly', hostId: 'p_alex', createdAt: NOW }).run();
+      db.insert(t.celebrationPerson).values([{ celebrationId: 'c_dinner', personId: 'p_sam' }, { celebrationId: 'c_dinner', personId: 'p_mia' }]).run();
+    })),
+    gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 5, false); },
+    post: (w) => moveTo(w, null).then(), over: no, given: true,
+  },
+  'revealed, then the date corrected later (it stays revealed)': {
+    pre: (w) => dateOf(TARGETS[w].cel, D(-8)).then(), gifts: async (w) => { await claim(w, 'given'); givenAgo(w, 10); },
+    post: (w) => dateOf(TARGETS[w].cel, D(5)).then(), over: yes, given: true,
+  },
+  'the giver removed (bought)': {
+    gifts: (w) => claim(w, 'bought'), post: () => ok(as('alex').send('DELETE', '/api/people/p_quinn')).then(), over: no, quinnGone: true,
+  },
+  'the giver removed (only claimed: the claim goes with them)': {
     gifts: (w) => claim(w), post: () => ok(as('alex').send('DELETE', '/api/people/p_quinn')).then(), over: no, quinnGone: true,
   },
   'the giver removed after the occasion': {
@@ -177,21 +204,17 @@ const withId = (body: string, id: string): Record<string, unknown>[] => {
   return out;
 };
 
-/** The two runs made their changes at different moments: the wishes' change times are set alike in both. */
-const sameTimes = () => direct(() => db.update(t.wish).set({ updatedAt: NOW }).run());
 /** The twin household: the same changes, no gifts. */
 async function twin(target: Target, S: State) {
   await fresh();
   await S.pre?.(target);
   await S.post?.(target);
-  sameTimes();
 }
 async function withGifts(target: Target, S: State) {
   await fresh();
   await S.pre?.(target);
   await S.gifts(target);
   await S.post?.(target);
-  sameTimes();
 }
 
 describe.each(Object.keys(TARGETS) as Target[])('the surprise for %s (raw responses)', (target) => {
@@ -264,9 +287,9 @@ describe.each(Object.keys(TARGETS) as Target[])('the surprise for %s (raw respon
       ['DELETE', `/api/wishes/${target}/group`], ['PUT', `/api/wishes/${target}/group/share`, { amountMinor: 100 }],
       ['DELETE', `/api/wishes/${target}/group/share`],
     ] as const;
-    // New ids and the time of a change differ between runs; nothing else may.
-    const norm = (r: { statusCode: number; body: string; headers: Record<string, unknown> }) => `${r.statusCode} ${JSON.stringify(Object.entries(r.headers).filter(([k]) => k !== 'date' && k !== 'content-length').sort())} ${
-      r.body.replace(/"[0-9A-HJKMNP-TV-Z]{26}"/g, '"<id>"').replace(/"\d{4}-\d\d-\d\dT[^"]+"/g, '"<time>"')}`;
+    // New ids differ between runs (they are random); nothing else may, times included (the clock is pinned).
+    const norm = (r: { statusCode: number; body: string; headers: Record<string, unknown> }) => `${r.statusCode} ${JSON.stringify(Object.entries(r.headers).filter(([k]) => k !== 'date').sort())} ${
+      r.body.replace(/"[0-9A-HJKMNP-TV-Z]{26}"/g, '"<id>"')}`;
     const answers = async () => {
       const out: string[] = [];
       for (const who of T.shouldNot) {
@@ -353,22 +376,48 @@ describe('claims', () => {
     expect(db.select().from(t.claim).where(eq(t.claim.wishId, 'w_sam_book')).all()).toEqual([]);
   });
 
-  it('moving a wish keeps its claims (ADR 0007), and the reveal follows the wish', async () => {
-    await claim('w_sam_book', 'given');
-    givenAgo('w_sam_book', 5);
+  it('moving a wish keeps its claims (ADR 0007); the reveal moves later with it, never earlier', async () => {
     await dateOf('c_xmas', D(-3));
-    expect((await as('sam').get('/api/home')).json().thanks.map((x: { wish: { id: string } }) => x.wish.id)).toEqual(['w_sam_book']);
-    // Back on the list for Sam once its occasion is later again: moved to a celebration still to come…
-    direct(() => {
-      db.insert(t.celebration).values({ id: 'c_soon', name: 'Sam turns 40', date: D(20), poster: 'gold', recurrence: 'none', hostId: 'p_alex', createdAt: NOW }).run();
-      db.insert(t.celebrationPerson).values({ celebrationId: 'c_soon', personId: 'p_sam' }).run();
-    });
+    await claim('w_sam_book', 'given');
+    givenAgo('w_sam_book', 5, false); // given before Christmas, which was 3 days ago; nobody has looked since
+    // Moved to a celebration still to come before anyone looked: hidden until then.
+    db.insert(t.celebration).values({ id: 'c_soon', name: 'Sam turns 40', date: D(20), poster: 'gold', recurrence: 'none', hostId: 'p_alex', createdAt: NOW }).run();
+    db.insert(t.celebrationPerson).values({ celebrationId: 'c_soon', personId: 'p_sam' }).run();
     await moveTo('w_sam_book', 'c_soon');
     expect((await as('quinn').get('/api/people/p_sam')).json().wishes.map((w: { id: string }) => w.id)).not.toContain('w_sam_book');
     expect((await as('sam').get('/api/home')).json().wishes.map((w: { id: string }) => w.id)).toContain('w_sam_book');
     expect((await as('sam').get('/api/home')).json().thanks).toEqual([]);
-    // …and the giver cannot put a name on it before that.
     expect((await as('quinn').send('PUT', '/api/wishes/w_sam_book/named', { named: true })).statusCode).toBe(409);
+    // Moved back to Christmas: the occasion kept when it was given (Christmas) is past, but the later one holds.
+    await moveTo('w_sam_book', 'c_xmas');
+    expect((await as('sam').get('/api/home')).json().thanks.map((x: { wish: { id: string } }) => x.wish.id)).toEqual(['w_sam_book']);
+  });
+
+  it('once its person has it, it stays theirs: a date moved later does not hide it, and it cannot be un-given', async () => {
+    await dateOf('c_xmas', D(-8));
+    await claim('w_sam_book', 'given');
+    givenAgo('w_sam_book', 10);
+    expect((await as('sam').get('/api/home')).json().thanks.map((x: { wish: { id: string } }) => x.wish.id)).toEqual(['w_sam_book']);
+    await dateOf('c_xmas', D(5));
+    const sam = (await as('sam').get('/api/home')).json();
+    expect(sam.wishes.map((w: { id: string }) => w.id)).not.toContain('w_sam_book');
+    expect(sam.thanks.map((x: { wish: { id: string } }) => x.wish.id)).toEqual(['w_sam_book']);
+    expect((await as('quinn').send('PATCH', '/api/wishes/w_sam_book/claim', { state: 'bought' })).statusCode).toBe(409);
+    expect((await as('quinn').send('PUT', '/api/wishes/w_sam_book/named', { named: true })).statusCode).toBe(200);
+  });
+
+  it('a late gift for a one-off party counts for that party: its person learns it the next day', async () => {
+    direct(() => {
+      db.insert(t.celebration).values({ id: 'c_party', name: 'Party', date: D(-2), poster: 'berry', recurrence: 'none', hostId: 'p_alex', createdAt: NOW }).run();
+      db.insert(t.celebrationPerson).values({ celebrationId: 'c_party', personId: 'p_sam' }).run();
+      db.update(t.wish).set({ celebrationId: 'c_party' }).where(eq(t.wish.id, 'w_sam_book')).run();
+    });
+    // The party has passed: the wish is any time now (ADR 0007), and remembers the party.
+    expect((await as('sam').get('/api/home')).json().wishes.find((w: { id: string }) => w.id === 'w_sam_book')).toMatchObject({ celebrationId: null });
+    await claim('w_sam_book', 'given');
+    expect((await as('sam').get('/api/home')).json().wishes.map((w: { id: string }) => w.id)).toContain('w_sam_book');
+    givenAgo('w_sam_book', 1);
+    expect((await as('sam').get('/api/home')).json().thanks).toMatchObject([{ wish: { id: 'w_sam_book' }, celebration: { id: 'c_party' } }]);
   });
 
   it('a late gift: its person learns it the next day, not the same day', async () => {
@@ -391,21 +440,26 @@ describe('claims', () => {
     expect((await as('sam').get('/api/home')).json().wishes.map((w: { id: string }) => w.id)).toContain('w_sam_book');
   });
 
-  it('a removed giver\'s gifts stay, without a name: the wish does not come back, the thank-you does not go', async () => {
-    await claim('w_mia_bike'); // a claim, not given
+  it('a removed giver: a claim only made goes, a bought or given one stays without a name', async () => {
+    await claim('w_mia_bike'); // only claimed: goes with her
+    await claim('w_alex_old', 'bought'); // bought: stays
+    await ok(as('quinn').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 500 })); // an open group gift
     await dateOf('c_xmas', D(-8));
     await claim('w_sam_book', 'given');
     givenAgo('w_sam_book', 10);
     await named('w_sam_book');
     expect((await as('sam').get('/api/home')).json().thanks).toMatchObject([{ wish: { id: 'w_sam_book' }, from: [{ name: 'Quinn' }] }]);
     expect((await as('alex').send('DELETE', '/api/people/p_quinn')).statusCode).toBe(204);
-    expect(db.select().from(t.claim).all().filter((c) => c.wishId !== 'w_robin_scarf')).toMatchObject([{ giverId: null, named: 0 }, { giverId: null, named: 0 }]);
+    expect(db.select().from(t.claim).all().filter((c) => c.wishId !== 'w_robin_scarf').map((c) => [c.wishId, c.giverId, c.named]).sort())
+      .toEqual([['w_alex_old', null, 0], ['w_sam_book', null, 0]]);
+    expect(db.select().from(t.share).where(eq(t.share.wishId, 'w_sam_pan')).all()).toEqual([]); // an open group gift's share goes
     const sam = (await as('sam').get('/api/home')).json();
     expect(sam.wishes.map((w: { id: string }) => w.id)).not.toContain('w_sam_book');
     expect(sam.thanks).toMatchObject([{ wish: { id: 'w_sam_book' }, from: [] }]);
-    // The bike is still claimed, by nobody named: nobody else buys it twice.
-    expect((await as('robin').get('/api/people/p_mia')).json().wishes.find((w: { id: string }) => w.id === 'w_mia_bike').gift)
-      .toMatchObject({ claimed: 1, left: 0, claims: [{ giver: null, mine: false }] });
+    // The bike is free again; the socks stay bought, by nobody named.
+    expect((await as('robin').send('PUT', '/api/wishes/w_mia_bike/claim', { quantity: 1 })).statusCode).toBe(200);
+    expect((await as('robin').get('/api/people/p_alex')).json().wishes.find((w: { id: string }) => w.id === 'w_alex_old').gift)
+      .toMatchObject({ claimed: 1, left: 0, claims: [{ giver: null, state: 'bought', mine: false }] });
   });
 });
 
@@ -456,7 +510,8 @@ describe('group gifts', () => {
     expect((await as('uma').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 })).statusCode).toBe(409);
     await ok(as('uma').send('PUT', `${url}/share`, { amountMinor: 2000 }));
     const g = (await as('robin').send('PUT', `${url}/share`, { amountMinor: 1500 })).json().gift.group;
-    expect(g).toMatchObject({ totalMinor: 3500, myShareMinor: 1500, canManage: false, givers: [{ giver: { name: 'Uma' }, mine: false }, { giver: { name: 'Robin' }, mine: true }] });
+    expect(g).toMatchObject({ totalMinor: 3500, myShareMinor: 1500, canManage: false });
+    expect(g.givers).toEqual(expect.arrayContaining([{ giver: { id: 'p_uma', name: 'Uma' }, mine: false }, { giver: { id: 'p_robin', name: 'Robin' }, mine: true }]));
     expect(JSON.stringify(g)).not.toContain('2000');
     expect((await as('robin').send('PATCH', url, { state: 'bought' })).statusCode).toBe(403);
     expect((await as('quinn').send('DELETE', url)).statusCode).toBe(409); // others chipped in

@@ -1084,7 +1084,7 @@ components:
         named: { type: boolean, description: 'Your name is on it for the person (after the celebration)' }
         over: { type: boolean, description: 'Given, and its celebration is over: you may put your name on it' }
         celebrationId: { description: 'The occasion it counts for, as the wish is now (computed when read)', anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
-        forDate: { description: 'That occasion''s day; its person learns of a given gift the day after the later of this and the day it was given', anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
+        forDate: { description: 'That occasion''s day (once given, never earlier than the day kept then); its person learns of a given gift the day after the later of this and the day it was given', anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
 
     CelebrationRef:
       type: object

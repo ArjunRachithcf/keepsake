@@ -780,7 +780,7 @@ export interface components {
             over: boolean;
             /** @description The occasion it counts for, as the wish is now (computed when read) */
             celebrationId: components["schemas"]["Id"] | null;
-            /** @description That occasion's day; its person learns of a given gift the day after the later of this and the day it was given */
+            /** @description That occasion's day (once given, never earlier than the day kept then); its person learns of a given gift the day after the later of this and the day it was given */
             forDate: components["schemas"]["Day"] | null;
         };
         CelebrationRef: {

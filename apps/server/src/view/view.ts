@@ -131,7 +131,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
 
   /** What the viewer may see of a wish's gifts: everything for a giver (others' shares as names only), else nothing. */
   const gift = (w: Wish, g: Gifts): api.Gift => {
-    const byTime = <T extends { createdAt: string }>(xs: T[]) => [...xs].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const byTime = <T extends { createdAt: string; id: string }>(xs: T[]) => [...xs].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     const claimed = g.claims.reduce((n, c) => n + c.quantity, 0);
     const myClaim = g.claims.find((c) => c.giverId === viewer.id);
     const myShare = g.shares.find((x) => x.giverId === viewer.id);
@@ -151,6 +151,8 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone'>, viewer: 
       } : null,
       mine: mine ? (() => {
         const occ = occasionOf(w, mine.dated.givenOn ?? now, calendar());
+        // Given: the reveal never moves earlier than the occasion kept when it was given.
+        if (mine.dated.occasionOn && (!occ.date || mine.dated.occasionOn > occ.date)) occ.date = mine.dated.occasionOn;
         return { state: mine.state, named: mine.named, over: isOver(w, mine.dated, calendar(), now), celebrationId: occ.celebrationId, forDate: occ.date };
       })() : null,
     };

@@ -1,6 +1,6 @@
 // Celebrations (spec §3, ADR 0007): household objects with a date, place, poster and people. Adults host them; the
 // host or an admin changes them. The draw (M3) is not here yet.
-import { and, eq, inArray, lt, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -105,12 +105,12 @@ export function removeCelebration(db: Db, me: Person, id: string): void {
 }
 
 /**
- * ADR 0007: once a one-off celebration's day has passed, its wishes are for any time. Given ones too: what a gift was
- * for is the gift's own (claim.celebration_id), and a wish that is gone is gone whatever it is for, so nothing about a
- * wish's row tells its person whether it was given (ADR 0003). Yearly ones roll on to their next date and keep theirs. `today` is the household's day.
+ * ADR 0007: once a one-off celebration's day has passed, its wishes are for any time, given or not (the wish's row
+ * never depends on its gifts, ADR 0003); `was_for` remembers that day's celebration, so a late gift still counts for it
+ * (gifts/gifts.ts). Yearly ones roll on to their next date and keep theirs. `today` is the household's day. Returns
+ * whether any wish moved.
  */
-/** Whether any wish moved. */
 export function settlePastCelebrations(db: Db, today: string): boolean {
   const past = db.select({ id: t.celebration.id }).from(t.celebration).where(and(eq(t.celebration.recurrence, 'none'), lt(t.celebration.date, today))).all().map((c) => c.id);
-  return past.length > 0 && db.update(t.wish).set({ celebrationId: null }).where(inArray(t.wish.celebrationId, past)).run().changes > 0;
+  return past.length > 0 && db.update(t.wish).set({ wasFor: sql`${t.wish.celebrationId}`, celebrationId: null }).where(inArray(t.wish.celebrationId, past)).run().changes > 0;
 }

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "29af34b9-f79b-4d00-bac9-dbf518ef3a06",
+  "id": "f2ee91d4-6c43-408d-adae-f0d1a6278528",
   "prevId": "017bd1a7-2327-47be-8435-42f1c23cdbcc",
   "tables": {
     "audit": {
@@ -263,6 +263,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "occasion_on": {
+          "name": "occasion_on",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revealed_on": {
+          "name": "revealed_on",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "named": {
           "name": "named",
           "type": "integer",
@@ -385,6 +399,20 @@
         },
         "given_on": {
           "name": "given_on",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "occasion_on": {
+          "name": "occasion_on",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revealed_on": {
+          "name": "revealed_on",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -1198,6 +1226,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "was_for": {
+          "name": "was_for",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1250,6 +1285,19 @@
           "tableTo": "person",
           "columnsFrom": [
             "added_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "wish_was_for_celebration_id_fk": {
+          "name": "wish_was_for_celebration_id_fk",
+          "tableFrom": "wish",
+          "tableTo": "celebration",
+          "columnsFrom": [
+            "was_for"
           ],
           "columnsTo": [
             "id"
