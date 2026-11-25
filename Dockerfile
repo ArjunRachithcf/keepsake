@@ -11,18 +11,21 @@ RUN pnpm install --frozen-lockfile \
  && pnpm --filter @keepsake/web build \
  && pnpm --filter @keepsake/server build \
  && pnpm --filter @keepsake/server deploy --prod --legacy /out \
- && cp -r apps/server/dist /out/ \
+ && cp -r apps/server/dist apps/server/drizzle /out/ \
  && cp -r apps/web/dist /out/web
 
 FROM ${NODE_IMAGE}
 ENV NODE_ENV=production \
     KEEPSAKE_HOST=0.0.0.0 KEEPSAKE_PORT=8080 \
-    KEEPSAKE_DATA_DIR=/data KEEPSAKE_WEB_DIR=/app/web
+    KEEPSAKE_DATA_DIR=/data KEEPSAKE_WEB_DIR=/app/web KEEPSAKE_MIGRATIONS_DIR=/app/drizzle
 WORKDIR /app
 COPY --from=build /out/node_modules ./node_modules
 COPY --from=build /out/dist ./dist
+COPY --from=build /out/drizzle ./drizzle
 COPY --from=build /out/web ./web
 COPY LICENSE NOTICE ./
+# `docker exec <container> keepsake admins` and `keepsake recover <admin id>` (a lost admin's one-time link)
+RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/keepsake && chmod 755 /usr/local/bin/keepsake
 RUN mkdir -p /data && chown node:node /data && chmod 700 /data
 USER node
 VOLUME /data
