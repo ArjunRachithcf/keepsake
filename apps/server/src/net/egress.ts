@@ -1,4 +1,5 @@
-// The one HTTP client of the whole server (ADR 0011, Philobiblos' egress, its ADR 0009). Nothing else in apps/server
+// The one HTTP client of the whole server (ADR 0011): Philobiblos' egress (its ADR 0009), ported from Philobiblos commit
+// 1c8fbc8 (philobiblos#10); ADR 0011 lists every deliberate difference. Nothing else in apps/server
 // opens a connection (test/architecture.test.ts keeps it so): every outgoing request names a host on the allowlist, and
 // the answer is held to a size, a time and a content type before anyone reads it.
 //
@@ -20,7 +21,7 @@ import { VERSION } from '../version';
 export type Host = string | RegExp;
 export interface Rules { name: string; hosts: readonly Host[] }
 
-/** What the caller expects back: a shop's page (HTML), or a push service's answer (its body is not read beyond a little). */
+/** What the caller expects back: a shop's page (HTML), or a push service's answer (only its status is read). */
 export type Want = 'html' | 'push';
 export const LIMITS: Record<Want, number> = { html: 1 << 20, push: 4 << 10 };
 export const TIMEOUT_MS = 10_000;

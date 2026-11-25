@@ -7,7 +7,9 @@ Until M5 the server opened no connection at all (an architecture test said so). 
 fetch of an address someone typed is the classic server-side request forgery: the router, the HomersLab edge, a
 neighbour container, the cloud metadata address.
 
-**Decision**: Philobiblos' egress pattern (its ADR 0009, `src/net/egress.ts`), ported, and nothing else.
+**Decision**: Philobiblos' egress pattern (its ADR 0009, `apps/server/src/net/egress.ts`), ported from Philobiblos
+commit `1c8fbc8` (philobiblos#10, M3 b), and nothing else. Keepsake keeps its own copy (no shared package yet); a fix
+to either is checked against the other.
 
 - **One HTTP client** (`apps/server/src/net/egress.ts`) for the whole server; the architecture test allows `http`,
   `https`, `dns` and the like in that file only, no `fetch`, no HTTP library, and only the push queue (ADR 0010) and
@@ -34,6 +36,22 @@ neighbour container, the cloud metadata address.
   could not be read"): never the page's own words.
 - **Who**: someone of the household (never a guest); 30 pages an hour and one at a time per person, 4 at once in all.
 
-**Consequences**: the server now has one way out, for two purposes. The HomersLab manifest names its egress: the push
-services and the household's shops. Accepted: the shop learns the household's address and that someone looked at the
+**Deliberate differences from Philobiblos' client at `1c8fbc8`** (PR #12 review, N1):
+
+- **Redirects** may go to any host on the same list (Philobiblos: the same host, or targets its rule names, e.g. covers
+  to the Internet Archive). A shop's `shop.ch` → `www.shop.ch` needs both listed; nothing outside the list is reached.
+- **No http and no private hosts**: Philobiblos' `scheme: 'http'` and `privateOk` (its Ollama on the home network) are
+  left out; every Keepsake host is public and https on 443.
+- **Two kinds of answer**: `html` (a shop page, 1 MB) and `push` (a push service: only the status is read, the body is
+  never read, and a 2xx with a large body is still a 2xx); no `json` or `image` (no pictures are fetched).
+- **Header order**: the caller's headers first, then the client's own (User-Agent, Accept, no compression, length), so a
+  caller cannot replace them, as in Philobiblos.
+- **Tested over TLS**: the tests run a real https server with a CA, certificates and keys made at test time
+  (`test/tls.ts`; none committed), and check that a wrong name, an untrusted issuer or a missing CA is refused. There is
+  no plain-http switch for tests.
+- **Web Push** (RFC 8291 and 8292 with `node:crypto`) is written anew for Keepsake rather than taken from
+  Philobiblos' `src/push`, and tested against RFC 8291 Appendix A byte for byte.
+
+**Consequences**: the server now has one way out, for two purposes. The HomersLab manifest names its egress as Philobiblos does: the
+household's shops as `'${KEEPSAKE_SHOP_HOSTS}'` in `egress`, the push services in `push_egress`. Accepted: the shop learns the household's address and that someone looked at the
 item; a listed shop's page can still say anything about itself, which the person sees before saving.

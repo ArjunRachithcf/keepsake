@@ -23,10 +23,18 @@ something is new.
   service sees the same few bytes each time; the service worker shows "Something new in Keepsake" and nothing from
   the push; Keepsake opens on My wishes and reads the news through the API, as the person. One topic (`keepsake`), a
   day to live: a push not yet delivered is replaced, not stacked.
-- **Pushes leave from a queue**, after the request that caused them has answered, so no answer's timing depends on a
-  push service. They go only through the egress client (ADR 0011) and only to a known push service (Google, Mozilla,
-  Apple, Microsoft): a subscription's endpoint is checked when it is made, so a subscription cannot point Keepsake at
-  the household's network. A 404 or 410 drops the subscription; so do five failures in a row.
+- **A queue, on a fixed tick** (PR #12 review, L6): the request that causes a notice only hands the queue who and
+  what; the queue writes the notices and encrypts and sends the pushes every 30 s (plus up to 30 s of jitter), so
+  neither an answer's time nor the moment a push arrives depends on, or points at, the request that caused it. Pushes
+  go only through the egress client (ADR 0011) and only to a known push service (Google, Mozilla, Apple, Microsoft): a
+  subscription's endpoint is checked when it is made, so a subscription cannot point Keepsake at the household's
+  network.
+- **What a push service answers** (L4; only its status is read, the body is never parsed): 404 or 410 drops the
+  subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then); a 5xx, a
+  timeout or our own failure never drops one; another 4xx drops it only after 3 days of failing.
+- **Kept in step** (M2, L7, N4): the app sends its subscription again at every start and whenever it is shown again, so
+  a session that ended takes the subscription only until the next start; one made for an earlier VAPID key is ended
+  and made again; and a subscription its device has not sent again for 30 days goes.
 - **The VAPID key** is kept like the sealing key (ADR 0004): `KEEPSAKE_VAPID_KEY` or `_FILE`, under HomersLab a secret;
   standalone makes `keys/vapid.key` once (0600), never in `data/`; base64 or base64url, read as the sealing key is.
   Without it, or with `KEEPSAKE_EGRESS=off`, there is no push; the notices still show in the app.
@@ -39,8 +47,9 @@ something is new.
 - **The morning batch** (ADR 0008's 08:00, household time): questions that reached their person, celebrations a week
   away, "Remind me", reveal dates and gifts received, for everyone at once. It runs once a day (`job_run`); a server
   that was off at 08:00 runs it at its next start that day, catching up a week of questions, reveals and thank-you
-  prompts (reminders only on their day). Answers to a question, draws and thank-yous are told at once: only the person
-  told could learn anything from their timing, and they know it already.
+  prompts (reminders only on their day); a batch that fails is tried again 15 minutes later while it is still due
+  (L8). Answers to a question, draws and thank-yous are told at the queue's next tick: only the person told could learn
+  anything from their timing, and they know it already.
 - **"Remind me"** (`PUT /api/people/{id}/reminder`): 1 to 60 days before each of that person's celebrations, at the
   batch; the caller's own, never about themselves; `PersonPage.reminder` shows only the caller's, so nobody learns
   who keeps a reminder about them. A celebration's own people are reminded a week before without asking.
@@ -57,4 +66,4 @@ client in the server (ADR 0011); the service worker (`apps/web/public/sw.js`) al
 touches `/api`. Accepted: the push service learns when a device gets something (not what); a push can arrive while
 the screen is unlocked next to someone else, and says only "Something new". Under HomersLab a subscription has no
 Keepsake session to end with: it ends when the person turns notifications off on that device, the browser drops it,
-or the person leaves the household.
+the person leaves the household, or the app has not been opened on that device for 30 days.

@@ -93,7 +93,7 @@ celebration's own people hear of it a week before.
 | **M2** | Claims and group gifts, with the surprise invariant in one view layer, tested route by route (ADR 0003) |
 | **M3** | Draws: exclusions, draw together, each giver's view, reveal date, re-draw (ADR 0004) |
 | **M4** | Anonymous questions (ADR 0008); ideas; kids' wishes with a parent's approval; guest links (ADR 0009); sheet import |
-| **M5** | Polish: PWA, Web Push, reminders, thank-yous, add from a shop link through Philobiblos' hardened egress |
+| **M5** | Polish: PWA, Web Push, reminders, thank-yous, add from a shop link through a hardened egress (Philobiblos' pattern, ported: ADR 0011) |
 | **Gate** | A red-team review before the first release, as for HomersLab and Philobiblos |
 
 ## 8. Decisions
