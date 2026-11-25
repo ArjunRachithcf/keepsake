@@ -36,7 +36,7 @@ import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from '
 import { answerQuestion, answerWithWish, ask, declineQuestion, removeQuestion } from './questions/questions';
 import { addIdea, removeIdea } from './ideas/ideas';
 import {
-  createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endGuestSession, getLink, GUEST_COOKIE, GUEST_HOURS, guestGiving, linkUrl, reachOf, revokeLink, setGuestName,
+  createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endGuestSession, getLink, GUEST_COOKIE, guestGiving, linkUrl, reachOf, revokeLink, setGuestName,
   startGuestSession, type GuestLink,
 } from './guests/guests';
 import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
@@ -242,13 +242,18 @@ export function dataFor(cfg: Config, db: Db) {
     guest: {
       /** Read again: a change in this request (their name) shows in its answer. */
       view: (r: Req) => guestViewFor(db, cfg, getLink(db, guestOf(r).id) ?? guestOf(r), fastifyRequestOf(r)),
-      /** A link's token for a session: the cookie's token, its age, and the page for that guest. */
+      /**
+       * A link's token for a session, on one device (review N2): the cookie's token, its age, and the page for that
+       * guest. The browser's own guest session of that link goes on; another exchange of an opened link is refused.
+       */
       start: (r: Req, token: unknown) => {
         // The browser's own household session, if any: one the link is not for is refused (H1, defence in depth).
-        const c = callerOf(cfg, db, fastifyRequestOf(r));
+        const req = fastifyRequestOf(r);
+        const c = callerOf(cfg, db, req);
         const by = c === 'no-role' ? { id: '', role: 'kid' as const } : c?.person ?? null;
-        const s = startGuestSession(db, token, day(), new Date(), by);
-        return { cookie: s.token, maxAge: GUEST_HOURS * 3600, page: guestViewFor(db, cfg, s.link, fastifyRequestOf(r)).page() };
+        const now = new Date();
+        const s = startGuestSession(db, token, day(), now, by, req.cookies?.[GUEST_COOKIE]);
+        return { cookie: s.token, maxAge: Math.floor((s.expiresAt.getTime() - now.getTime()) / 1000), page: guestViewFor(db, cfg, s.link, req).page() };
       },
       signOut: (r: Req) => endGuestSession(db, fastifyRequestOf(r).cookies?.[GUEST_COOKIE]),
       setName: (r: Req, name: string) => { setGuestName(db, guestOf(r), name); },

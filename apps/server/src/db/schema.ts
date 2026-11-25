@@ -140,9 +140,9 @@ export const profile = sqliteTable('profile', {
  */
 export const AUDIT_ACTIONS = [
   'passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared',
-  // M4: an admin removed a question (never who asked it); guest links made and revoked; a sheet imported; an admin
-  // released an imported reservation.
-  'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released',
+  // M4: an admin removed a question (never who asked it); guest links made, opened (on their one device) and revoked;
+  // a sheet imported; an admin released an imported reservation.
+  'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened',
 ] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
@@ -343,11 +343,12 @@ export const drawAssignment = sqliteTable('draw_assignment', {
 
 /**
  * A guest's link (ADR 0009), which is also the guest: nobody outside the household gets an account. kind 'share': one
- * person's wishes (person_id), made by that person or a kid's parent; a kid's own waits for a parent (approved_at).
- * kind 'draw': a personal link for one named guest to one celebration's draw (celebration_id), made by its host; it
- * expires at the end of the draw's day, household time (computed when read). The token (256 bits) travels in the
- * link's #fragment and is kept here as its SHA-256 only. label: who it is for, from its maker; guest_name: the name the
- * guest gives (claims wait for it).
+ * person's wishes (person_id), made by another grown-up (a kid's: a parent), never the person. kind 'draw': a personal
+ * link for one named guest to one celebration's draw (celebration_id), made by its host; it expires at the end of the
+ * draw's day, household time (computed when read). The token (256 bits) travels in the link's #fragment and is kept
+ * here as its SHA-256 only. A link opens on one device: opened_at is set by the first exchange, which spends the token
+ * (review N2). label: who it is for, from its maker; guest_name: the name the guest gives (claims wait for it).
+ * approved_at: set when it is made.
  */
 export const guestLink = sqliteTable('guest_link', {
   id: text('id').primaryKey(),
@@ -361,6 +362,7 @@ export const guestLink = sqliteTable('guest_link', {
   approvedAt: text('approved_at'),
   createdAt: text('created_at').notNull(),
   revokedAt: text('revoked_at'),
+  openedAt: text('opened_at'),
 }, (t) => [
   uniqueIndex('guest_link_token').on(t.tokenHash),
   index('guest_link_person').on(t.personId),

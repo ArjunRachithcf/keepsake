@@ -1069,7 +1069,7 @@ paths:
     post:
       tags: [guest]
       operationId: startGuest
-      summary: 'A guest''s link token (from the link''s #fragment) for a short session cookie (keepsake_guest, 12 hours). One answer for every failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in'
+      summary: 'A guest''s link token (from the link''s #fragment) for a session cookie (keepsake_guest) on one device: the first exchange spends the token, and the session lasts as long as the link (at most 400 days); the browser holding it may exchange again, any other gets 409. One 401 for every other failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in'
       security: []
       requestBody:
         required: true
@@ -1081,6 +1081,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooMany' }
 
   /guest:
@@ -1219,7 +1220,7 @@ components:
       type: apiKey
       in: cookie
       name: keepsake_guest
-      description: 'A guest''s session (ADR 0009), from POST /guest/session: HttpOnly; Secure; SameSite=Strict; 12 hours; only /guest/*'
+      description: 'A guest''s session (ADR 0009), from POST /guest/session: HttpOnly; Secure; SameSite=Strict; as long as its link (at most 400 days), on one device; only /guest/*'
 
   parameters:
     personId:
@@ -1792,7 +1793,7 @@ components:
     GuestLink:
       type: object
       additionalProperties: false
-      required: [id, kind, label, guestName, person, celebration, lastDay, createdAt, revokedAt]
+      required: [id, kind, label, guestName, person, celebration, lastDay, createdAt, openedAt, revokedAt]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         kind: { enum: [share, draw] }
@@ -1802,6 +1803,7 @@ components:
         celebration: { description: 'A draw link: whose draw', anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
         lastDay: { description: 'A draw link: the last day it works (the draw''s day, household time)', anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
         createdAt: { $ref: '#/components/schemas/DateTime' }
+        openedAt: { description: 'When it was opened, on its one device (null: not yet)', anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
         revokedAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
 
     GuestLinks:

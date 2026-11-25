@@ -1,7 +1,8 @@
 // The guest page (spec §4, ADR 0009): what a share link or a personal draw link reaches, in a browser, without an
 // account. The token is in the link's #fragment: it is taken out of the address bar before anything else happens and
-// sent once in a POST for a short session, so no request line, log or history entry has it. Claims wait for the
-// guest's name; a guest sees nobody's name on a gift, only their own.
+// sent once in a POST for a session, so no request line, log or history entry has it. A link opens on one device only
+// (review N2): the first exchange spends it, and this browser keeps its session as long as the link works. Claims wait
+// for the guest's name; a guest sees nobody's name on a gift, only their own.
 import { useCallback, useEffect, useId, useState } from 'react';
 import { api, ApiError, message, type AskedQuestion, type GuestPage, type Wish } from '../api';
 import { day, host, money, since } from '../format';
@@ -13,19 +14,24 @@ import { Field, Group, Loading, Notice, PageHead, Poster, Sheet } from '../ui';
 /** The token from the fragment, taken out of the address at once; kept for this page load (StrictMode asks twice). */
 let taken: string | null | undefined;
 const takeGuestToken = () => (taken === undefined ? (taken = takeToken()) : taken);
+/** The one exchange of this page load: a link opens on one device, so it is never sent twice at once. */
+let exchanged: Promise<GuestPage> | undefined;
+const exchange = (token: string) => (exchanged ??= api<GuestPage>('/guest/session', { method: 'POST', body: { token } }));
 
 export function Guest() {
   const [token] = useState(takeGuestToken);
   const [page, setPage] = useState<GuestPage | null>(null);
-  const [ended, setEnded] = useState(false);
+  const [ended, setEnded] = useState<'ended' | 'elsewhere' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ask, setAsk] = useState(false);
   const load = useCallback(async (first = false) => {
     try {
-      setPage(first && token ? await api<GuestPage>('/guest/session', { method: 'POST', body: { token } }) : await api<GuestPage>('/guest'));
+      setPage(first && token ? await exchange(token) : await api<GuestPage>('/guest'));
       setError(null);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) setEnded(true); else setError(message(e));
+      if (e instanceof ApiError && e.status === 401) setEnded('ended');
+      else if (e instanceof ApiError && e.status === 409) setEnded('elsewhere');
+      else setError(message(e));
     }
   }, [token]);
   useEffect(() => { void load(true); }, [load]);
@@ -33,7 +39,9 @@ export function Guest() {
   if (ended) {
     return (
       <main className="screen" id="main"><PageHead title="Keepsake" />
-        <Notice title="This link does not open anything (any more)">It may have been revoked, its celebration may be over, or it waits for a parent’s yes. Ask whoever sent it for a new one.</Notice>
+        {ended === 'elsewhere'
+          ? <Notice title="This link was opened on another device">A link opens on one device only, and someone opened this one before you. If that wasn’t you, tell whoever sent it: they can make you a new one.</Notice>
+          : <Notice title="This link does not open anything (any more)">It may have been revoked, or its celebration may be over. Ask whoever sent it for a new one.</Notice>}
       </main>
     );
   }
@@ -42,7 +50,11 @@ export function Guest() {
 
   const who = page.person?.name;
   const title = page.kind === 'share' ? `${who ?? 'Someone'}’s wishes` : page.celebration?.name ?? 'Your draw';
-  const signOut = async () => { await api('/guest/sign-out', { method: 'POST' }).catch(() => undefined); setEnded(true); };
+  const signOut = async () => {
+    if (!confirm('Leave for good? The link opens on one device only: after this it opens nowhere, and you would need a new one.')) return;
+    await api('/guest/sign-out', { method: 'POST' }).catch(() => undefined);
+    setEnded('ended');
+  };
   return (
     <main className="screen" id="main">
       <PageHead title={title} eyebrow={page.name ? `Hello, ${page.name}` : 'By link'}
@@ -60,7 +72,7 @@ export function Guest() {
           <GuestQuestions questions={page.questions} name={who!} onAsk={() => setAsk(true)} />
         </>
       )}
-      <p className="section"><button type="button" className="btn btn-block" onClick={() => void signOut()}>Leave this page</button></p>
+      <p className="section"><button type="button" className="btn btn-block" onClick={() => void signOut()}>Forget this link on this device</button></p>
       <Sheet title={`Ask ${who ?? ''}`} open={ask} onClose={() => setAsk(false)}>
         {who && <AskForm name={who} url="/guest/questions" onSent={() => void load()} />}
       </Sheet>

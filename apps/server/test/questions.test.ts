@@ -6,11 +6,9 @@
 // answer, decline, add a wish instead, take back and remove.
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { today } from '../src/celebrations/dates';
 import * as t from '../src/db/schema';
-import { startGuestSession } from '../src/guests/guests';
 import { deliveryOf } from '../src/questions/questions';
-import { GUESTS, PEOPLE, as, makeHome, ok, pin, reads, setNow, tokenOf, type Guest, type Home, type Who } from './m4';
+import { GUESTS, PEOPLE, as, makeHome, ok, pin, reads, setNow, type Guest, type Home, type Who } from './m4';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
 const BATCH = new Date('2026-12-02T08:00:00.000Z');
@@ -26,8 +24,6 @@ async function askIn(h: Home, asker: Asker, person: string, text = 'Leather or w
   const r = await ok(as(h, asker).send('POST', askUrl(asker, person), { text }));
   return r.json().id as string;
 }
-/** Guest sessions last 12 hours: after the clock moves, each guest opens their link again. */
-const reopen = (h: Home) => { for (const g of Object.keys(GUESTS)) h.cookies[g] = `keepsake_guest=${startGuestSession(h.db, tokenOf(g), today('UTC')).token}`; };
 const ALL: (Who | Guest)[] = [...PEOPLE, ...(Object.keys(GUESTS) as Guest[])];
 
 describe.each([
@@ -56,11 +52,9 @@ describe.each([
     expect(mine).toEqual([expect.objectContaining({ id: qa, state: 'waiting', mine: true, arrivesAt: BATCH.toISOString(), on: '2026-12-02' })]);
 
     setNow(new Date(BATCH.getTime() - 1));
-    for (const h of [a, b, none]) reopen(h);
     await same('a moment before 08:00', true);
 
     setNow(BATCH);
-    for (const h of [a, b, none]) reopen(h);
     await same('from 08:00');
     const waiting = (await as(a, answerer).get('/api/home')).json().questions;
     expect(waiting).toEqual([{ id: qa, text: 'Leather or wool gloves?', on: '2026-12-02', for: { id: person, name: person === 'p_mia' ? 'Mia' : 'Robin' } }]);

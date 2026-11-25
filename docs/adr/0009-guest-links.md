@@ -19,7 +19,7 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
 - **The link is the guest**: one row per link (`guest_link`), so its maker makes one share link per guest (a label
   says who for, at most 20 open per person), and a draw link is one named cousin.
 - **The session**: the page reads the token from the fragment and POSTs it (`/guest/session`, rate limited as a
-  sign-in) for `keepsake_guest`, HttpOnly, Secure, SameSite=Strict, 12 hours; the guest opens the link again after.
+  sign-in) for `keepsake_guest`, HttpOnly, Secure, SameSite=Strict, on one device (see the second review below).
 - **What a guest sees**: the listed wishes of the one person (share link) or, once they opened their draw, their own
   person's list for the celebration; as a giver, but **with nobody's name on a gift** (counts and their own only): a
   forwarded link should not tell an outsider who in the family gives what. That person's sizes, likes and "please
@@ -63,3 +63,18 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   kid; for a draw link anyone in that draw), the guest session ends and the answer is the one 401 of an unknown
   session; every refusal there clears the guest cookie. So the person who signs in later on the family computer never
   sees the page a guest left open there.
+- **A link opens on one device** (N2): the first exchange spends the token (`opened_at`, set in the same statement
+  that checks it is unset) and its session lasts as long as the link (a share link until revoked, a draw link until
+  its day; at most 400 days, a browser's limit for a cookie). The browser that holds the session may follow the link
+  again; any other exchange answers "this link was opened on another device" (409, after every check the one 401
+  answers, so the person and kids still get only the 401). Its maker (and whoever lists it) sees "opened" with the
+  day; the opening is audited (`link_opened`, its actor the household member whose browser it was, else the link).
+  "Forget this link on this device" ends it for good, and the page says so first.
+- **Why**: a draw link's address is shown to the host, who is usually in the draw, and whoever opens it sees whom the
+  cousin drew and what is taken (for them too, if the cousin drew the host). The address cannot avoid its maker, so
+  opening it can no longer go unnoticed: a host who opens it locks the cousin out, and the cousin is told. The same
+  holds for anyone a share link reaches by mistake. When a link is made, its maker is told not to open it, not even to
+  try it, and for a draw link that someone in the draw would see their own gifts.
+- **Known and accepted**: a host in the draw (or anyone sent a link to their own wishes) who opens it before its guest
+  does sees what it shows; Keepsake cannot tell them from the guest. The guest then finds the link opened elsewhere and
+  asks for a new one, and the maker's list shows when it was opened. A lost device means a new link.

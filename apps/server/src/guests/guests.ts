@@ -8,11 +8,15 @@
 //   (draws/draws.ts addGuest: the draw's rules hold with them in it). It opens their own person and that person's list
 //   for the celebration, and ends with the draw's day (household time), computed when read.
 // - The token (256 bits) travels in the link's #fragment, so no request line or log has it; the browser POSTs it once
-//   for a short session (keepsake_guest, HttpOnly, Secure, SameSite=Strict, 12 hours). Both are kept as SHA-256 only.
-//   Every failure gets the one answer, and the exchange is rate limited like a sign-in.
+//   for a session (keepsake_guest, HttpOnly, Secure, SameSite=Strict). Both are kept as SHA-256 only. Every failure
+//   gets the one answer, and the exchange is rate limited like a sign-in.
+// - A link opens on one device (review N2): the first exchange spends the token and its session lasts as long as the
+//   link (up to GUEST_DAYS, a browser's limit); another exchange answers that it was opened on another device. Its
+//   maker sees it opened, and the opening is audited: someone who opens a link not meant for them locks its guest out,
+//   and the guest notices.
 // - A guest may set their name, claim (then bought, given, back), open their draw and ask a question: nothing else, and
 //   only on the one person or draw their link reaches. Revoking a link ends its sessions at once.
-import { and, count, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { and, count, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
@@ -28,14 +32,14 @@ import { getWish, type Wish } from '../wishes/wishes';
 
 export type GuestLink = typeof t.guestLink.$inferSelect;
 export const GUEST_COOKIE = 'keepsake_guest';
-export const GUEST_HOURS = 12;
-/** Open share links one person may have, and sessions one link keeps (the oldest go first). */
+/** A guest session's longest life: a link's own end comes first (linkWorks); browsers keep a cookie 400 days at most. */
+export const GUEST_DAYS = 400;
+/** Open share links one person may have. */
 export const MAX_SHARE_LINKS = 20; // the message says it
-const MAX_SESSIONS = 10;
-const HOUR = 3_600_000;
+const DAY = 86_400_000;
 const ts = () => new Date().toISOString();
 
-const audit = (db: Db, actorId: string, action: 'link_created' | 'link_revoked', id: string) =>
+const audit = (db: Db, actorId: string, action: 'link_created' | 'link_revoked' | 'link_opened', id: string) =>
   db.insert(t.audit).values({ id: ulid(), at: ts(), actorId, action, subjectId: id }).run();
 
 export const linkUrl = (cfg: Pick<Config, 'origin'>, token: string) => `${cfg.origin}/guest#${token}`;
@@ -143,6 +147,7 @@ export function revokeLink(db: Db, me: Person, id: string, leave: (linkId: strin
 // --- The guest's side -----------------------------------------------------------------------------------------------
 
 const UNKNOWN = () => new Refused(401, 'this link is unknown, used or expired');
+const OPENED = () => new Refused(409, 'this link was opened on another device: ask whoever sent it for a new one');
 
 /**
  * Whether a household member may hold a guest session of this link (defence in depth: they never receive the token
@@ -156,27 +161,9 @@ export function mayOpenAsGuest(db: Db, p: Pick<Person, 'id' | 'role'>, l: GuestL
   return !place || !participantsOf(db, [place.d.id]).some((x) => x.personId === p.id);
 }
 
-/**
- * A link's token for a session (one answer for every failure, also to a household member it is not for: `by`, the
- * browser's own household session, if any). Returns the session's token and when it ends.
- */
-export function startGuestSession(db: Db, token: unknown, today: string, now = new Date(), by?: Pick<Person, 'id' | 'role'> | null): { token: string; expiresAt: Date; link: GuestLink } {
-  if (!looksLikeToken(token)) throw UNKNOWN();
-  const l = db.select().from(t.guestLink).where(eq(t.guestLink.tokenHash, hashToken(token))).get();
-  if (!l || !linkWorks(db, l, today) || (by && !mayOpenAsGuest(db, by, l))) throw UNKNOWN();
-  const s = newToken();
-  const expiresAt = new Date(now.getTime() + GUEST_HOURS * HOUR);
-  db.transaction((tx) => {
-    tx.insert(t.guestSession).values({ id: hashToken(s), linkId: l.id, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString() }).run();
-    const old = tx.select({ id: t.guestSession.id }).from(t.guestSession).where(eq(t.guestSession.linkId, l.id))
-      .orderBy(desc(t.guestSession.createdAt)).all().slice(MAX_SESSIONS).map((x) => x.id);
-    if (old.length) tx.delete(t.guestSession).where(inArray(t.guestSession.id, old)).run();
-  });
-  return { token: s, expiresAt, link: l };
-}
-
-/** The guest behind a session cookie: an open session of a link that still works. */
-export function liveGuest(db: Db, cookie: string | undefined, today: string, now = new Date()): GuestLink | null {
+type GuestSession = typeof t.guestSession.$inferSelect;
+/** The open session behind a guest cookie (an expired one is deleted). */
+function sessionOf(db: Db, cookie: string | undefined, now: Date): GuestSession | null {
   if (!looksLikeToken(cookie)) return null;
   const s = db.select().from(t.guestSession).where(eq(t.guestSession.id, hashToken(cookie))).get();
   if (!s) return null;
@@ -184,6 +171,38 @@ export function liveGuest(db: Db, cookie: string | undefined, today: string, now
     db.delete(t.guestSession).where(eq(t.guestSession.id, s.id)).run();
     return null;
   }
+  return s;
+}
+
+/**
+ * A link's token for a session, on one device (review N2). One answer for every failure, also to a household member
+ * it is not for (`by`, the browser's own household session, if any); after those, a link opened already answers so,
+ * unless this very browser holds its session (`current`, its guest cookie: the guest followed the link again), which
+ * then goes on. The first exchange spends the token, in one statement, and is audited (`by` as the actor, else the
+ * link). Returns the session's token and when it ends.
+ */
+export function startGuestSession(db: Db, token: unknown, today: string, now = new Date(), by?: Pick<Person, 'id' | 'role'> | null, current?: string): { token: string; expiresAt: Date; link: GuestLink } {
+  if (!looksLikeToken(token)) throw UNKNOWN();
+  const l = db.select().from(t.guestLink).where(eq(t.guestLink.tokenHash, hashToken(token))).get();
+  if (!l || !linkWorks(db, l, today) || (by && !mayOpenAsGuest(db, by, l))) throw UNKNOWN();
+  const mine = sessionOf(db, current, now);
+  if (mine && mine.linkId === l.id) return { token: current!, expiresAt: new Date(mine.expiresAt), link: l };
+  if (l.openedAt) throw OPENED();
+  const s = newToken();
+  const expiresAt = new Date(now.getTime() + GUEST_DAYS * DAY);
+  db.transaction((tx) => {
+    const spent = tx.update(t.guestLink).set({ openedAt: now.toISOString() }).where(and(eq(t.guestLink.id, l.id), isNull(t.guestLink.openedAt))).run();
+    if (spent.changes !== 1) throw OPENED();
+    tx.insert(t.guestSession).values({ id: hashToken(s), linkId: l.id, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString() }).run();
+    audit(tx as unknown as Db, by?.id ?? l.id, 'link_opened', l.id);
+  });
+  return { token: s, expiresAt, link: { ...l, openedAt: now.toISOString() } };
+}
+
+/** The guest behind a session cookie: an open session of a link that still works. */
+export function liveGuest(db: Db, cookie: string | undefined, today: string, now = new Date()): GuestLink | null {
+  const s = sessionOf(db, cookie, now);
+  if (!s) return null;
   const l = getLink(db, s.linkId);
   return l && linkWorks(db, l, today) ? l : null;
 }

@@ -907,7 +907,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A guest's link token (from the link's #fragment) for a short session cookie (keepsake_guest, 12 hours). One answer for every failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in */
+        /** A guest's link token (from the link's #fragment) for a session cookie (keepsake_guest) on one device: the first exchange spends the token, and the session lasts as long as the link (at most 400 days); the browser holding it may exchange again, any other gets 409. One 401 for every other failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in */
         post: operations["startGuest"];
         delete?: never;
         options?: never;
@@ -1371,6 +1371,8 @@ export interface components {
             /** @description A draw link: the last day it works (the draw's day, household time) */
             lastDay: components["schemas"]["Day"] | null;
             createdAt: components["schemas"]["DateTime"];
+            /** @description When it was opened, on its one device (null: not yet) */
+            openedAt: components["schemas"]["DateTime"] | null;
             revokedAt: components["schemas"]["DateTime"] | null;
         };
         GuestLinks: {
@@ -3356,6 +3358,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
             429: components["responses"]["TooMany"];
         };
     };

@@ -67,6 +67,7 @@ export const MESSAGES = [
   'at most 20 links for one person', 'no such link', 'a draw holds at most 50 guests', 'tell us your name first',
   'someone in the household has that name: add something to tell them apart', 'guest links work once HomersLab lets guests in',
   'admins release an imported reservation', 'no such reservation',
+  'this link was opened on another device: ask whoever sent it for a new one',
   // the sheet import (M4, ADR 0005)
   'the file is not a CSV the importer reads', 'the file has more than 2000 rows', 'the file needs the columns Person and Item',
   'map or skip every name in the file first', 'people and occasions: names of up to 200 characters, each to an id or null',

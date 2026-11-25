@@ -125,7 +125,7 @@ someone opened theirs only before the day and not once a gift is bought since th
 2026-11-25 (M4, decided by default, open to change; ADR 0005, 0008, 0009): a question reaches its person at 08:00 the day
 after it was asked; kids do not ask, and a kid's questions go to the kid's parents, who answer them; 3 open questions per
 asker and person; a declined question is shown to its asker only; ideas are for grown-ups other than the person, never
-kids; one share link per guest (labelled), a 12-hour guest session from the link; guests see gifts without anyone's
+kids; one share link per guest (labelled), a guest session from the link (see below: on one device); guests see gifts without anyone's
 name, the household sees a guest's claims with the guest's name (unless a draw keeps them unnamed); a guest invited
 after the draw is a re-draw; the import maps unmatched occasions to any time and skips Bought rows.
 Decided on PR #11: a kid does not see questions a parent answered for them (answers are for the givers); guests see
@@ -136,6 +136,9 @@ its maker, once; the person's pages list no link for them; a household session a
 guest's only-made claims go when they can no longer manage them; guests are marked as guests and never carry a
 household member's name; a Reserved row with an unknown buyer is an imported reservation an admin can release; ideas
 show only their day; no guest link under HomersLab until Homeward #317.
+After its second review: a link opens on one device (the first exchange spends it, the session lasts as long as the
+link, another device is told it was opened elsewhere, its maker sees "opened"); a guest session left in a browser
+never opens with a household session it is not for.
 
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by

@@ -42,7 +42,7 @@ const setProfile = (db: Db, personId: string, tag: string) => {
 };
 
 describe('share links', () => {
-  it('the token is exchanged once by a POST for a short session; only hashes are kept', async () => {
+  it('the token is exchanged once by a POST for a session; only hashes are kept', async () => {
     const db = household();
     const s = await start(db);
     const made = await s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' });
@@ -54,7 +54,7 @@ describe('share links', () => {
     const r = await s.exchange(url);
     expect(r.statusCode, r.body).toBe(200);
     const set = String([r.headers['set-cookie']].flat()[0]);
-    expect(set).toMatch(/^keepsake_guest=[A-Za-z0-9_-]{43}; Max-Age=43200; Path=\/; HttpOnly; Secure; SameSite=Strict$/);
+    expect(set).toMatch(/^keepsake_guest=[A-Za-z0-9_-]{43}; Max-Age=34560000; Path=\/; HttpOnly; Secure; SameSite=Strict$/);
     expect(r.json()).toMatchObject({ kind: 'share', name: null, person: { id: 'p_robin', name: 'Robin' }, celebration: null, draw: null });
     // Neither token is in the database, only their SHA-256.
     const dump = JSON.stringify([db.select().from(t.guestLink).all(), db.select().from(t.guestSession).all()]);
@@ -114,10 +114,9 @@ describe('share links', () => {
     expect(db.select().from(t.guestSession).all()).toEqual([]);
     // Someone giving to them may (testing the link they made, say); someone not in the draw may.
     expect((await s.exchange(robin.url, 'p_sam')).statusCode).toBe(200);
-    expect((await s.exchange(mia.url, 'p_robin')).statusCode).toBe(200);
-    expect((await s.exchange(cousin.url, 'p_leo')).statusCode).toBe(401);
-    const g = await s.exchange(mia.url);
+    const g = await s.exchange(mia.url, 'p_robin');
     expect(g.statusCode).toBe(200);
+    expect((await s.exchange(cousin.url, 'p_leo')).statusCode).toBe(401);
     // Revoked: the session ends at once, the link opens nothing.
     expect((await s.person('p_sam').send('DELETE', `/api/links/${mia.link.id}`)).statusCode).toBe(204);
     expect((await s.guest(cookieOf(g)).get('/api/guest')).statusCode).toBe(401);
@@ -153,6 +152,52 @@ describe('share links', () => {
     const r = await a.built.app.inject({ method: 'POST', url: '/api/guest/session', payload: { token: made.url.split('#')[1] }, headers: { origin: ORIGIN, cookie: a.cookies[who]! } });
     expect(r.statusCode).toBe(401);
   }, 60_000);
+
+  it('a link opens on one device: the first exchange spends it, its maker sees it opened, and it is audited (review N2)', async () => {
+    const db = household();
+    const s = await start(db);
+    const made = (await s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' })).json();
+    expect(made.link.openedAt).toBeNull();
+    // Refused exchanges spend nothing.
+    expect((await s.exchange(made.url, 'p_robin')).statusCode).toBe(401);
+    expect(db.select().from(t.guestLink).get()!.openedAt).toBeNull();
+    const first = await s.exchange(made.url);
+    expect(first.statusCode).toBe(200);
+    const cookie = cookieOf(first);
+    // Another browser, with or without a household session that may open it: opened elsewhere, no session made.
+    for (const who of [undefined, 'p_sam']) {
+      const again = await s.exchange(made.url, who);
+      expect([again.statusCode, again.json(), again.headers['set-cookie']]).toEqual([409, { error: 'this link was opened on another device: ask whoever sent it for a new one' }, undefined]);
+    }
+    expect(db.select().from(t.guestSession).all()).toHaveLength(1);
+    // The same browser following the link again: its own session goes on (the same cookie, no new session).
+    const same = await s.inject({ method: 'POST', url: '/api/guest/session', payload: { token: made.url.split('#')[1] }, headers: { origin: ORIGIN, cookie } });
+    expect([same.statusCode, cookieOf(same)]).toEqual([200, cookie]);
+    expect(db.select().from(t.guestSession).all()).toHaveLength(1);
+    // The session lasts as long as the link (a browser keeps a cookie 400 days at most).
+    const row = db.select().from(t.guestSession).get()!;
+    expect(new Date(row.expiresAt).getTime() - new Date(row.createdAt).getTime()).toBe(400 * 86_400_000);
+    // Its maker sees it opened; the opening is audited once, with the link as its actor.
+    const listed = (await s.person('p_alex').get('/api/links')).json().links[0];
+    expect(listed.openedAt).toBe(db.select().from(t.guestLink).get()!.openedAt);
+    expect(listed.openedAt).not.toBeNull();
+    expect(db.select().from(t.audit).all().filter((a) => a.action === 'link_opened').map((a) => [a.actorId, a.subjectId])).toEqual([[made.link.id, made.link.id]]);
+    // A revoked link answers as unknown, opened or not.
+    await ok(s.person('p_alex').send('DELETE', `/api/links/${made.link.id}`));
+    expect((await s.exchange(made.url)).statusCode).toBe(401);
+  });
+
+  it('a draw link opened by its host spends it: the cousin is told it was opened on another device', async () => {
+    const db = withDraws(household());
+    db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    const s = await start(db);
+    const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
+    // Alex is in the draw: in his browser, refused; on his phone (no household session) it opens, and spends the link.
+    expect((await s.exchange(made.url, 'p_alex')).statusCode).toBe(401);
+    expect((await s.exchange(made.url)).statusCode).toBe(200);
+    expect((await s.exchange(made.url)).json().error).toBe('this link was opened on another device: ask whoever sent it for a new one');
+    expect((await s.person('p_alex').get('/api/links')).json().links[0].openedAt).not.toBeNull();
+  });
 
   it('the exchange is rate limited like a sign-in', async () => {
     const s = await start(household());

@@ -25,7 +25,7 @@ export function LinksList({ title, filter, make, footer }: {
   const run = async (f: () => Promise<unknown>) => { setError(null); try { await f(); await load(); } catch (e) { setError(message(e)); } };
   const what = (l: GuestLink) => [
     l.kind === 'share' ? `${l.person?.name ?? 'Someone'}’s wishes` : `${l.celebration?.name ?? 'A celebration'}’s draw`,
-    l.guestName && l.guestName !== l.label ? `opened as ${l.guestName}` : null,
+    l.openedAt ? `opened ${day(l.openedAt.slice(0, 10))}${l.guestName && l.guestName !== l.label ? ` as ${l.guestName}` : ''}` : 'not opened yet',
     l.revokedAt ? `revoked ${day(l.revokedAt.slice(0, 10))}` : l.lastDay ? `until ${day(l.lastDay)}` : `made ${day(l.createdAt.slice(0, 10))}`,
   ].filter(Boolean).join(' · ');
   return (
@@ -57,7 +57,10 @@ export function LinksList({ title, filter, make, footer }: {
         <div className="section">
           <Notice title={`The link for ${made.link.label}`}>
             <p>Send it yourself. It is shown only now: Keepsake keeps no copy. Making a new one is the way to see one again.</p>
-            <p><strong>Don’t open it yourself, and never send it to {made.link.person ? made.link.person.name : 'the people in the draw'}: it shows what has been taken.</strong></p>
+            <p>It opens on one device only: whoever opens it first keeps it, and the list here then says “opened”.</p>
+            {made.link.person
+              ? <p><strong>Don’t open it yourself, not even to try it, and never send it to {made.link.person.name}: it shows what has been taken, and once opened it opens nowhere else.</strong></p>
+              : <p><strong>Don’t open it yourself, not even to try it, and never send it to anyone in the draw: it shows whom {made.link.label} drew and what is taken. If you are in the draw, you would see your own gifts. Once opened it opens nowhere else, so {made.link.label} would be told it was opened on another device.</strong></p>}
             <input className="input link-url" readOnly value={made.url} aria-label={`Link for ${made.link.label}`} onFocus={(e) => e.target.select()} />
             {'clipboard' in navigator && <button type="button" className="btn btn-sm" onClick={() => void navigator.clipboard.writeText(made.url)}>Copy</button>}
           </Notice>

@@ -302,7 +302,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
   const link = (l: GuestLink): api.GuestLink => ({
     id: l.id, kind: l.kind, label: l.label, guestName: l.guestName,
     person: l.personId ? ref(l.personId) : null, celebration: celebrationRef(l.celebrationId),
-    lastDay: lastDayOf(db, l), createdAt: l.createdAt, revokedAt: l.revokedAt,
+    lastDay: lastDayOf(db, l), createdAt: l.createdAt, openedAt: l.openedAt, revokedAt: l.revokedAt,
   });
   const mustLink = (id: string) => {
     const l = getLink(db, id);
