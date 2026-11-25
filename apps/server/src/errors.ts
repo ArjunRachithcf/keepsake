@@ -63,8 +63,10 @@ export const MESSAGES = [
   'ideas are kept by others, for you', 'grown-ups keep ideas', 'at most 50 ideas for one person', 'no such idea',
   'only whoever wrote it removes an idea',
   // guest links (M4, ADR 0009)
-  'only the person (or a kid\'s parent) shares their wishes', 'at most 20 links for one person', 'no such link',
-  'a kid\'s parent says yes to it', 'a draw holds at most 50 guests', 'tell us your name first',
+  'a kid\'s parent shares their wishes', 'another grown-up shares someone\'s wishes, never they themselves',
+  'at most 20 links for one person', 'no such link', 'a draw holds at most 50 guests', 'tell us your name first',
+  'someone in the household has that name: add something to tell them apart', 'guest links work once HomersLab lets guests in',
+  'admins release an imported reservation', 'no such reservation',
   // the sheet import (M4, ADR 0005)
   'the file is not a CSV the importer reads', 'the file has more than 2000 rows', 'the file needs the columns Person and Item',
   'map or skip every name in the file first', 'people and occasions: names of up to 200 characters, each to an id or null',
@@ -86,7 +88,7 @@ export const TEMPLATES = [
   'required', 'required (an id, or null)', '1 to # characters', 'up to # characters, or null', 'up to # characters',
   'a whole number from # to #', 'true or false', 'an id', 'an id, or null', '# to # ids', 'up to # texts of 1 to # characters',
   'a web address (http or https) of up to # characters', 'a web address (http or https)',
-  'a web address (http or https) without a user name or password', 'one of @',
+  'a web address (http or https) without a user name or password', 'one of @', '1 to # characters, without control characters',
   'up to # pairs of two ids', 'a date and time (ISO 8601 with a time zone), or null', 'a day (YYYY-MM-DD), or null',
 ] as const;
 export type Template = (typeof TEMPLATES)[number];

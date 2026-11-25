@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "41072d5b-442a-49b2-8d32-9eca355911d8",
+  "id": "f124aa18-c3e9-4495-a279-0381d73ff216",
   "prevId": "2529c675-7121-47cc-befd-c83aa45beb85",
   "tables": {
     "audit": {
@@ -58,7 +58,7 @@
       "checkConstraints": {
         "audit_action": {
           "name": "audit_action",
-          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_approved', 'link_revoked', 'imported')"
+          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released')"
         }
       }
     },
@@ -305,6 +305,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "imported": {
+          "name": "imported",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         }
       },
       "indexes": {

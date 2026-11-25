@@ -11,5 +11,10 @@ kept after the import except the wishes and claims it made.
 (`people`: a name → someone or null to skip their rows; `occasions`: an occasion → a celebration or null for any
 time). Names and occasions match case-insensitively; an unmatched occasion is any time unless mapped; a celebration the
 person is not part of becomes any time. Reserved rows become claims by the "Bought by" household member (not the
-person, not a kid); Bought (or Given) rows are skipped; Priority "High", "Most wanted" or "1" is most wanted. Limits:
+person, not a kid), and a Reserved row whose buyer is nobody here who may give becomes nobody's **imported
+reservation** (review L1: so nobody buys it twice; givers see "An imported reservation", an admin releases it,
+audited); Bought (or Given) rows are skipped; Priority "High", "Most wanted" or "1" is most wanted. Limits:
 512 KB, 2000 rows. A cell's leading `=`, `+`, `-`, `@`, tab or CR is dropped. A fictional sample is in `seed-sample/`.
+
+**Accepted (review L2)**: the dry run's plan shows the admin who runs it the claims and buyers of every row, their own
+wishes' included. They hold the file, which says the same; Keepsake keeps none of it.

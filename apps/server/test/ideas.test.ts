@@ -50,5 +50,8 @@ describe('ideas never reach their person, a kid or a guest', () => {
     expect(await by('alex')).toEqual({ 'A lamp': null, 'A mug': 'Quinn' });
     expect(await by('uma')).toEqual({ 'A lamp': null, 'A mug': 'Quinn' });
     expect(await by('sam')).toEqual({ 'A lamp': 'Sam', 'A mug': 'Quinn' });
+    // Only the day, and a random id: nothing says when, to the minute, it was written (review L4).
+    const ideas = (await as(h, 'alex').get('/api/people/p_robin')).json().ideas;
+    for (const i of ideas) { expect(Object.keys(i).sort()).toEqual(['by', 'id', 'mine', 'on', 'text']); expect(i.on).toMatch(/^\d{4}-\d{2}-\d{2}$/); expect(i.id).not.toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/); }
   });
 });

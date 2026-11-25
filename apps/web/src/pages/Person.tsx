@@ -66,7 +66,8 @@ export function Person({ id }: { id: string }) {
 
       {page.questions && <QuestionsGroup name={p.name} questions={page.questions} onAsk={page.keeps ? undefined : () => setSheet('ask')} onChanged={load} />}
       {page.ideas && <IdeasGroup personId={p.id} name={p.name} ideas={page.ideas} onChanged={load} />}
-      {(page.keeps && me.role !== 'kid') || (self && p.role === 'kid') ? <ShareLinks personId={p.id} name={p.name} self={self} kid={p.role === 'kid'} /> : null}
+      {/* Another grown-up shares someone's wishes (a kid's: a parent, who keeps the kid's list); never the person. */}
+      {!self && me.role !== 'kid' && (p.role !== 'kid' || page.keeps) ? <ShareLinks personId={p.id} name={p.name} /> : null}
 
       {page.keeps && !self && p.role === 'kid' && p.signsIn && (
         <p className="section">

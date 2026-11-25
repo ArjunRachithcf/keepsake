@@ -25,7 +25,7 @@ async function start(db: Db) {
     send: (method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: object) => inject({ method, url, payload, headers: { cookie: sessionCookie(db, id), origin: ORIGIN } }),
   });
   /** Opens a link the way the guest page does: the fragment's token in a POST body. Returns the guest's cookie. */
-  const exchange = (url: string) => inject({ method: 'POST', url: '/api/guest/session', payload: { token: url.split('#')[1] }, headers: { origin: ORIGIN } });
+  const exchange = (url: string, as?: string) => inject({ method: 'POST', url: '/api/guest/session', payload: { token: url.split('#')[1] }, headers: { origin: ORIGIN, ...(as ? { cookie: sessionCookie(db, as) } : {}) } });
   const guest = (cookie: string) => ({
     get: (url: string) => inject({ url, headers: { cookie } }),
     send: (method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: object) => inject({ method, url, payload, headers: { cookie, origin: ORIGIN } }),
@@ -45,11 +45,11 @@ describe('share links', () => {
   it('the token is exchanged once by a POST for a short session; only hashes are kept', async () => {
     const db = household();
     const s = await start(db);
-    const made = await s.person('p_robin').send('POST', '/api/people/p_robin/links', { label: 'Godmother' });
+    const made = await s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' });
     expect(made.statusCode, made.body).toBe(201);
     const { url, link } = made.json();
     expect(url).toMatch(/^http:\/\/localhost:8080\/guest#[A-Za-z0-9_-]{43}$/);
-    expect(link).toMatchObject({ kind: 'share', label: 'Godmother', person: { id: 'p_robin', name: 'Robin' }, approved: true });
+    expect(link).toMatchObject({ kind: 'share', label: 'Godmother', person: { id: 'p_robin', name: 'Robin' }, revokedAt: null });
     const token = url.split('#')[1];
     const r = await s.exchange(url);
     expect(r.statusCode, r.body).toBe(200);
@@ -61,33 +61,98 @@ describe('share links', () => {
     expect(dump).not.toContain(token);
     expect(dump).not.toContain(cookieOf(r).split('=')[1]);
     expect(dump).toContain(hashToken(token));
-    // The link list never carries the url again.
-    expect((await s.person('p_robin').get('/api/links')).body).not.toContain(token);
+    // The maker's list never carries the url again; the person's lists no link for them at all.
+    expect((await s.person('p_alex').get('/api/links')).json().links.map((l: { id: string }) => l.id)).toEqual([link.id]);
+    expect((await s.person('p_alex').get('/api/links')).body).not.toContain(token);
+    expect((await s.person('p_robin').get('/api/links')).json().links).toEqual([]);
   });
 
-  it('one answer for every failure: unknown, revoked, a kid\'s waiting for a parent; another origin is refused', async () => {
+  it('another grown-up makes a share link (a kid\'s: a parent), never the person; its list is the maker\'s and admins\'', async () => {
     const db = household();
+    const s = await start(db);
+    const make = (by: string, personId: string) => s.person(by).send('POST', `/api/people/${personId}/links`, { label: 'Granny' });
+    for (const [by, p, error] of [
+      ['p_robin', 'p_robin', 'another grown-up shares someone\'s wishes, never they themselves'],
+      ['p_alex', 'p_alex', 'another grown-up shares someone\'s wishes, never they themselves'],
+      ['p_mia', 'p_mia', 'a kid\'s parent shares their wishes'],
+      ['p_mia', 'p_robin', 'another grown-up shares someone\'s wishes, never they themselves'],
+      ['p_robin', 'p_mia', 'a kid\'s parent shares their wishes'],
+      // Mia has a parent set (Sam): an admin is not hers.
+      ['p_alex', 'p_mia', 'a kid\'s parent shares their wishes'],
+    ] as const) expect([by, p, (await make(by, p)).json().error]).toEqual([by, p, error]);
+    const mia = (await make('p_sam', 'p_mia')).json();
+    const robin = (await make('p_sam', 'p_robin')).json();
+    // Leo has no parent set: the admins are his.
+    expect((await make('p_alex', 'p_leo')).statusCode).toBe(201);
+    const ids = async (who: string) => (await s.person(who).get('/api/links')).json().links.map((l: { label: string; person: { id: string } }) => l.person.id).sort();
+    expect(await ids('p_sam')).toEqual(['p_mia', 'p_robin']);
+    expect(await ids('p_alex')).toEqual(['p_leo', 'p_mia', 'p_robin']);
+    expect(await ids('p_robin')).toEqual([]);
+    expect(await ids('p_mia')).toEqual([]);
+    expect(await ids('p_leo')).toEqual([]);
+    // Only its maker and admins revoke it (the person never: a 404, as for none).
+    expect((await s.person('p_robin').send('DELETE', `/api/links/${robin.link.id}`)).statusCode).toBe(404);
+    expect((await s.person('p_mia').send('DELETE', `/api/links/${mia.link.id}`)).statusCode).toBe(404);
+    expect((await s.person('p_alex').send('DELETE', `/api/links/${robin.link.id}`)).statusCode).toBe(204);
+    expect((await s.person('p_sam').get('/api/links')).json().links.find((l: { id: string }) => l.id === robin.link.id).revokedAt).not.toBeNull();
+  });
+
+  it('one answer for every failure: unknown, revoked, and a browser whose household session the link is not for', async () => {
+    const db = withDraws(household());
     const s = await start(db);
     const bad = await s.exchange('x#' + 'z'.repeat(43));
     expect([bad.statusCode, bad.json()]).toEqual([401, { error: 'this link is unknown, used or expired' }]);
-    const kid = (await s.person('p_mia').send('POST', '/api/people/p_mia/links', { label: 'Granny' })).json();
-    expect(kid.link.approved).toBe(false);
-    expect((await s.exchange(kid.url)).json()).toEqual(bad.json());
-    expect((await s.person('p_robin').send('POST', `/api/links/${kid.link.id}/approve`)).statusCode).toBe(404);
-    expect((await s.person('p_mia').send('POST', `/api/links/${kid.link.id}/approve`)).statusCode).toBe(403);
-    expect((await s.person('p_sam').get('/api/links')).json().links.map((l: { id: string; canApprove: boolean }) => [l.id, l.canApprove])).toEqual([[kid.link.id, true]]);
-    expect((await s.person('p_sam').send('POST', `/api/links/${kid.link.id}/approve`)).json().approved).toBe(true);
-    const g = await s.exchange(kid.url);
+    const robin = (await s.person('p_alex').send('POST', '/api/people/p_robin/links', { label: 'Godmother' })).json();
+    const mia = (await s.person('p_sam').send('POST', '/api/people/p_mia/links', { label: 'Granny' })).json();
+    const cousin = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
+    // The person, a kid, and (a draw link) anyone in that draw: the one answer, no session made.
+    for (const [url, who] of [[robin.url, 'p_robin'], [robin.url, 'p_mia'], [robin.url, 'p_leo'], [mia.url, 'p_mia'], [mia.url, 'p_leo'],
+      [cousin.url, 'p_alex'], [cousin.url, 'p_sam'], [cousin.url, 'p_robin'], [cousin.url, 'p_mia']] as const) {
+      const r = await s.exchange(url, who);
+      expect([who, r.statusCode, r.json(), r.headers['set-cookie']]).toEqual([who, 401, bad.json(), undefined]);
+    }
+    expect(db.select().from(t.guestSession).all()).toEqual([]);
+    // Someone giving to them may (testing the link they made, say); someone not in the draw may.
+    expect((await s.exchange(robin.url, 'p_sam')).statusCode).toBe(200);
+    expect((await s.exchange(mia.url, 'p_robin')).statusCode).toBe(200);
+    expect((await s.exchange(cousin.url, 'p_leo')).statusCode).toBe(401);
+    const g = await s.exchange(mia.url);
     expect(g.statusCode).toBe(200);
     // Revoked: the session ends at once, the link opens nothing.
-    expect((await s.person('p_sam').send('DELETE', `/api/links/${kid.link.id}`)).statusCode).toBe(204);
+    expect((await s.person('p_sam').send('DELETE', `/api/links/${mia.link.id}`)).statusCode).toBe(204);
     expect((await s.guest(cookieOf(g)).get('/api/guest')).statusCode).toBe(401);
-    expect((await s.exchange(kid.url)).json()).toEqual(bad.json());
+    expect((await s.exchange(mia.url)).json()).toEqual(bad.json());
     const other = await s.inject({ method: 'POST', url: '/api/guest/session', payload: { token: 'z'.repeat(43) }, headers: { origin: 'https://evil.example' } });
     expect(other.statusCode).toBe(403);
-    // Someone who does not keep the list makes no link for it.
-    expect((await s.person('p_robin').send('POST', '/api/people/p_sam/links', { label: 'x' })).statusCode).toBe(403);
   });
+
+  it.each([
+    { who: 'robin' as const, links: ['gR', 'gR2'] },
+    { who: 'mia' as const, links: ['gM'] },
+  ])('$who can never hold a working link to their own wishes: every answer is byte for byte that of a household with none', async ({ who, links }) => {
+    const [a, none] = [await home(), await home()];
+    // In one twin: their links, a fresh one made by another grown-up, a guest's claim on their wish; in the other none.
+    const personId = `p_${who}`;
+    const maker = who === 'mia' ? 'sam' : 'alex';
+    const made = (await ok(as(a, maker).send('POST', `/api/people/${personId}/links`, { label: 'Neighbours' }))).json();
+    const wish = who === 'mia' ? 'w_mia_bike' : (await ok(as(a, 'robin').send('POST', '/api/wishes', { personId, name: 'A lantern', celebrationId: null }))).json().id;
+    if (who === 'robin') {
+      await ok(as(none, 'robin').send('POST', '/api/wishes', { personId, name: 'A lantern', celebrationId: null }));
+      const w = a.db.select().from(t.wish).where(eq(t.wish.id, wish)).get()!;
+      none.db.update(t.wish).set({ id: w.id, createdAt: w.createdAt, updatedAt: w.updatedAt }).where(eq(t.wish.name, 'A lantern')).run();
+    }
+    await ok(as(a, links[0] as 'gR' | 'gM').send('PUT', `/api/guest/wishes/${wish}/claim`, { quantity: 1 }));
+    none.db.delete(t.guestLink).where(eq(t.guestLink.personId, personId)).run();
+    // A link they would make themselves: refused (and the same in both).
+    for (const h of [a, none]) expect((await as(h, who).send('POST', `/api/people/${personId}/links`, { label: 'Me' })).statusCode).toBe(403);
+    const [x, y] = [await reads(a, who), await reads(none, who)];
+    for (const k of Object.keys(x)) expect(x[k], k).toBe(y[k]);
+    // No answer of theirs carries an address or a token; and the one made for them does not open in their browser.
+    expect(JSON.stringify(x)).not.toContain('/guest#');
+    expect(JSON.stringify(x)).not.toContain(made.url.split('#')[1]);
+    const r = await a.built.app.inject({ method: 'POST', url: '/api/guest/session', payload: { token: made.url.split('#')[1] }, headers: { origin: ORIGIN, cookie: a.cookies[who]! } });
+    expect(r.statusCode).toBe(401);
+  }, 60_000);
 
   it('the exchange is rate limited like a sign-in', async () => {
     const s = await start(household());
@@ -114,7 +179,7 @@ describe('share links', () => {
     const page = (await as(h, 'gR').get('/api/guest')).json();
     // The scarf was given last Christmas: gone for givers. Quinn's claim on the kite names nobody.
     expect(page.wishes.map((w: { id: string }) => w.id).sort()).toEqual([lantern, kite].sort());
-    expect(page.wishes.find((w: { id: string }) => w.id === kite).gift.claims).toEqual([{ giver: null, guest: null, quantity: 1, state: 'claimed', mine: false }]);
+    expect(page.wishes.find((w: { id: string }) => w.id === kite).gift.claims).toEqual([{ giver: null, guest: null, imported: false, quantity: 1, state: 'claimed', mine: false }]);
     const body = JSON.stringify(page);
     for (const leak of ['Quinn', 'p_quinn', 'Alex', 'p_alex', 'ideas']) expect(body, leak).not.toContain(leak);
     expect((await as(h, 'gR').send('PUT', '/api/guest/wishes/w_sam_book/claim', { quantity: 1 })).statusCode).toBe(404);
@@ -123,10 +188,10 @@ describe('share links', () => {
     expect((await as(h, 'gR').send('PUT', `/api/guest/wishes/${lantern}/claim`, { quantity: 1 })).json().error).toBe('tell us your name first');
     expect((await ok(as(h, 'gR').send('PUT', '/api/guest/name', { name: 'Ada' }))).json().name).toBe('Ada');
     const c = await ok(as(h, 'gR').send('PUT', `/api/guest/wishes/${lantern}/claim`, { quantity: 1 }));
-    expect(c.json().gift.claims).toEqual([{ giver: null, guest: null, quantity: 1, state: 'claimed', mine: true }]);
-    expect((await as(h, 'gR2').get('/api/guest')).json().wishes.find((w: { id: string }) => w.id === lantern).gift.claims).toEqual([{ giver: null, guest: null, quantity: 1, state: 'claimed', mine: false }]);
+    expect(c.json().gift.claims).toEqual([{ giver: null, guest: null, imported: false, quantity: 1, state: 'claimed', mine: true }]);
+    expect((await as(h, 'gR2').get('/api/guest')).json().wishes.find((w: { id: string }) => w.id === lantern).gift.claims).toEqual([{ giver: null, guest: null, imported: false, quantity: 1, state: 'claimed', mine: false }]);
     // The household's givers see the guest's name; Robin and the kids nothing.
-    expect((await as(h, 'alex').get('/api/people/p_robin')).json().wishes.find((w: { id: string }) => w.id === lantern).gift.claims[0]).toMatchObject({ giver: null, guest: 'Ada' });
+    expect((await as(h, 'alex').get('/api/people/p_robin')).json().wishes.find((w: { id: string }) => w.id === lantern).gift.claims[0]).toMatchObject({ giver: null, guest: { name: 'Ada', label: 'Guest gR' } });
     await ok(as(h, 'gR').send('PATCH', `/api/guest/wishes/${lantern}/claim`, { state: 'bought' }));
     expect((await as(h, 'gR').send('DELETE', `/api/guest/wishes/${lantern}/claim`)).statusCode).toBe(204);
   });
@@ -258,6 +323,74 @@ describe('personal draw links', () => {
     const viewer = ['p_alex', 'p_sam', 'p_robin'].find((p) => p !== page.person.id)!;
     const c = (await s.person(viewer).get(`/api/people/${page.person.id}`)).json().wishes.find((w: { id: string }) => w.id === wish.id).gift.claims[0];
     expect(c).toMatchObject({ giver: null, guest: null, quantity: 1 });
+  });
+});
+
+describe('a guest\'s claims once they cannot manage them (review M1)', () => {
+  it('revoking a link: only-made claims go, bought ones stay with nobody\'s name; the person and kids learn nothing', async () => {
+    const [a, none] = [await home(), await home()];
+    for (const h of [a, none]) for (const name of ['A lantern', 'A kite']) await ok(as(h, 'robin').send('POST', '/api/wishes', { personId: 'p_robin', name, celebrationId: null }));
+    for (const name of ['A lantern', 'A kite']) {
+      const w = a.db.select().from(t.wish).where(eq(t.wish.name, name)).get()!;
+      none.db.update(t.wish).set({ id: w.id, createdAt: w.createdAt, updatedAt: w.updatedAt }).where(eq(t.wish.name, name)).run();
+    }
+    const id = (name: string) => a.db.select().from(t.wish).where(eq(t.wish.name, name)).get()!.id;
+    await ok(as(a, 'gR').send('PUT', `/api/guest/wishes/${id('A lantern')}/claim`, { quantity: 1 }));
+    await ok(as(a, 'gR2').send('PUT', `/api/guest/wishes/${id('A kite')}/claim`, { quantity: 1 }));
+    await ok(as(a, 'gR2').send('PATCH', `/api/guest/wishes/${id('A kite')}/claim`, { state: 'bought' }));
+    for (const h of [a, none]) for (const l of ['l_gR', 'l_gR2']) expect((await as(h, 'alex').send('DELETE', `/api/links/${l}`)).statusCode).toBe(204);
+    expect(a.db.select().from(t.claim).all().filter((c) => [id('A lantern'), id('A kite')].includes(c.wishId)).map((c) => [c.wishId === id('A kite'), c.state, c.guestId, c.giverId]))
+      .toEqual([[true, 'bought', null, null]]);
+    // The lantern is free again for the household; the kite shows as bought by nobody named.
+    await ok(as(a, 'sam').send('PUT', `/api/wishes/${id('A lantern')}/claim`, { quantity: 1 }));
+    await ok(as(none, 'sam').send('PUT', `/api/wishes/${id('A lantern')}/claim`, { quantity: 1 }));
+    expect((await as(a, 'alex').get('/api/people/p_robin')).json().wishes.find((w: { id: string }) => w.id === id('A kite')).gift.claims)
+      .toEqual([{ giver: null, guest: null, imported: false, quantity: 1, state: 'bought', mine: false }]);
+    for (const v of ['robin', 'mia', 'leo'] as const) {
+      const [x, y] = [await reads(a, v), await reads(none, v)];
+      for (const k of Object.keys(x)) expect(x[k], `${v} ${k}`).toBe(y[k]);
+    }
+  }, 60_000);
+
+  it('a re-draw that gives a draw guest someone else, and removing their celebration, take their only-made claims', async () => {
+    const db = withDraws(household());
+    db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    for (const p of ['alex', 'sam', 'robin', 'mia']) db.insert(t.wish).values({ id: `w_${p}_xmas`, personId: `p_${p}`, celebrationId: 'c_xmas', name: 'A puzzle', state: 'listed', position: 9, addedBy: `p_${p}`, createdAt: '2026-11-01T10:00:00.000Z', updatedAt: '2026-11-01T10:00:00.000Z' }).run();
+    const s = await start(db);
+    const made = (await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'Cousin Ada' })).json();
+    await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/draw/run'));
+    const g = s.guest(cookieOf(await s.exchange(made.url)));
+    const first = (await ok(g.send('POST', '/api/guest/draw/open'))).json().person.id as string;
+    await ok(g.send('PUT', `/api/guest/wishes/w_${first.slice(2)}_xmas/claim`, { quantity: 1 }));
+    const guestClaims = () => db.select().from(t.claim).all().filter((c) => c.guestId === made.link.id || (c.giverId === null && c.wishId.endsWith('_xmas')));
+    expect(guestClaims()).toHaveLength(1);
+    // Drawn again until the guest has someone else: their claim on the first person's wish goes with it.
+    let now = first;
+    for (let i = 0; i < 15 && now === first; i++) {
+      await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/draw/run'));
+      if (guestClaims().length === 0) { now = 'changed'; break; }
+    }
+    expect(now).toBe('changed');
+    // With their new person: a claim, then the celebration goes, and the claim with it (not left with no giver).
+    const second = (await ok(g.send('POST', '/api/guest/draw/open'))).json().person.id as string;
+    await ok(g.send('PUT', `/api/guest/wishes/w_${second.slice(2)}_xmas/claim`, { quantity: 1 }));
+    expect(guestClaims()).toHaveLength(1);
+    expect((await s.person('p_alex').send('DELETE', '/api/celebrations/c_xmas')).statusCode).toBe(204);
+    expect(db.select().from(t.claim).all().filter((c) => c.giverId === null && c.imported === 0)).toEqual([]);
+  });
+});
+
+describe('guests\' names (review M2)', () => {
+  it('never a household member\'s, case and accents aside, and no control characters; claims show the guest as one', async () => {
+    const h = await home();
+    for (const name of ['Robin', 'robin', ' ROBIN ', 'Róbin', 'Alex']) expect((await as(h, 'gR').send('PUT', '/api/guest/name', { name })).json().error, name).toBe('someone in the household has that name: add something to tell them apart');
+    for (const name of ['Ada\u202Emiss', 'Ada\u0007']) expect((await as(h, 'gR').send('PUT', '/api/guest/name', { name })).json().error).toBe('name: 1 to 60 characters, without control characters');
+    expect((await as(h, 'alex').send('POST', '/api/people/p_robin/links', { label: 'Gran\u2066ny' })).json().error).toBe('label: 1 to 60 characters, without control characters');
+    expect((await ok(as(h, 'gR').send('PUT', '/api/guest/name', { name: 'Robin from next door' }))).json().name).toBe('Robin from next door');
+    const db = withDraws(household());
+    const s = await start(db);
+    expect((await s.person('p_alex').send('POST', '/api/celebrations/c_xmas/guests', { name: 'sam' })).json().error).toBe('someone in the household has that name: add something to tell them apart');
+    expect(db.select().from(t.guestLink).all()).toEqual([]);
   });
 });
 

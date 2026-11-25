@@ -87,7 +87,8 @@ const PARAMS: Record<string, Record<string, string>> = {
   askQuestion: { personId: 'p_sam' }, removeQuestion: { questionId: 'q_robin' }, answerQuestion: { questionId: 'q_answer' },
   declineQuestion: { questionId: 'q_decline' }, answerWithWish: { questionId: 'q_wish' },
   addIdea: { personId: 'p_sam' }, removeIdea: { ideaId: 'i_sam' },
-  revokeLink: { linkId: 'l_alex' }, approveLink: { linkId: 'l_leo' }, shareLink: { personId: 'p_alex' }, inviteGuest: { celebrationId: 'c_xmas' },
+  revokeLink: { linkId: 'l_robin' }, shareLink: { personId: 'p_sam' }, inviteGuest: { celebrationId: 'c_xmas' },
+  releaseImportedClaim: { wishId: 'w_robin_lamp' },
   guestClaim: { wishId: 'w_sam_book' }, guestEditClaim: { wishId: 'w_sam_book' }, guestUnclaim: { wishId: 'w_sam_book' },
 };
 
@@ -222,16 +223,18 @@ export function withDraws(db: Db): Db {
 const PAST = '2026-01-01T07:00:00.000Z';
 /**
  * M4's things for the contract tests: questions to Alex (delivered: to answer, decline, answer with a wish), one to
- * Robin (Alex removes it as an admin), an idea for Sam, Alex's share link (revoked), Leo's own one waiting for a parent
- * (the admins, as he has none set), and Sam's share link for a guest who gave the name Ada (GUEST_TOKEN).
+ * Robin (Alex removes it as an admin), an idea for Sam, a share link to Robin by Sam (Alex revokes it as an admin), Alex's
+ * share link to Sam for a guest who gave the name Ada (GUEST_TOKEN), and a wish of Robin's with an imported reservation.
  */
 export function withM4(db: Db): Db {
   const q = (id: string, personId: string) => ({ id, personId, askerId: 'p_sam', text: 'Which size?', askedAt: PAST, deliverAt: PAST, state: 'open' as const });
   db.insert(t.question).values([q('q_answer', 'p_alex'), q('q_decline', 'p_alex'), q('q_wish', 'p_alex'), { ...q('q_robin', 'p_robin'), askerId: 'p_mia' }]).run();
   db.insert(t.idea).values({ id: 'i_sam', personId: 'p_sam', authorId: 'p_alex', text: 'A pasta machine', createdAt: NOW }).run();
-  const link = (id: string, personId: string, approved: boolean, token: string, guestName: string | null = null) =>
-    ({ id, kind: 'share' as const, personId, label: 'Friends', guestName, tokenHash: hashToken(token), createdBy: personId, approvedAt: approved ? NOW : null, createdAt: NOW });
-  db.insert(t.guestLink).values([link('l_alex', 'p_alex', true, 'a'.repeat(43)), link('l_leo', 'p_leo', false, 'b'.repeat(43)), link('l_sam', 'p_sam', true, GUEST_TOKEN, 'Ada')]).run();
+  const link = (id: string, personId: string, by: string, token: string, guestName: string | null = null) =>
+    ({ id, kind: 'share' as const, personId, label: 'Friends', guestName, tokenHash: hashToken(token), createdBy: by, approvedAt: NOW, createdAt: NOW });
+  db.insert(t.guestLink).values([link('l_robin', 'p_robin', 'p_sam', 'a'.repeat(43)), link('l_sam', 'p_sam', 'p_alex', GUEST_TOKEN, 'Ada')]).run();
+  db.insert(t.wish).values({ id: 'w_robin_lamp', personId: 'p_robin', name: 'A reading lamp', state: 'listed', position: 5, addedBy: 'p_robin', createdAt: NOW, updatedAt: NOW }).run();
+  db.insert(t.claim).values({ id: 'cl_lamp', wishId: 'w_robin_lamp', giverId: null, imported: 1, quantity: 1, state: 'claimed', createdAt: NOW, updatedAt: NOW }).run();
   return db;
 }
 

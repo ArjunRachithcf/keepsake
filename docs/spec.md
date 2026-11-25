@@ -21,10 +21,11 @@ admin. Lessons kept in §10.
 - **Adults** keep their own wishes, see everyone else's, claim and chip in, keep ideas for others, ask anonymous
   questions, host celebrations and manage kids' wishes.
 - **Kids** sign in and make wishes; a parent approves each before others see it. Kids never see claims on their own
-  wishes. Kids don't draw names unless the celebration's host turns it on. A kid's wishes are never shared outside the
-  household unless a parent approves.
+  wishes. Kids don't draw names unless the celebration's host turns it on. A kid's wishes are shared outside the
+  household only by a parent's link.
 - **Guests** (people outside the household: a godmother, cousins) never get an account. Two kinds of link (ADR 0009):
-  - a **share link** to one person's wishes, made by that person (or a kid's parent): view and claim with a name;
+  - a **share link** to one person's wishes, made by another grown-up of the household (a kid's: a parent), never
+    by the person, since it shows what is taken: view and claim with a name;
   - a **personal draw link** to one celebration, made by its host: the guest joins that draw, sees their own person
     and that person's wishes for it; it expires when the celebration is over.
 
@@ -129,7 +130,12 @@ name, the household sees a guest's claims with the guest's name (unless a draw k
 after the draw is a re-draw; the import maps unmatched occasions to any time and skips Bought rows.
 Decided on PR #11: a kid does not see questions a parent answered for them (answers are for the givers); guests see
 their person's sizes, likes and "please no" read-only (a draw guest their own person's only); a parent's "Add a wish
-instead" on a kid's question offers the kid's celebrations; import rows are counted by sheet row.
+instead" on a kid's question offers the kid's celebrations; import rows are counted by sheet row. After its review:
+a share link is made by another grown-up (a kid's: a parent), never by the person, and its address is shown only to
+its maker, once; the person's pages list no link for them; a household session a link is not for cannot open it; a
+guest's only-made claims go when they can no longer manage them; guests are marked as guests and never carry a
+household member's name; a Reserved row with an unknown buyer is an imported reservation an admin can release; ideas
+show only their day; no guest link under HomersLab until Homeward #317.
 
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by

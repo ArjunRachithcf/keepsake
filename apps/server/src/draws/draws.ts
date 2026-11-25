@@ -122,6 +122,15 @@ export function openOwn(db: Db, ring: Keyring, d: Draw, me: Participant): string
 }
 
 /**
+ * Whom a participant drew, opened or not (a participant id; null without a row, 'unreadable' when it does not open):
+ * only for what the server does on its own (a guest's claims after a re-draw, guests/guests.ts), never in an answer.
+ */
+export function drawnBy(db: Db, ring: Keyring, d: Draw, me: Participant): string | 'unreadable' | null {
+  const row = db.select().from(t.drawAssignment).where(and(eq(t.drawAssignment.drawId, d.id), eq(t.drawAssignment.giverId, me.id))).get();
+  return row ? openRow(ring, d.id, row) ?? 'unreadable' : null;
+}
+
+/**
  * Every giver → receiver (participant ids; null for a row that does not open). Only after the reveal (the view layer)
  * or inside a new draw (last year's pairs).
  */

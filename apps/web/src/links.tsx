@@ -1,9 +1,11 @@
-// Guest links (ADR 0009) on the household's side: a share link to someone's wishes (the person or a kid's parent),
-// a personal draw link for a cousin (the celebration's host), the open links you manage with Revoke, and a kid's
-// waiting for a parent's yes. A new link's address is shown once: only its hash is kept.
-import { useCallback, useEffect, useId, useState } from 'react';
+// Guest links (ADR 0009) on the household's side: a share link to someone else's wishes (another grown-up; a kid's:
+// a parent; never the person, since it shows what is taken), a personal draw link for a cousin (the celebration's
+// host), and the links you made with Revoke. A new link's address is shown to its maker once: only its hash is kept.
+// Under HomersLab, guests cannot reach Keepsake yet (Homeward #317): no link is made there.
+import { useCallback, useContext, useEffect, useId, useState } from 'react';
 import { api, message, type GuestLink, type GuestLinkMade, type GuestLinks } from './api';
 import { day } from './format';
+import { HouseholdContext } from './household';
 import { Group, Notice } from './ui';
 
 /** The open links the caller manages, filtered (one person's, one celebration's, or all). */
@@ -13,6 +15,7 @@ export function LinksList({ title, filter, make, footer }: {
   make?: { label: string; field: 'label' | 'name'; url: string; button: string };
 }) {
   const id = useId();
+  const homersLab = useContext(HouseholdContext)?.household.mode === 'homerslab';
   const [links, setLinks] = useState<GuestLink[] | null>(null);
   const [made, setMade] = useState<GuestLinkMade | null>(null);
   const [text, setText] = useState('');
@@ -23,8 +26,7 @@ export function LinksList({ title, filter, make, footer }: {
   const what = (l: GuestLink) => [
     l.kind === 'share' ? `${l.person?.name ?? 'Someone'}’s wishes` : `${l.celebration?.name ?? 'A celebration'}’s draw`,
     l.guestName && l.guestName !== l.label ? `opened as ${l.guestName}` : null,
-    l.lastDay ? `until ${day(l.lastDay)}` : null,
-    l.approved ? null : 'waiting for a parent',
+    l.revokedAt ? `revoked ${day(l.revokedAt.slice(0, 10))}` : l.lastDay ? `until ${day(l.lastDay)}` : `made ${day(l.createdAt.slice(0, 10))}`,
   ].filter(Boolean).join(' · ');
   return (
     <>
@@ -33,13 +35,15 @@ export function LinksList({ title, filter, make, footer }: {
         {links?.map((l) => (
           <li key={l.id} className="row row-inline">
             <span className="row-text"><span className="row-title">{l.label}</span><span className="row-sub">{what(l)}</span></span>
-            {l.canApprove && <button type="button" className="btn btn-sm btn-primary" onClick={() => void run(() => api(`/links/${l.id}/approve`, { method: 'POST' }))}>Allow<span className="sr-only"> {l.label}</span></button>}
-            <button type="button" className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Revoke the link for ${l.label}? It stops working at once.`)) void run(() => api(`/links/${l.id}`, { method: 'DELETE' })); }}>
-              Revoke<span className="sr-only"> {l.label}</span>
-            </button>
+            {!l.revokedAt && (
+              <button type="button" className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Revoke the link for ${l.label}? It stops working at once.`)) void run(() => api(`/links/${l.id}`, { method: 'DELETE' })); }}>
+                Revoke<span className="sr-only"> {l.label}</span>
+              </button>
+            )}
           </li>
         ))}
-        {make && (
+        {make && homersLab && <li className="row"><span className="row-sub">Links for guests work once HomersLab lets guests in (Homeward #317). Until then nobody outside the household can open one.</span></li>}
+        {make && !homersLab && (
           <li className="row">
             <form className="inline-form" onSubmit={(e) => { e.preventDefault(); void run(async () => { setMade(await api<GuestLinkMade>(make.url, { method: 'POST', body: { [make.field]: text.trim() } })); setText(''); }); }}>
               <label className="sr-only" htmlFor={`${id}-l`}>{make.label}</label>
@@ -52,7 +56,8 @@ export function LinksList({ title, filter, make, footer }: {
       {made && (
         <div className="section">
           <Notice title={`The link for ${made.link.label}`}>
-            <p>{made.link.approved ? 'Send it yourself. It is shown only now: Keepsake keeps no copy.' : 'A parent says yes before it opens anything. It is shown only now.'}</p>
+            <p>Send it yourself. It is shown only now: Keepsake keeps no copy. Making a new one is the way to see one again.</p>
+            <p><strong>Don’t open it yourself, and never send it to {made.link.person ? made.link.person.name : 'the people in the draw'}: it shows what has been taken.</strong></p>
             <input className="input link-url" readOnly value={made.url} aria-label={`Link for ${made.link.label}`} onFocus={(e) => e.target.select()} />
             {'clipboard' in navigator && <button type="button" className="btn btn-sm" onClick={() => void navigator.clipboard.writeText(made.url)}>Copy</button>}
           </Notice>
@@ -63,12 +68,12 @@ export function LinksList({ title, filter, make, footer }: {
   );
 }
 
-/** Someone's share links, on their page (for the person and a kid's parents). */
-export function ShareLinks({ personId, name, self, kid }: { personId: string; name: string; self: boolean; kid: boolean }) {
+/** Share links to someone else's wishes, on their page (another grown-up; for a kid, a parent): the ones you made. */
+export function ShareLinks({ personId, name }: { personId: string; name: string }) {
   const filter = useCallback((l: GuestLink) => l.kind === 'share' && l.person?.id === personId, [personId]);
   return (
     <LinksList title="Shared by link" filter={filter}
-      footer={`People outside the family see ${self ? 'your' : `${name}’s`} wishes by link and can say they’ll get one. ${self ? 'You' : name} never see${self ? '' : 's'} who.${kid && self ? ' A parent says yes to each link first.' : ''}`}
+      footer={`People outside the family see ${name}’s wishes by your link and can say they’ll get one, so nobody buys a thing twice. ${name} never sees the link or who.`}
       make={{ label: 'Who it is for (Godmother, the neighbours)', field: 'label', url: `/people/${personId}/links`, button: 'Make a link' }} />
   );
 }

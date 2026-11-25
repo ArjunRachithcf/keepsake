@@ -19,6 +19,15 @@ export function text(b: Body, field: string, max: number, o: { required?: boolea
   return v;
 }
 
+/** Control characters and the bidi overrides and isolates, which make a name read as another. */
+const CONTROL = /[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
+/** A name or label shown to others (a guest's, a link's): text without control or bidi characters. */
+export function plainText(b: Body, field: string, max: number, o: { required?: boolean } = {}): string | undefined {
+  const v = text(b, field, max, o);
+  if (v !== undefined && CONTROL.test(v)) return bad(field, '1 to # characters, without control characters', max);
+  return v;
+}
+
 export function nullableText(b: Body, field: string, max: number): string | null | undefined {
   const v = b[field];
   if (v === undefined || v === null) return v;

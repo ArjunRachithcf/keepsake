@@ -97,7 +97,7 @@ describe('the rules', () => {
     expect((await as(h, 'robin').send('POST', '/api/people/p_sam/questions', { text: 'x'.repeat(201) })).statusCode).toBe(400);
   });
 
-  it('limits: three open per asker and person, thirty open per person; an answer makes room', async () => {
+  it('limits: three open per asker and person, thirty delivered open per person (those on their way do not count); an answer makes room', async () => {
     const h = await home();
     const ids = [];
     for (let i = 0; i < 3; i++) ids.push(await askIn(h, 'quinn', 'p_robin', `Question ${i}?`));
@@ -107,8 +107,11 @@ describe('the rules', () => {
     setNow(BATCH);
     await ok(as(h, 'robin').send('POST', `/api/questions/${ids[0]}/decline`));
     expect((await as(h, 'quinn').send('POST', '/api/people/p_robin/questions', { text: 'One more?' })).statusCode).toBe(201);
+    // 29 delivered and open now (and Quinn's new one on its way, which does not count: nobody can see it yet).
     for (let i = 0; i < 26; i++) h.db.insert(t.question).values({ id: `q_fill${i}`, personId: 'p_robin', askerId: null, text: 'x', askedAt: T0.toISOString(), deliverAt: T0.toISOString(), state: 'open' }).run();
-    const full = await as(h, 'alex').send('POST', '/api/people/p_robin/questions', { text: 'Full?' });
+    expect((await as(h, 'alex').send('POST', '/api/people/p_robin/questions', { text: 'Still room?' })).statusCode).toBe(201);
+    h.db.insert(t.question).values({ id: 'q_fill_last', personId: 'p_robin', askerId: null, text: 'x', askedAt: T0.toISOString(), deliverAt: T0.toISOString(), state: 'open' }).run();
+    const full = await as(h, 'sam').send('POST', '/api/people/p_robin/questions', { text: 'Full?' });
     expect([full.statusCode, full.json().error]).toEqual([409, 'they have many questions waiting: try again later']);
   });
 
@@ -128,6 +131,8 @@ describe('the rules', () => {
     expect((await as(h, 'sam').send('POST', `/api/questions/${q}/answer`, { text: 'Blue' })).statusCode).toBe(409);
     expect((await as(h, 'sam').get('/api/people/p_sam')).json()).not.toHaveProperty('questions');
     expect((await as(h, 'sam').get('/api/home')).json().questions.map((x: { id: string }) => x.id)).toEqual([k]);
+    // Answered for her, it is still nothing to Mia (review L3): a 404, as for a question that does not exist.
+    for (const id of [q, 'qzzzzzzzzzzzzzzzzzzzzz']) expect((await as(h, 'mia').send('DELETE', `/api/questions/${id}`)).json().error, id).toBe('no such question');
   });
 
   it('decline: only its asker sees it was declined', async () => {

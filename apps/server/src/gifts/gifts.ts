@@ -273,6 +273,19 @@ export function unclaimFor(db: Db, w: Wish, who: Giver): void {
   db.delete(t.claim).where(eq(t.claim.id, c.id)).run();
 }
 
+/**
+ * An admin releases a wish's imported reservation (a Reserved row of the sheet whose buyer is nobody here, review L1).
+ * Refused as any giving is first (the wish's person, kids: before a claim is read), then to anyone but an admin.
+ */
+export function releaseImported(db: Db, me: Person, wishId: string): Wish {
+  const w = giving(db, me, wishId);
+  if (me.role !== 'admin') throw new Refused(403, 'admins release an imported reservation');
+  const gone = db.delete(t.claim).where(and(eq(t.claim.wishId, w.id), eq(t.claim.imported, 1))).run().changes;
+  if (!gone) throw new Refused(404, 'no such reservation');
+  db.insert(t.audit).values({ id: ulid(), at: ts(), actorId: me.id, action: 'reservation_released', subjectId: w.id }).run();
+  return w;
+}
+
 /** Once its person has it, a giver puts their name on what they gave (or takes it off), so they can thank them. */
 export function setNamed(db: Db, me: Person, wishId: string, named: boolean, today: string): Wish {
   const w = giving(db, me, wishId);

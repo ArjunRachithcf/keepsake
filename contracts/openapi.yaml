@@ -21,7 +21,7 @@ tags:
   - { name: draws, description: 'Draw names (ADR 0004): each giver learns only their own person, every pair only after the host''s reveal date' }
   - { name: questions, description: 'Anonymous questions (ADR 0008): delivered at 08:00 household time the next day; the asker is sent to nobody but themselves' }
   - { name: ideas, description: 'Gift ideas for a person: for the other grown-ups only, never the person or a kid' }
-  - { name: links, description: 'Guest links (ADR 0009): share links and personal draw links, made, listed, approved and revoked by the household' }
+  - { name: links, description: 'Guest links (ADR 0009): share links and personal draw links, made, listed and revoked by the household' }
   - { name: guest, description: 'What a guest with a link may do: see, name themselves, claim, open their draw, ask (ADR 0009)' }
   - { name: import, description: 'The one-time sheet import (ADR 0005): admins only, a dry run first, nothing of the file kept' }
 
@@ -568,6 +568,19 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /wishes/{wishId}/imported-claim:
+    parameters:
+      - { $ref: '#/components/parameters/wishId' }
+    delete:
+      tags: [gifts]
+      operationId: releaseImportedClaim
+      summary: 'An admin releases the wish''s imported reservation (refused first, like any giving, to its person and kids)'
+      responses:
+        '204': { description: Released }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /wishes/{wishId}/named:
     parameters:
       - { $ref: '#/components/parameters/wishId' }
@@ -954,7 +967,7 @@ paths:
     get:
       tags: [links]
       operationId: listLinks
-      summary: 'The open guest links the caller manages: their own and their kids'' share links, their celebrations'' draw links; every link for admins'
+      summary: 'The guest links the caller manages, revoked ones too, never their address: the share links they made (admins: every one, but never a link for themselves), their celebrations'' draw links (admins: all). Kids: none'
       responses:
         '200':
           description: OK
@@ -975,28 +988,13 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /links/{linkId}/approve:
-    parameters:
-      - { $ref: '#/components/parameters/linkId' }
-    post:
-      tags: [links]
-      operationId: approveLink
-      summary: 'A kid''s parent says yes to the kid''s share link'
-      responses:
-        '200':
-          description: The link
-          content: { application/json: { schema: { $ref: '#/components/schemas/GuestLink' } } }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
   /people/{personId}/links:
     parameters:
       - { $ref: '#/components/parameters/personId' }
     post:
       tags: [links]
       operationId: shareLink
-      summary: 'A share link to the person''s wishes (the person, or a kid''s parent; a kid''s own waits for a parent). The link is shown once'
+      summary: 'A share link to the person''s wishes, made by another grown-up (for a kid, a parent), never by the person: the address is shown to its maker this once. Refused in homerslab mode until HomersLab lets guests in (Homeward #317)'
       requestBody:
         required: true
         content:
@@ -1016,7 +1014,7 @@ paths:
     post:
       tags: [links]
       operationId: inviteGuest
-      summary: 'A personal draw link for one named guest (the host): they join the celebration''s draw (once drawn, a re-draw under its rules) and the link ends with the draw''s day. Shown once'
+      summary: 'A personal draw link for one named guest (the host; refused in homerslab mode until HomersLab lets guests in): they join the celebration''s draw (once drawn, a re-draw under its rules) and the link ends with the draw''s day. Shown once'
       requestBody:
         required: true
         content:
@@ -1071,7 +1069,7 @@ paths:
     post:
       tags: [guest]
       operationId: startGuest
-      summary: 'A guest''s link token (from the link''s #fragment) for a short session cookie (keepsake_guest, 12 hours). One answer for every failure; rate limited like a sign-in'
+      summary: 'A guest''s link token (from the link''s #fragment) for a short session cookie (keepsake_guest, 12 hours). One answer for every failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in'
       security: []
       requestBody:
         required: true
@@ -1552,13 +1550,22 @@ components:
     Claim:
       type: object
       additionalProperties: false
-      required: [giver, guest, quantity, state, mine]
+      required: [giver, guest, imported, quantity, state, mine]
       properties:
         giver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
-        guest: { type: [string, 'null'], description: 'A guest''s claim: the name they gave (null like `giver` while a draw keeps givers unnamed, and always to a guest)' }
+        guest: { description: 'A guest''s claim: the guest, marked as one (null like `giver` while a draw keeps givers unnamed, and always to a guest)', anyOf: [{ $ref: '#/components/schemas/GuestRef' }, { type: 'null' }] }
+        imported: { type: boolean, description: 'An imported reservation: a Reserved row of the sheet whose buyer is nobody here (nobody''s claim; an admin releases it)' }
         quantity: { type: integer, minimum: 1 }
         state: { $ref: '#/components/schemas/ClaimState' }
         mine: { type: boolean }
+
+    GuestRef:
+      type: object
+      additionalProperties: false
+      required: [name, label]
+      properties:
+        name: { type: string, description: 'The name the guest gave (never a household member''s)' }
+        label: { type: string, description: 'Who the link is for, as its maker wrote it' }
 
     GroupGift:
       type: object
@@ -1774,18 +1781,18 @@ components:
     Idea:
       type: object
       additionalProperties: false
-      required: [id, text, by, mine, createdAt]
+      required: [id, text, by, mine, on]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         text: { type: string }
         by: { description: 'Who keeps it (null while a draw keeps its people unnamed to each other, or once they left)', anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
         mine: { type: boolean }
-        createdAt: { $ref: '#/components/schemas/DateTime' }
+        on: { $ref: '#/components/schemas/Day', description: 'The day it was written (household time): never the moment' }
 
     GuestLink:
       type: object
       additionalProperties: false
-      required: [id, kind, label, guestName, person, celebration, approved, lastDay, createdAt, canApprove]
+      required: [id, kind, label, guestName, person, celebration, lastDay, createdAt, revokedAt]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         kind: { enum: [share, draw] }
@@ -1793,10 +1800,9 @@ components:
         guestName: { type: [string, 'null'], description: 'The name the guest gave' }
         person: { description: 'A share link: whose wishes', anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
         celebration: { description: 'A draw link: whose draw', anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
-        approved: { type: boolean, description: 'A kid''s own share link opens nothing until a parent says yes' }
         lastDay: { description: 'A draw link: the last day it works (the draw''s day, household time)', anyOf: [{ $ref: '#/components/schemas/Day' }, { type: 'null' }] }
         createdAt: { $ref: '#/components/schemas/DateTime' }
-        canApprove: { type: boolean }
+        revokedAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }] }
 
     GuestLinks:
       type: object

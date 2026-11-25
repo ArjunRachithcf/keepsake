@@ -69,7 +69,7 @@ CREATE TABLE `__new_audit` (
 	`actor_id` text NOT NULL,
 	`action` text NOT NULL,
 	`subject_id` text NOT NULL,
-	CONSTRAINT "audit_action" CHECK(action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_approved', 'link_revoked', 'imported'))
+	CONSTRAINT "audit_action" CHECK(action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released'))
 );
 --> statement-breakpoint
 INSERT INTO `__new_audit`("id", "at", "actor_id", "action", "subject_id") SELECT "id", "at", "actor_id", "action", "subject_id" FROM `audit`;--> statement-breakpoint
@@ -78,6 +78,7 @@ ALTER TABLE `__new_audit` RENAME TO `audit`;--> statement-breakpoint
 PRAGMA foreign_keys=ON;--> statement-breakpoint
 CREATE INDEX `audit_subject` ON `audit` (`subject_id`);--> statement-breakpoint
 ALTER TABLE `claim` ADD `guest_id` text REFERENCES `guest_link`(`id`) ON UPDATE no action ON DELETE set null;--> statement-breakpoint
+ALTER TABLE `claim` ADD `imported` integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX `claim_wish_guest` ON `claim` (`wish_id`,`guest_id`);--> statement-breakpoint
 ALTER TABLE `draw_participant` ADD `guest_id` text REFERENCES `guest_link`(`id`) ON UPDATE no action ON DELETE cascade;--> statement-breakpoint
 CREATE UNIQUE INDEX `draw_participant_guest` ON `draw_participant` (`draw_id`,`guest_id`);

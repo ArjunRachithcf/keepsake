@@ -19,7 +19,8 @@ async function start() {
   db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
   const built = await buildApp(standalone(), db);
   apps.push(built);
-  const post = (url: string, payload: object, who = 'p_alex') => built.app.inject({ method: 'POST', url, payload, headers: { cookie: sessionCookie(db, who), origin: ORIGIN } });
+  const post = (url: string, payload: object | undefined, who = 'p_alex', method: 'POST' | 'GET' | 'DELETE' = 'POST') =>
+    built.app.inject({ method, url, payload, headers: { cookie: sessionCookie(db, who), origin: ORIGIN } });
   return { db, post };
 }
 const everything = (db: Db) => JSON.stringify(['wish', 'claim', 'group_gift', 'share', 'question', 'idea', 'guest_link', 'celebration', 'person', 'setting']
@@ -33,7 +34,7 @@ describe('the sheet import', () => {
     expect(r.statusCode, r.body).toBe(200);
     expect(everything(db)).toBe(before);
     const p = r.json();
-    expect(p).toMatchObject({ rows: 10, wishes: 6, claims: 1, ready: false });
+    expect(p).toMatchObject({ rows: 10, wishes: 6, claims: 3, ready: false });
     expect(p.people).toEqual([
       { name: 'Alex', personId: 'p_alex', status: 'matched', rows: 2 },
       { name: 'Grandpa Joe', personId: null, status: 'unmapped', rows: 1 },
@@ -61,7 +62,7 @@ describe('the sheet import', () => {
     expect((await post('/api/import', { csv: SAMPLE, people: { 'Grandpa Joe': 'p_nobody' } })).statusCode).toBe(400);
     const done = await post('/api/import', { csv: SAMPLE, people: { 'grandpa joe': null }, occasions: { Easter: 'c_xmas' } });
     expect(done.statusCode, done.body).toBe(200);
-    expect(done.json()).toEqual({ wishes: 6, claims: 1, skipped: 4 });
+    expect(done.json()).toEqual({ wishes: 6, claims: 3, skipped: 4 });
     const made = db.select().from(t.wish).all().filter((w) => !before.includes(w.id));
     const by = (name: string) => made.find((w) => w.name === name)!;
     expect(by('A two-person tent')).toMatchObject({ personId: 'p_alex', celebrationId: 'c_xmas', priceMinor: 24900, mostWanted: 1, link: 'https://shop.example/tent', note: 'Green if possible', state: 'listed', addedBy: 'p_alex' });
@@ -71,9 +72,20 @@ describe('the sheet import', () => {
     expect(by('Glitter slime')).toMatchObject({ celebrationId: 'c_xmas', priceMinor: null });
     expect(by('A wool scarf')).toMatchObject({ note: 'SUM(A1:A9)' });
     expect(made.map((w) => w.name)).toContain('HYPERLINK("http://evil.example";"click")');
-    // Reserved → a claim by the household member named; never a formula at the start of anything.
+    // Reserved → a claim by the household member named; a buyer who is nobody here who may give (Nobody Here; Mia
+    // for herself) → nobody's imported reservation, so nobody buys it twice (review L1). Never a formula at the start.
     const claims = db.select().from(t.claim).all().filter((c) => made.some((w) => w.id === c.wishId));
-    expect(claims.map((c) => [by('Hiking socks, wool').id === c.wishId, c.giverId, c.state])).toEqual([[true, 'p_sam', 'claimed']]);
+    const of = (c: typeof claims[number]) => made.find((w) => w.id === c.wishId)!.name;
+    expect(claims.map((c) => [of(c), c.giverId, c.imported, c.state]).sort()).toEqual([
+      ['A red bike', null, 1, 'claimed'], ['A wool scarf', null, 1, 'claimed'], ['Hiking socks, wool', 'p_sam', 0, 'claimed']]);
+    // Givers see it as an imported reservation; an admin releases it (audited), nobody else, and never its person.
+    const scarf = by('A wool scarf').id;
+    expect((await post('/api/people/p_robin', undefined, 'p_sam', 'GET')).json().wishes.find((w: { id: string }) => w.id === scarf).gift.claims).toEqual([{ giver: null, guest: null, imported: true, quantity: 1, state: 'claimed', mine: false }]);
+    expect((await post(`/api/wishes/${scarf}/imported-claim`, undefined, 'p_sam', 'DELETE')).statusCode).toBe(403);
+    expect((await post(`/api/wishes/${scarf}/imported-claim`, undefined, 'p_robin', 'DELETE')).json().error).toBe('your own wishes are for others to give');
+    expect((await post(`/api/wishes/${scarf}/imported-claim`, undefined, 'p_alex', 'DELETE')).statusCode).toBe(204);
+    expect((await post(`/api/wishes/${scarf}/imported-claim`, undefined, 'p_alex', 'DELETE')).json().error).toBe('no such reservation');
+    expect(db.select().from(t.audit).all().filter((a) => a.action === 'reservation_released').map((a) => [a.actorId, a.subjectId])).toEqual([['p_alex', scarf]]);
     for (const w of made) for (const v of [w.name, w.note ?? '']) expect(v).not.toMatch(/^[=+\-@\t\r]/);
     const after = everything(db);
     for (const gone of ['Grandpa Joe', 'pipe stand', 'Nobody Here', 'already wrapped', 'orphan', 'empty row', 'javascript', 'not a price', 'Easter']) expect(after, gone).not.toContain(gone);

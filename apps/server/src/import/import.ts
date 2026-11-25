@@ -79,6 +79,9 @@ function webLink(v: string): string | null {
   } catch { return null; }
 }
 
+/** A Reserved row's buyer who is nobody here: the claim is an imported reservation. */
+const IMPORTED = '\u0000imported';
+
 /** The plan for a file, and the wishes it would make (the dry run shows the first; apply writes the second). */
 function planOf(db: Db, i: ImportInput): { plan: Plan; make: NewWish[] } {
   const rows = parseCsv(i.csv);
@@ -170,13 +173,15 @@ function planOf(db: Db, i: ImportInput): { plan: Plan; make: NewWish[] } {
     if (rawPrice && priceMinor === null) warnings.push({ row, kind: 'price_dropped' });
     let note = cell(r, 'notes') || null;
     if (note && note.length > 500) { note = note.slice(0, 500); warnings.push({ row, kind: 'note_cut' }); }
+    // A Reserved row keeps its reservation: by its buyer when they are someone here who may give, otherwise as nobody's
+    // "imported reservation" (review L1), so nobody buys it twice; an admin releases it if it was a mistake.
     let buyer: string | null = null;
     if (status === 'reserved') {
       const by = cell(r, 'buyer');
       const b = by ? tally(bm, by, () => ({ personId: resolve(by).personId })) : null;
       const p = b?.personId ? ids.get(b.personId) : undefined;
       if (p && p.id !== who.personId && p.role !== 'kid') buyer = p.id;
-      else warnings.push({ row, kind: 'buyer_unknown' });
+      else { buyer = IMPORTED; warnings.push({ row, kind: 'buyer_unknown' }); }
     }
     const pr = key(cell(r, 'priority'));
     make.push({ personId: who.personId, name: item, link, priceMinor, note, mostWanted: /^(high|top|1|most wanted|must have|\*+|★+)$/.test(pr), celebrationId, buyer });
@@ -218,7 +223,10 @@ export function applyImport(db: Db, me: Person, i: ImportInput): { wishes: numbe
         mostWanted: w.mostWanted ? 1 : 0, position: next.get(w.personId)!, state: 'listed', addedBy: w.personId, createdAt: now, updatedAt: now,
       }).run();
       next.set(w.personId, next.get(w.personId)! + 1);
-      if (w.buyer) tx.insert(t.claim).values({ id: ulid(), wishId: id, giverId: w.buyer, quantity: 1, state: 'claimed', createdAt: now, updatedAt: now }).run();
+      if (w.buyer) {
+        const imported = w.buyer === IMPORTED;
+        tx.insert(t.claim).values({ id: ulid(), wishId: id, giverId: imported ? null : w.buyer, imported: imported ? 1 : 0, quantity: 1, state: 'claimed', createdAt: now, updatedAt: now }).run();
+      }
     }
     tx.insert(t.audit).values({ id: ulid(), at: now, actorId: me.id, action: 'imported', subjectId: ulid() }).run();
     return { wishes: plan.wishes, claims: plan.claims, skipped: plan.skipped.length };

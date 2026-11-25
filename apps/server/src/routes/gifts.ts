@@ -26,6 +26,8 @@ export function giftRoutes(api: Router, data: Data) {
 
   api.delete('/wishes/:wishId/claim', (r) => data.gifts.unclaim(r, r.params.wishId));
 
+  api.delete('/wishes/:wishId/imported-claim', (r) => data.gifts.releaseImported(r, r.params.wishId));
+
   api.put('/wishes/:wishId/named', (r) => {
     const named = required(bool(object(r.body, ['named']), 'named'), 'named');
     return data.view(r).wish(data.gifts.setNamed(r, r.params.wishId, named));

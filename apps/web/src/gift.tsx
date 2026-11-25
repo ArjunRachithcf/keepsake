@@ -30,7 +30,10 @@ export function GiftLine({ wish, onChanged, guest, currency }: { wish: Wish; onC
   };
   const mine = g.claims.find((c) => c.mine);
   const others = g.claims.filter((c) => !c.mine);
-  const who = (c: Gift['claims'][number]) => c.giver?.name ?? c.guest ?? 'Someone';
+  // A guest is marked as one, with their link's label (review M2); an imported reservation is nobody's.
+  const who = (c: Gift['claims'][number]) => c.giver?.name
+    ?? (c.guest ? `${c.guest.name} (guest${c.guest.label !== c.guest.name ? `: ${c.guest.label}` : ''})` : c.imported ? 'An imported reservation' : 'Someone');
+  const admin = useContext(HouseholdContext)?.household.me.role === 'admin';
   const lines: string[] = [];
   if (mine) lines.push(mine.state === 'claimed' ? 'You’re getting this' : mine.state === 'bought' ? 'You bought this' : 'You gave this');
   const getting = others.filter((c) => c.state === 'claimed').map(who);
@@ -66,6 +69,9 @@ export function GiftLine({ wish, onChanged, guest, currency }: { wish: Wish; onC
         {mine?.state === 'bought' && <Pill disabled={busy} onClick={() => call('/claim', 'PATCH', { state: 'given' })}>Given</Pill>}
         {mine?.state === 'given' && !g.mine?.over && <Pill disabled={busy} onClick={() => call('/claim', 'PATCH', { state: 'bought' })}>Not given yet</Pill>}
         {mine?.state === 'claimed' && <Pill disabled={busy} onClick={() => call('/claim', 'DELETE')}>Not me after all</Pill>}
+        {!guest && admin && g.claims.some((c) => c.imported) && (
+          <Pill disabled={busy} label={wish.name} onClick={() => { if (confirm('Release the reservation that came with the sheet? Anyone may then get it.')) void call('/imported-claim', 'DELETE'); }}>Release the imported reservation</Pill>
+        )}
         {!guest && !grp && g.claims.length === 0 && cur && <Pill disabled={busy} onClick={() => setSheet('group')}>Make it a group gift</Pill>}
         {!guest && grp?.state === 'open' && <Pill accent disabled={busy} onClick={() => setSheet('chip')} label={wish.name}>{grp.myShareMinor === null ? 'Chip in' : 'Change my share'}</Pill>}
         {grp?.state === 'open' && grp.myShareMinor !== null && <Pill disabled={busy} onClick={() => call('/group/share', 'DELETE')}>Take my share back</Pill>}

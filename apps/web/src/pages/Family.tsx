@@ -131,7 +131,7 @@ function ManageHousehold() {
           </li>
         ))}
       </ul>
-      <LinksList title="Guest links" footer="Every open share link and personal draw link. Revoking one stops it at once." />
+      <LinksList title="Guest links" footer="Every share link and personal draw link but those to your own wishes, revoked ones too. No address is shown again. Revoking one stops it at once." />
       <ImportWizard celebrations={celebrations} />
       {link && (
         <Notice title={`A one-time link for ${link.name}`}>

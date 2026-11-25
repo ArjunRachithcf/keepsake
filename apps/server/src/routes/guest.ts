@@ -5,7 +5,7 @@ import { CLAIM_STATES } from '@keepsake/contracts';
 import type { Data } from '../data';
 import { Refused, type Field } from '../errors';
 import type { Router } from '../router';
-import { int, object, oneOf, text } from '../validate';
+import { int, object, oneOf, plainText, text } from '../validate';
 
 const required = <T>(v: T | undefined, field: Field): T => {
   if (v === undefined) throw Refused.field(field, 'required');
@@ -22,7 +22,7 @@ export function guestRoutes(api: Router, data: Data) {
   api.get('/guest', { guest: true }, (r) => data.guest.view(r).page());
 
   api.put('/guest/name', { guest: true }, (r) => {
-    data.guest.setName(r, text(object(r.body, ['name']), 'name', 60, { required: true })!);
+    data.guest.setName(r, plainText(object(r.body, ['name']), 'name', 60, { required: true })!);
     return data.guest.view(r).page();
   });
 

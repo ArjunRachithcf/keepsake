@@ -479,6 +479,25 @@ export interface paths {
         patch: operations["editClaim"];
         trace?: never;
     };
+    "/wishes/{wishId}/imported-claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** An admin releases the wish's imported reservation (refused first, like any giving, to its person and kids) */
+        delete: operations["releaseImportedClaim"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/wishes/{wishId}/named": {
         parameters: {
             query?: never;
@@ -778,7 +797,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The open guest links the caller manages: their own and their kids' share links, their celebrations' draw links; every link for admins */
+        /** The guest links the caller manages, revoked ones too, never their address: the share links they made (admins: every one, but never a link for themselves), their celebrations' draw links (admins: all). Kids: none */
         get: operations["listLinks"];
         put?: never;
         post?: never;
@@ -807,25 +826,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/links/{linkId}/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                linkId: components["parameters"]["linkId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** A kid's parent says yes to the kid's share link */
-        post: operations["approveLink"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/people/{personId}/links": {
         parameters: {
             query?: never;
@@ -837,7 +837,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A share link to the person's wishes (the person, or a kid's parent; a kid's own waits for a parent). The link is shown once */
+        /** A share link to the person's wishes, made by another grown-up (for a kid, a parent), never by the person: the address is shown to its maker this once. Refused in homerslab mode until HomersLab lets guests in (Homeward #317) */
         post: operations["shareLink"];
         delete?: never;
         options?: never;
@@ -856,7 +856,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A personal draw link for one named guest (the host): they join the celebration's draw (once drawn, a re-draw under its rules) and the link ends with the draw's day. Shown once */
+        /** A personal draw link for one named guest (the host; refused in homerslab mode until HomersLab lets guests in): they join the celebration's draw (once drawn, a re-draw under its rules) and the link ends with the draw's day. Shown once */
         post: operations["inviteGuest"];
         delete?: never;
         options?: never;
@@ -907,7 +907,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A guest's link token (from the link's #fragment) for a short session cookie (keepsake_guest, 12 hours). One answer for every failure; rate limited like a sign-in */
+        /** A guest's link token (from the link's #fragment) for a short session cookie (keepsake_guest, 12 hours). One answer for every failure, also when the browser carries a household session the link is not for (its person, a kid; for a draw link, anyone in that draw); rate limited like a sign-in */
         post: operations["startGuest"];
         delete?: never;
         options?: never;
@@ -1197,11 +1197,19 @@ export interface components {
         };
         Claim: {
             giver: components["schemas"]["PersonRef"] | null;
-            /** @description A guest's claim: the name they gave (null like `giver` while a draw keeps givers unnamed, and always to a guest) */
-            guest: string | null;
+            /** @description A guest's claim: the guest, marked as one (null like `giver` while a draw keeps givers unnamed, and always to a guest) */
+            guest: components["schemas"]["GuestRef"] | null;
+            /** @description An imported reservation: a Reserved row of the sheet whose buyer is nobody here (nobody's claim; an admin releases it) */
+            imported: boolean;
             quantity: number;
             state: components["schemas"]["ClaimState"];
             mine: boolean;
+        };
+        GuestRef: {
+            /** @description The name the guest gave (never a household member's) */
+            name: string;
+            /** @description Who the link is for, as its maker wrote it */
+            label: string;
         };
         GroupGift: {
             organizer: components["schemas"]["PersonRef"] | null;
@@ -1345,7 +1353,8 @@ export interface components {
             /** @description Who keeps it (null while a draw keeps its people unnamed to each other, or once they left) */
             by: components["schemas"]["PersonRef"] | null;
             mine: boolean;
-            createdAt: components["schemas"]["DateTime"];
+            /** @description The day it was written (household time): never the moment */
+            on: components["schemas"]["Day"];
         };
         GuestLink: {
             id: components["schemas"]["Id"];
@@ -1359,12 +1368,10 @@ export interface components {
             person: components["schemas"]["PersonRef"] | null;
             /** @description A draw link: whose draw */
             celebration: components["schemas"]["CelebrationRef"] | null;
-            /** @description A kid's own share link opens nothing until a parent says yes */
-            approved: boolean;
             /** @description A draw link: the last day it works (the draw's day, household time) */
             lastDay: components["schemas"]["Day"] | null;
             createdAt: components["schemas"]["DateTime"];
-            canApprove: boolean;
+            revokedAt: components["schemas"]["DateTime"] | null;
         };
         GuestLinks: {
             links: components["schemas"]["GuestLink"][];
@@ -2587,6 +2594,29 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    releaseImportedClaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wishId: components["parameters"]["wishId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Released */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     nameOnGift: {
         parameters: {
             query?: never;
@@ -3202,31 +3232,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-        };
-    };
-    approveLink: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                linkId: components["parameters"]["linkId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The link */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GuestLink"];
-                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];

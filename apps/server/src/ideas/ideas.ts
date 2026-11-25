@@ -3,9 +3,9 @@
 // `seesIdeas`, so the person's and a kid's answers are the same whatever ideas exist. Every refusal to them is decided
 // from the caller and the person alone, before any idea is read.
 import { and, count, eq, inArray } from 'drizzle-orm';
-import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
+import { randomId } from '../auth/tokens';
 import { Refused } from '../errors';
 import { mustGetPerson, type Person } from '../household/people';
 
@@ -26,7 +26,8 @@ export function addIdea(db: Db, me: Person, personId: string, text: string): str
   if ((db.select({ n: count() }).from(t.idea).where(eq(t.idea.personId, p.id)).get()?.n ?? 0) >= MAX_IDEAS) {
     throw new Refused(409, 'at most 50 ideas for one person');
   }
-  const id = ulid();
+  // Random, not a ULID: an id carries no moment (review L4).
+  const id = randomId();
   db.insert(t.idea).values({ id, personId: p.id, authorId: me.id, text: text.trim(), createdAt: new Date().toISOString() }).run();
   return id;
 }

@@ -140,8 +140,9 @@ export const profile = sqliteTable('profile', {
  */
 export const AUDIT_ACTIONS = [
   'passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared',
-  // M4: an admin removed a question (never who asked it); guest links made, approved and revoked; a sheet imported.
-  'question_removed', 'link_created', 'link_approved', 'link_revoked', 'imported',
+  // M4: an admin removed a question (never who asked it); guest links made and revoked; a sheet imported; an admin
+  // released an imported reservation.
+  'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released',
 ] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
@@ -184,6 +185,8 @@ export const claim = sqliteTable('claim', {
    * by ALTER TABLE in 0003 (a rebuild inside the migration's transaction would cascade), hence last and without a CHECK.
    */
   guestId: text('guest_id').references((): AnySQLiteColumn => guestLink.id, { onDelete: 'set null' }),
+  /** A Reserved row of the sheet import whose buyer is nobody here (review L1): nobody's claim, an admin releases it. */
+  imported: integer('imported').notNull().default(0),
 }, (t) => [
   uniqueIndex('claim_wish_giver').on(t.wishId, t.giverId),
   uniqueIndex('claim_wish_guest').on(t.wishId, t.guestId),

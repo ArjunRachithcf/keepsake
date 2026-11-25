@@ -10,7 +10,7 @@
 // - Who sees it once delivered: the person (to answer), and everyone giving to them (grown-ups, guests with a link to
 //   them), without its asker; its asker sees theirs marked "yours". A declined one only its asker.
 // - Admins remove an abusive one; that says nothing about the asker either (audited as who removed which question).
-import { and, count, eq, inArray } from 'drizzle-orm';
+import { and, count, eq, inArray, lte } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { asDb, type Db } from '../db/open';
 import * as t from '../db/schema';
@@ -24,7 +24,10 @@ export type Question = typeof t.question.$inferSelect;
 /** Who asks: someone of the household, or a guest (their link). */
 export type Asker = { personId: string } | { guestId: string };
 
-/** Open questions one asker may have waiting for one person, and one person may have waiting in all. */
+/**
+ * Open questions one asker may have waiting for one person, and delivered open ones a person may have waiting in all
+ * (only delivered ones count: anyone may see those, so the refusal tells nobody about questions still on their way).
+ */
 export const MAX_OPEN_PER_ASKER = 3; // the messages say these numbers
 export const MAX_OPEN_PER_PERSON = 30;
 export const BATCH_HOUR = 8;
@@ -45,6 +48,8 @@ export const givesTo = (me: Pick<Person, 'id' | 'role'>, personId: string) => me
 
 /** What a household viewer may see of a question: theirs always; once delivered, the answerers' and givers' (not a declined one). */
 export function seesQuestion(db: Db, me: Person, q: Question, now: Date): boolean {
+  // A kid never asks and sees no question, not even one answered for them (answers are for the givers).
+  if (me.role === 'kid') return false;
   if (isAsker(q, { personId: me.id })) return true;
   if (!isDelivered(q, now)) return false;
   const p = getPerson(db, q.personId);
@@ -70,7 +75,7 @@ export function ask(db: Db, timeZone: string, who: Asker & { role?: Person['role
   if ((db.select({ n: count() }).from(t.question).where(and(open, mine)).get()?.n ?? 0) >= MAX_OPEN_PER_ASKER) {
     throw new Refused(409, 'you have 3 questions waiting for them: wait for an answer');
   }
-  if ((db.select({ n: count() }).from(t.question).where(open).get()?.n ?? 0) >= MAX_OPEN_PER_PERSON) {
+  if ((db.select({ n: count() }).from(t.question).where(and(open, lte(t.question.deliverAt, now.toISOString()))).get()?.n ?? 0) >= MAX_OPEN_PER_PERSON) {
     throw new Refused(409, 'they have many questions waiting: try again later');
   }
   const id = randomId();

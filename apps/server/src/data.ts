@@ -21,7 +21,7 @@ import {
   addPerson, editPerson, hasPasskey, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
   type Person, type PersonInput,
 } from './household/people';
-import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
+import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, releaseImported, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
 import { setProfile, type ProfileInput } from './household/profile';
 import {
   auditMoves, beforePersonRemoved, veilCelebration, checkCelebrationMove, checkCelebrationRemoval, checkPeopleChange, createDraw, dropLeavers, editDraw, openDraw,
@@ -36,7 +36,7 @@ import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from '
 import { answerQuestion, answerWithWish, ask, declineQuestion, removeQuestion } from './questions/questions';
 import { addIdea, removeIdea } from './ideas/ideas';
 import {
-  approveLink, createShareLink, drawLinkWriter, endGuestSession, getLink, GUEST_COOKIE, GUEST_HOURS, guestGiving, linkUrl, reachOf, revokeLink, setGuestName,
+  createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endGuestSession, getLink, GUEST_COOKIE, GUEST_HOURS, guestGiving, linkUrl, reachOf, revokeLink, setGuestName,
   startGuestSession, type GuestLink,
 } from './guests/guests';
 import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
@@ -75,6 +75,8 @@ export function dataFor(cfg: Config, db: Db) {
    * hidden from them.
    */
   const changed = <T>(v: T): T => { refreshRevealed(db, day()); return v; };
+  /** After a change to a draw or a link: a guest's claims they can no longer manage go (review M1), then `changed`. */
+  const settled = <T>(v: T): T => { settleGuestClaims(db, keyring(cfg)); return changed(v); };
   const fresh = (r: Req, minutes?: number) => {
     const s = fastifyRequestOf(r).caller?.session;
     if (!s || !isFresh(s, new Date(), minutes)) throw new Refused(403, 'sign in again to do this');
@@ -86,6 +88,8 @@ export function dataFor(cfg: Config, db: Db) {
     if (!g) throw new Refused(401, 'this link is unknown, used or expired');
     return g;
   };
+  /** Guests reach Keepsake only standalone until HomersLab's edge lets them in (Homeward #317). */
+  const homersLabWaits = () => { if (cfg.mode === 'homerslab') throw new Refused(409, 'guest links work once HomersLab lets guests in'); };
   const viewOf = (r: Req) => viewFor(db, cfg, me(r), fastifyRequestOf(r));
 
   return {
@@ -162,7 +166,7 @@ export function dataFor(cfg: Config, db: Db) {
           beforePersonRemoved(asDb(tx), by, id, day(), keyring(cfg));
           removePerson(asDb(tx), id, by.id);
         });
-        changed(0);
+        settled(0);
       },
       setManagers: (r: Req, kidId: string, ids: string[]) => { admin(r); setManagers(db, kidId, ids); },
       setCurrency: (r: Req, code: string | null) => { admin(r); setCurrency(db, code); },
@@ -184,6 +188,7 @@ export function dataFor(cfg: Config, db: Db) {
       claim: (r: Req, wishId: string, quantity: number) => changed(claimWish(db, me(r), wishId, quantity).id),
       setState: (r: Req, wishId: string, state: ClaimState) => changed(setClaimState(db, me(r), wishId, state, day()).id),
       unclaim: (r: Req, wishId: string) => changed(unclaimWish(db, me(r), wishId)),
+      releaseImported: (r: Req, wishId: string) => { releaseImported(db, me(r), wishId); changed(0); },
       setNamed: (r: Req, wishId: string, named: boolean) => changed(setNamed(db, me(r), wishId, named, day()).id),
       startGroup: (r: Req, wishId: string, targetMinor: number) => changed(startGroup(db, me(r), wishId, targetMinor).id),
       editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => changed(editGroup(db, me(r), wishId, patch, day()).id),
@@ -194,9 +199,9 @@ export function dataFor(cfg: Config, db: Db) {
     /** A celebration's draw (draws/draws.ts), as the request's person: each returns the celebration's id for the view layer. */
     draws: {
       create: (r: Req, celebrationId: string, i: DrawInput) => createDraw(db, me(r), celebrationId, i, day()),
-      edit: (r: Req, celebrationId: string, patch: Partial<DrawInput>) => editDraw(db, me(r), celebrationId, patch, day(), keyring(cfg)),
-      remove: (r: Req, celebrationId: string) => removeDraw(db, me(r), celebrationId, day()),
-      run: (r: Req, celebrationId: string) => runDraw(db, me(r), celebrationId, day(), keyring(cfg)),
+      edit: (r: Req, celebrationId: string, patch: Partial<DrawInput>) => settled(editDraw(db, me(r), celebrationId, patch, day(), keyring(cfg))),
+      remove: (r: Req, celebrationId: string) => settled(removeDraw(db, me(r), celebrationId, day())),
+      run: (r: Req, celebrationId: string) => settled(runDraw(db, me(r), celebrationId, day(), keyring(cfg))),
       open: (r: Req, celebrationId: string) => openDraw(db, me(r), celebrationId, new Date(), keyring(cfg)),
     },
     /** Anonymous questions (questions/questions.ts): each returns an id for the view layer, never the asker. */
@@ -214,18 +219,19 @@ export function dataFor(cfg: Config, db: Db) {
     /** Guest links (guests/guests.ts): a new link's address is built here and shown once. */
     links: {
       share: (r: Req, personId: string, label: string) => {
+        homersLabWaits();
         const made = createShareLink(db, me(r), personId, label);
         return viewOf(r).linkMade(made.id, linkUrl(cfg, made.token));
       },
       /** A personal draw link: the guest joins the draw in the same transaction (a re-draw once drawn). */
       invite: (r: Req, celebrationId: string, name: string) => {
         const out: { id?: string; token?: string } = {};
+        homersLabWaits();
         addGuest(db, me(r), celebrationId, drawLinkWriter(me(r), celebrationId, name, out), day(), keyring(cfg));
-        changed(0);
+        settled(0);
         return viewOf(r).linkMade(out.id!, linkUrl(cfg, out.token!));
       },
-      revoke: (r: Req, id: string) => { revokeLink(db, me(r), id, (linkId) => guestLeaves(db, linkId)); changed(0); },
-      approve: (r: Req, id: string) => { approveLink(db, me(r), id); return id; },
+      revoke: (r: Req, id: string) => { revokeLink(db, me(r), id, (linkId) => guestLeaves(db, linkId)); settled(0); },
     },
     /** The sheet import (import/import.ts): admins only, checked there too. */
     imports: {
@@ -238,7 +244,10 @@ export function dataFor(cfg: Config, db: Db) {
       view: (r: Req) => guestViewFor(db, cfg, getLink(db, guestOf(r).id) ?? guestOf(r), fastifyRequestOf(r)),
       /** A link's token for a session: the cookie's token, its age, and the page for that guest. */
       start: (r: Req, token: unknown) => {
-        const s = startGuestSession(db, token, day());
+        // The browser's own household session, if any: one the link is not for is refused (H1, defence in depth).
+        const c = callerOf(cfg, db, fastifyRequestOf(r));
+        const by = c === 'no-role' ? { id: '', role: 'kid' as const } : c?.person ?? null;
+        const s = startGuestSession(db, token, day(), new Date(), by);
         return { cookie: s.token, maxAge: GUEST_HOURS * 3600, page: guestViewFor(db, cfg, s.link, fastifyRequestOf(r)).page() };
       },
       signOut: (r: Req) => endGuestSession(db, fastifyRequestOf(r).cookies?.[GUEST_COOKIE]),
@@ -273,13 +282,19 @@ export function dataFor(cfg: Config, db: Db) {
         editCelebration(db, me(r), id, patch);
         auditMoves(db, me(r), moved);
         if (patch.people) dropLeavers(db, id, patch.people);
-        changed(0);
+        settled(0);
       },
       /** A drawn draw before its day goes only under the re-draw rules. */
       remove: (r: Req, id: string) => {
         checkCelebrationRemoval(db, me(r), id, day());
         // Its draws go, but a veil of each secret one stays, so gifts made under it stay unnamed (ADR 0004).
-        db.transaction((tx) => { veilCelebration(asDb(tx), id, day()); removeCelebration(asDb(tx), me(r), id); });
+        db.transaction((tx) => {
+          veilCelebration(asDb(tx), id, day());
+          // Its draw links go with it: their guests' claims are settled first (only-made ones go, review M1).
+          // (A refused removal rolls this back with it.)
+          settleGuestClaims(asDb(tx), keyring(cfg), drawLinksOf(asDb(tx), id));
+          removeCelebration(asDb(tx), me(r), id);
+        });
         return changed(undefined);
       },
     },

@@ -24,7 +24,9 @@ question, one answer, no chat. The asker is never sent to the person.
   no gifts in M4, as for claims).
 - **A kid's questions** go to the kid's parents, who answer, decline or add a wish for the kid. The kid does not see
   questions (passing one on to the kid is left for later).
-- **Limits**: 3 open questions per asker and person, 30 open per person.
+- **Limits**: 3 open questions per asker and person, 30 delivered open ones per person (only delivered ones count:
+  everyone giving sees those, so the refusal says nothing about questions on their way; review of PR #11).
+- **Kids** see no question at all, not even one answered for them (a 404 on every route, as for none).
 - **Declined** questions are shown to their asker only ("they'd rather not say"); everyone else sees nothing.
 - **Taking back**: the asker until the batch; after it only an admin removes one, audited as who removed which.
 - **Storage**: only `questions/questions.ts isAsker` reads the asker, comparing it with the caller; nothing returns it.

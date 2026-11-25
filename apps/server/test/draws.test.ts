@@ -614,10 +614,10 @@ describe('gifts between the people of a draw (review H1)', () => {
     const wish = add.json().id as string;
     expect((await as('quinn').send('PUT', `/api/wishes/${wish}/claim`, { quantity: 1 })).statusCode).toBe(200);
     const seen = async (who: Who) => (await as(who).get('/api/people/p_robin')).json().wishes.find((x: { id: string }) => x.id === wish).gift;
-    expect((await seen('quinn')).claims).toEqual([{ giver: { id: 'p_quinn', name: 'Quinn' }, guest: null, quantity: 1, state: 'claimed', mine: true }]);
+    expect((await seen('quinn')).claims).toEqual([{ giver: { id: 'p_quinn', name: 'Quinn' }, guest: null, imported: false, quantity: 1, state: 'claimed', mine: true }]);
     for (const who of ['alex', 'sam', 'uma'] as const) {
       const g = await seen(who);
-      expect(g.claims, who).toEqual([{ giver: null, guest: null, quantity: 1, state: 'claimed', mine: false }]);
+      expect(g.claims, who).toEqual([{ giver: null, guest: null, imported: false, quantity: 1, state: 'claimed', mine: false }]);
       expect(g.left, who).toBe(0);
     }
     // a giver outside the draw is named as ever

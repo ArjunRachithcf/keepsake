@@ -12,7 +12,7 @@ import { ORIGIN, household, sessionCookie, standalone } from './helpers';
 
 export const PEOPLE = ['alex', 'sam', 'robin', 'mia', 'leo', 'quinn', 'uma'] as const;
 export type Who = (typeof PEOPLE)[number];
-/** Guests: Robin's share link (gR, gR2), Mia's (gM, approved by Sam), each with a name given. */
+/** Guests: Robin's share links (gR, gR2, made by Alex), Mia's (gM, made by Sam, her parent), each with a name given. */
 export const GUESTS = { gR: 'p_robin', gR2: 'p_robin', gM: 'p_mia' } as const;
 export type Guest = keyof typeof GUESTS;
 const NOW = '2026-11-01T10:00:00.000Z';
@@ -29,7 +29,7 @@ export async function makeHome(): Promise<Home> {
   db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
   db.insert(t.guestLink).values(Object.entries(GUESTS).map(([g, personId]) => ({
     id: `l_${g}`, kind: 'share' as const, personId, label: `Guest ${g}`, guestName: `Guest ${g}`, tokenHash: hashToken(tokenOf(g)),
-    createdBy: personId === 'p_mia' ? 'p_sam' : personId, approvedAt: NOW, createdAt: NOW,
+    createdBy: personId === 'p_mia' ? 'p_sam' : 'p_alex', approvedAt: NOW, createdAt: NOW,
   }))).run();
   const cookies: Record<string, string> = Object.fromEntries(PEOPLE.map((p) => [p, sessionCookie(db, `p_${p}`)]));
   for (const g of Object.keys(GUESTS)) cookies[g] = `keepsake_guest=${startGuestSession(db, tokenOf(g), today('UTC')).token}`;

@@ -31,7 +31,7 @@ import { Refused } from '../errors';
 import * as t from '../db/schema';
 import { answersFor, getQuestion, givesTo, isAsker, isDelivered, questionsFor, seesQuestion, type Question } from '../questions/questions';
 import { getIdea, ideasFor, seesIdeas } from '../ideas/ideas';
-import { approvesLink, getLink, lastDayOf, linksFor, managesLink, reachOf, reaches, type GuestLink } from '../guests/guests';
+import { getLink, lastDayOf, linksFor, managesLink, reachOf, reaches, type GuestLink } from '../guests/guests';
 import { guestPlace } from '../draws/draws';
 import type { Plan } from '../import/import';
 
@@ -127,7 +127,12 @@ export function publicViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 's
 
 /** The names guests gave (or their link's label), by link id. */
 function guestNamesOf(db: Db): Map<string, string> {
-  return new Map(db.select({ id: t.guestLink.id, label: t.guestLink.label, name: t.guestLink.guestName }).from(t.guestLink).all().map((g) => [g.id, g.name ?? g.label]));
+  return new Map(guestRefsOf(db).map((g) => [g.id, g.name]));
+}
+/** A guest as the household sees them on a claim: marked a guest, with their name and their link's label (review M2). */
+function guestRefsOf(db: Db): (api.GuestRef & { id: string })[] {
+  return db.select({ id: t.guestLink.id, label: t.guestLink.label, name: t.guestLink.guestName }).from(t.guestLink).all()
+    .map((g) => ({ id: g.id, name: g.name ?? g.label, label: g.label }));
 }
 /** A question as a giver sees it (ADR 0008): never who asked; `mine` says only whether the viewer did. */
 function askedOf(q: Question, mine: boolean, now: Date, tz: string, wishName: (id: string) => string | null): api.AskedQuestion {
@@ -177,7 +182,9 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
     && live().some((d) => d.people.has(key) && d.people.has(personId) && dayOfInstant(cfg.timezone, at) <= d.on);
   const giverRef = (w: Wish, giverId: string | null, at: string) => (unnamed(w.personId, giverId, at) ? null : ref(giverId));
   const guestNames = lazy(() => guestNamesOf(db));
-  const guestRef = (w: Wish, guestId: string | null, at: string) => (!guestId || unnamed(w.personId, `g:${guestId}`, at) ? null : guestNames().get(guestId) ?? null);
+  const guestRefs = lazy(() => new Map(guestRefsOf(db).map((g) => [g.id, { name: g.name, label: g.label }])));
+  const guestRef = (w: Wish, guestId: string | null, at: string): api.GuestRef | null =>
+    (!guestId || unnamed(w.personId, `g:${guestId}`, at) ? null : guestRefs().get(guestId) ?? null);
   /** What the viewer may see of a wish's gifts: everything for a giver (others' shares as names only), else nothing. */
   const gift = (w: Wish, g: Gifts): api.Gift => {
     const byTime = <T extends { createdAt: string; id: string }>(xs: T[]) => [...xs].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
@@ -191,7 +198,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       left: g.group ? 0 : Math.max(0, w.quantity - claimed),
       given: fullyGiven(w, g),
       claims: byTime(g.claims).map((c) => ({
-        giver: giverRef(w, c.giverId, c.createdAt), guest: guestRef(w, c.guestId, c.createdAt), quantity: c.quantity, state: c.state, mine: c.giverId === viewer.id,
+        giver: giverRef(w, c.giverId, c.createdAt), guest: guestRef(w, c.guestId, c.createdAt), imported: c.imported === 1, quantity: c.quantity, state: c.state, mine: c.giverId === viewer.id,
       })),
       group: g.group ? {
         organizer: giverRef(w, g.group.organizerId, g.group.createdAt), targetMinor: g.group.targetMinor, state: g.group.state,
@@ -287,17 +294,19 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
   const asked = (q: Question) => askedOf(q, isAsker(q, { personId: viewer.id }), instant, cfg.timezone, wishName);
   const questionsOf = (personId: string) => questionsFor(db, [personId]).filter((q) => seesQuestion(db, viewer, q, instant)).sort(byMorning).map(asked);
   // Ideas: only for a viewer who `seesIdeas`; for anyone else none is read. Named as gifts are (review H1).
+  // Only the day, newest first, then by (random) id: no idea tells the moment it was written (review L4).
   const ideasOf = (personId: string): api.Idea[] => ideasFor(db, [personId])
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
-    .map((i) => ({ id: i.id, text: i.text, by: unnamed(personId, i.authorId, i.createdAt) ? null : ref(i.authorId), mine: i.authorId === viewer.id, createdAt: i.createdAt }));
+    .map((i) => ({ i, on: dayOfInstant(cfg.timezone, i.createdAt) }))
+    .sort((a, b) => b.on.localeCompare(a.on) || a.i.id.localeCompare(b.i.id))
+    .map(({ i, on }) => ({ id: i.id, text: i.text, by: unnamed(personId, i.authorId, i.createdAt) ? null : ref(i.authorId), mine: i.authorId === viewer.id, on }));
   const link = (l: GuestLink): api.GuestLink => ({
     id: l.id, kind: l.kind, label: l.label, guestName: l.guestName,
     person: l.personId ? ref(l.personId) : null, celebration: celebrationRef(l.celebrationId),
-    approved: l.approvedAt !== null, lastDay: lastDayOf(db, l), createdAt: l.createdAt, canApprove: approvesLink(db, viewer, l),
+    lastDay: lastDayOf(db, l), createdAt: l.createdAt, revokedAt: l.revokedAt,
   });
   const mustLink = (id: string) => {
     const l = getLink(db, id);
-    if (!l || l.revokedAt || !(managesLink(db, viewer, l) || approvesLink(db, viewer, l))) throw new Refused(404, 'no such link');
+    if (!l || l.revokedAt || !managesLink(db, viewer, l)) throw new Refused(404, 'no such link');
     return l;
   };
 
@@ -426,10 +435,8 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       return answer(ideasOf(i.personId).find((x) => x.id === id)!);
     },
     links: (): Viewed<api.GuestLinks> => {
-      const all = linksFor(db, viewer);
-      // A kid's own links waiting for a parent: the kid sees them too (they made them).
-      const waiting = db.select().from(t.guestLink).all().filter((l) => !l.revokedAt && !all.some((x) => x.id === l.id) && approvesLink(db, viewer, l));
-      return answer({ links: [...all, ...waiting].map(link) });
+      // Never a token, never a link for the viewer themselves; revoked ones stay listed (dated).
+      return answer({ links: linksFor(db, viewer).map(link) });
     },
     link: (id: string): Viewed<api.GuestLink> => answer(link(mustLink(id))),
     /** A link just made, with its address: shown this once (data.ts hands the token's url over, never a route). */
@@ -478,7 +485,7 @@ export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'se
     const mine = g.group ? undefined : g.claims.find((c) => c.guestId === l.id);
     return {
       claimed, left: g.group ? 0 : Math.max(0, w.quantity - claimed), given: fullyGiven(w, g),
-      claims: byTime(g.claims).map((c) => ({ giver: null, guest: null, quantity: c.quantity, state: c.state, mine: c.guestId === l.id })),
+      claims: byTime(g.claims).map((c) => ({ giver: null, guest: null, imported: c.imported === 1, quantity: c.quantity, state: c.state, mine: c.guestId === l.id })),
       group: g.group ? {
         organizer: null, targetMinor: g.group.targetMinor, state: g.group.state, totalMinor: g.shares.reduce((n, x) => n + x.amountMinor, 0),
         givers: byTime(g.shares).map(() => ({ giver: null, mine: false })), myShareMinor: null, canManage: false,

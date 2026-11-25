@@ -56,6 +56,7 @@ export type AskedQuestion = S['AskedQuestion'];
 export type QuestionToAnswer = S['QuestionToAnswer'];
 export type WishRef = S['WishRef'];
 export type Idea = S['Idea'];
+export type GuestRef = S['GuestRef'];
 export type GuestLink = S['GuestLink'];
 export type GuestLinks = S['GuestLinks'];
 export type GuestLinkMade = S['GuestLinkMade'];
