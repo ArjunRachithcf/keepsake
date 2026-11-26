@@ -912,3 +912,25 @@ describe('a veil follows its draw while the draw lives on (third review L8)', ()
     expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'people: a kid draws only when kids draw too' });
   });
 });
+
+describe('a draw that fails (issue #13, 2)', () => {
+  it('a refusal keeps what it wrote before refusing; any other failure undoes everything, its try too', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    const tries = () => db.select().from(t.drawTry).all().length;
+    // A refusal: its try is counted and audited.
+    await as('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin'] });
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(409);
+    expect([tries(), audit(db).filter((a) => a.action === 'draw_refused').length]).toEqual([1, 1]);
+    await as('alex').send('PATCH', DRAW, { people: IN });
+    const before = { tries: tries(), audit: audit(db).length };
+    // Not a refusal: the sealed rows cannot be written (a broken disk, a bug).
+    db.$client.exec(`CREATE TRIGGER broken BEFORE INSERT ON draw_assignment BEGIN SELECT RAISE(ABORT, 'broken'); END`);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(500);
+    expect({ tries: tries(), audit: audit(db).length, pending: db.select().from(t.pendingNotice).all() }).toEqual({ ...before, pending: [] });
+    db.$client.exec('DROP TRIGGER broken');
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    expect(tries()).toBe(before.tries + 1);
+  });
+});
