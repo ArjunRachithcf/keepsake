@@ -4,7 +4,10 @@ Status: **Proposed** · 2026-11-24 · revised 2026-11-25 (draws belong to celebr
 
 **Decision**: A draw belongs to one celebration and is made by the server with a cryptographic random source. Until
 the celebration's reveal date each giver can learn only their own receiver; nobody, the host and admins included, can
-list the whole draw through the app. The host chooses a reveal date or never ("never" by default).
+list the whole draw through the app. The host chooses a reveal date or never ("never" by default) before drawing;
+once the names are drawn, "never" is never (no reveal date can be set any more) and a reveal date only moves later or
+to never (Gate surprise L1: otherwise a host who drew with never could set today's date after the day and read every
+pair, and the veils would lift).
 
 - **Rules**: nobody draws themselves; excluded pairs never draw each other (both ways); optionally nobody draws last
   year's person. Exclusions are seen by the host only. An impossible set of rules is refused before drawing, with which
@@ -94,7 +97,7 @@ list the whole draw through the app. The host chooses a reveal date or never ("n
   - Changing who draws or the rules once drawn is a re-draw.
   - "Everyone told" is in the app (`redrawnAt`: everyone opens theirs again) and, since M5, as a notice to each person
     in the draw but whoever drew, with its push that names nobody (ADR 0010).
-  - Once the day has come, only the reveal date changes.
+  - Once the day has come, only the reveal date changes (later, or to never; never once drawn with never).
 - **Someone in a drawn draw leaves the household**:
   - Before its day, under the re-draw rules: they are taken out and the others are drawn again, everyone told if
     anyone had opened theirs. If the others can no longer be drawn (too few, say), the draw goes back to not drawn,

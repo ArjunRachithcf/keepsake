@@ -273,15 +273,17 @@ describe('re-drawing', () => {
   it('once its day has come, only the reveal date changes', async () => {
     const db = home();
     const as = await start(db);
+    // A reveal date chosen before drawing (once drawn with never, it stays never: Gate surprise L1).
+    expect((await as('alex').send('PATCH', DRAW, { revealOn: inDays(400) })).statusCode).toBe(200);
     await as('alex').send('POST', `${DRAW}/run`);
     const last = db.select().from(t.draw).get()!;
     db.update(t.draw).set({ year: last.year - 1, occasionOn: `${last.year - 1}-12-24` }).where(eq(t.draw.id, 'd_xmas')).run();
     expect((await as('alex').send('POST', `${DRAW}/run`)).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
     expect((await as('alex').send('PATCH', DRAW, { budgetMinor: 100 })).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
     expect((await as('alex').send('DELETE', DRAW)).json()).toEqual({ error: 'its day has come: the draw stays as it is' });
-    const r = await as('alex').send('PATCH', DRAW, { revealOn: inDays(0) });
+    const r = await as('alex').send('PATCH', DRAW, { revealOn: inDays(401) });
     expect(r.statusCode, r.body).toBe(200);
-    expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'draw_changed', 'reveal_set']);
+    expect(audit(db).map((a) => a.action)).toEqual(['draw_changed', 'reveal_set', 'drawn', 'draw_changed', 'reveal_set']);
   });
 
   it('someone in a drawn draw stays in the celebration until the draw changes; before it is drawn they just leave it', async () => {
@@ -855,13 +857,13 @@ describe('a veil follows its draw while the draw lives on (third review L8)', ()
   }
 
   it('P1: re-drawn, a claim under the new pairs, then revealed: the claim is named after the reveal', async () => {
-    const x = await setUp(() => null);
+    // Its reveal date chosen before drawing: one drawn with never stays never (Gate surprise L1).
+    const x = await setUp((Y) => `${Y}-12-26`);
     // a correction: Mia out (re-draws, writes a veil while the draw lives on)
     expect((await x.as()('alex').send('PATCH', DRAW, { people: ['p_alex', 'p_sam', 'p_robin', 'p_quinn'], kidsDraw: false })).statusCode).toBe(200);
     expect(x.db.select().from(t.drawVeil).all()).toHaveLength(1);
     await x.as()('quinn').send('PUT', `/api/wishes/${x.wish}/claim`, { quantity: 1 });
     expect(await x.giver()).toBeNull();
-    expect((await x.as()('alex').send('PATCH', DRAW, { revealOn: `${x.Y}-12-26` })).statusCode).toBe(200);
     await x.at(`${x.Y}-12-27T12:00:00.000Z`);
     expect((await x.as()('sam').get(DRAW)).json().pairs).toHaveLength(4);
     expect(await x.giver()).toEqual({ id: 'p_quinn', name: 'Quinn' });
@@ -943,5 +945,42 @@ describe('the caller first (Gate routes, Info)', () => {
     const people = ['p_alex', 'p_robin', 'p_mia', 'p_leo', 'p_quinn'];
     for (const who of ['robin', 'mia'] as const) expect((await as(who).send('PATCH', '/api/celebrations/c_xmas', { people })).statusCode).toBe(403);
     expect((await as('alex').send('PATCH', '/api/celebrations/c_xmas', { people })).statusCode).toBe(409);
+  });
+});
+
+describe('"never" is kept (Gate surprise L1, probe P6)', () => {
+  it('drawn with never: no reveal date can be set, after the day or before it; a reveal date only moves later', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-26T10:00:00.000Z'));
+      const db = home();
+      fiveInDraw(db);
+      const as = await start(db);
+      // Before drawing, the host still chooses.
+      expect((await as('alex').send('PATCH', DRAW, { revealOn: '2027-01-05' })).statusCode).toBe(200);
+      expect((await as('alex').send('PATCH', DRAW, { revealOn: null })).statusCode).toBe(200);
+      expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+      const never = await as('alex').send('PATCH', DRAW, { revealOn: '2027-01-05' });
+      expect([never.statusCode, never.json()]).toEqual([409, { error: 'drawn with never: the pairs stay sealed for good' }]);
+      vi.setSystemTime(new Date('2026-12-26T10:00:00.000Z'));
+      const later = await start(db);
+      expect((await later('alex').send('PATCH', DRAW, { revealOn: '2026-12-26' })).statusCode).toBe(409);
+      const d = (await later('alex').get(DRAW)).json();
+      expect([d.revealed, d.pairs]).toEqual([false, null]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('a drawn draw\'s reveal date moves later or to never, never earlier', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    const year = db.select().from(t.draw).get()!.year;
+    expect((await as('alex').send('PATCH', DRAW, { revealOn: `${year + 1}-01-10` })).statusCode).toBe(200);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    const earlier = await as('alex').send('PATCH', DRAW, { revealOn: `${year + 1}-01-05` });
+    expect([earlier.statusCode, earlier.json()]).toEqual([409, { error: 'the names are drawn: the reveal date only moves later' }]);
+    expect((await as('alex').send('PATCH', DRAW, { revealOn: `${year + 1}-01-20` })).statusCode).toBe(200);
+    expect((await as('alex').send('PATCH', DRAW, { revealOn: null })).statusCode).toBe(200);
+    expect((await as('alex').send('PATCH', DRAW, { revealOn: `${year + 1}-01-30` })).statusCode).toBe(409);
   });
 });

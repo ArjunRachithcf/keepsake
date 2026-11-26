@@ -419,6 +419,11 @@ export function editDraw(db: Db, me: Person, celebrationId: string, patch: Parti
   const otherChange = (['budgetMinor', 'drawTogetherAt'] as const).some((k) => !same(k));
   if (dayHasCome(c, d, today) && (rulesChange || otherChange)) throw new Refused(409, 'its day has come: the draw stays as it is');
   if (!same('revealOn') && isRevealed(c, d, today)) throw new Refused(409, 'it is revealed: it stays revealed');
+  // Once drawn, "never" is never (no host can read the pairs later) and a reveal date only moves later (Gate surprise L1).
+  if (!same('revealOn') && d.drawnAt) {
+    if (before.revealOn === null) throw new Refused(409, 'drawn with never: the pairs stay sealed for good');
+    if (next.revealOn !== null && next.revealOn < before.revealOn) throw new Refused(409, 'the names are drawn: the reveal date only moves later');
+  }
   if (rulesChange && d.drawnAt) mayChangePairs(db, me, c, d, today);
   const k = rulesChange && d.drawnAt ? needKey(ring) : null;
   if (k) often(db, d);
