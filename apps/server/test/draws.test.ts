@@ -934,3 +934,14 @@ describe('a draw that fails (issue #13, 2)', () => {
     expect(tries()).toBe(before.tries + 1);
   });
 });
+
+describe('the caller first (Gate routes, Info)', () => {
+  it('someone who may not change a celebration gets its 403, not the drawn draw\'s 409', async () => {
+    const db = home();
+    const as = await start(db);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    const people = ['p_alex', 'p_robin', 'p_mia', 'p_leo', 'p_quinn'];
+    for (const who of ['robin', 'mia'] as const) expect((await as(who).send('PATCH', '/api/celebrations/c_xmas', { people })).statusCode).toBe(403);
+    expect((await as('alex').send('PATCH', '/api/celebrations/c_xmas', { people })).statusCode).toBe(409);
+  });
+});

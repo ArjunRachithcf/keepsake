@@ -14,7 +14,7 @@ import { createInvite, findInvite } from './auth/invites';
 import { credentialsOf, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, RESET_FRESH_MINUTES, usedPasskey } from './auth/passkeys';
 import { createSession, endAllSessions, endSession, isFresh, SESSION_COOKIE } from './auth/sessions';
 import type { NewCredential } from './auth/webauthn';
-import { addCelebration, editCelebration, getCelebration, removeCelebration, settlePastCelebrations, type CelebrationInput } from './celebrations/celebrations';
+import { addCelebration, canChange, editCelebration, getCelebration, mustGetCelebration, removeCelebration, settlePastCelebrations, type CelebrationInput } from './celebrations/celebrations';
 import { today } from './celebrations/dates';
 import { Refused } from './errors';
 import {
@@ -399,6 +399,8 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     celebrations: {
       add: (r: Req, i: CelebrationInput) => changed(addCelebration(db, me(r), i).id),
       edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => {
+        // Decided from the caller first (Gate routes, Info): who may not change it learns nothing of its draw.
+        if (!canChange(me(r), mustGetCelebration(db, id))) throw new Refused(403, 'only its host or an admin changes a celebration');
         // Someone in a drawn draw stays in the celebration until the draw changes; a draw not drawn yet lets them go.
         if (patch.people) checkPeopleChange(db, id, patch.people, day());
         // A drawn draw's day only moves later (review H2); a move is audited.
