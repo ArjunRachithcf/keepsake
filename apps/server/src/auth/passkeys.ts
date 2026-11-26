@@ -1,5 +1,5 @@
 // Passkeys in the database (standalone): looked up at sign-in, added at enrolment from a one-time link.
-import { and, eq, gt, isNull, ne } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { Db } from '../db/open';
@@ -64,7 +64,9 @@ export function enrol(db: Db, cfg: Pick<Config, 'dataDir' | 'keysDir'>, o: { inv
       tx.insert(t.passkey).values({
         id: cred.id, personId, publicKey: Buffer.from(cred.publicKey), counter: cred.counter,
         transportsJson: JSON.stringify(cred.transports), backedUp: cred.backedUp ? 1 : 0, label, createdAt: now,
-        invitedBy: invite.kind === 'admin' ? invite.createdBy : null,
+        // A key made from one's own link keeps the lineage of the key that made the link (Gate re-attack 2, C1).
+        invitedBy: invite.kind === 'admin' ? invite.createdBy
+          : invite.kind === 'self' && invite.invitedBy && tx.select({ id: t.person.id }).from(t.person).where(eq(t.person.id, invite.invitedBy)).get() ? invite.invitedBy : null,
       }).run();
       spendInvites(asDb(tx), personId);
       if (recovery) {
@@ -131,6 +133,11 @@ export function openReset(db: Db, personId: string, now = new Date()): PasskeyRe
  */
 export function secondAdmin(db: Db, adminId: string, r: Pick<PasskeyReset, 'askedBy' | 'askedAt'>): boolean {
   if (!r.askedBy || adminId === r.askedBy) return false;
+  // Decided by the person, not their keys (Gate re-attack 2, C1): never anyone the asker added, changed the role of, or
+  // ever made a sign-in link for. Rotating a key would wash `invited_by` out; the audit keeps it.
+  const made = db.select({ id: t.audit.id }).from(t.audit).where(and(eq(t.audit.actorId, r.askedBy), eq(t.audit.subjectId, adminId),
+    inArray(t.audit.action, ['person_created', 'role_changed', 'invite_created']))).get();
+  if (made) return false;
   const a = db.select().from(t.person).where(eq(t.person.id, adminId)).get();
   const before = new Date(Date.parse(r.askedAt) - RESET_SECOND_ADMIN_DAYS * 86_400_000).toISOString();
   if (!a || a.role !== 'admin' || !a.adminSince || a.adminSince > before) return false;
@@ -197,6 +204,7 @@ export function resetPasskeys(db: Db, actorId: string, personId: string, tellOf:
     const byDay = actorId === open.askedBy && open.notBefore !== null && at >= open.notBefore;
     if (!byYes && !byDay) return open;
     tx.delete(t.session).where(eq(t.session.personId, p.id)).run();
+    tx.delete(t.pushSubscription).where(eq(t.pushSubscription.personId, p.id)).run();
     tx.delete(t.passkey).where(eq(t.passkey.personId, p.id)).run();
     spendInvites(tx, p.id, now);
     tx.update(t.person).set({ drawsSealedAt: at }).where(eq(t.person.id, p.id)).run();
@@ -205,6 +213,11 @@ export function resetPasskeys(db: Db, actorId: string, personId: string, tellOf:
     tellOf('signin_reset', open.id, told());
     return { ...open, doneAt: at, doneBy: actorId };
   });
+}
+
+/** Subscriptions kept when someone else signed this person out (no session any more): their own sign-out ends them. */
+export function dropKeptSubscriptions(db: Db, personId: string): void {
+  db.delete(t.pushSubscription).where(and(eq(t.pushSubscription.personId, personId), isNull(t.pushSubscription.sessionId))).run();
 }
 
 /** The person, or any admin, calls off a reset not carried out yet. */

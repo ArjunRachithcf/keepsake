@@ -150,18 +150,22 @@ describe('re-attack B1 (probe): a "second admin" the asker made is nobody\'s yes
     expect(audit(h.db).slice(0, 3)).toEqual([['p_alex', 'person_created', helperId], ['p_alex', 'invite_created', helperId], ['p_alex', 'reset_asked', 'p_sam']]);
   });
 
-  it('an admin promoted lately, or one without a passkey of a week ago, is nobody\'s second; the promotion is audited', async () => {
-    const h = await start();
-    expect((await h.send('PATCH', '/api/people/p_robin', h.fresh('p_alex'), { role: 'admin' })).statusCode).toBe(200);
+  it('an admin without a passkey of a week ago is nobody\'s second; one the asker promoted never is, however long ago (re-attack 2, C1)', async () => {
+    const h = await start({ robinAdmin: true });
+    h.db.update(t.passkey).set({ createdAt: hoursAgo(24) }).where(eq(t.passkey.personId, 'p_robin')).run();
     await reset(h, 'p_alex', 'p_sam');
     expect((await reset(h, 'p_robin', 'p_sam')).json()).toMatchObject({ approvedBy: null, waitsFor: 'a_day' });
-    // An admin of a month, whose only passkey is a day old.
-    h.db.update(t.person).set({ adminSince: MONTH_AGO }).where(eq(t.person.id, 'p_robin')).run();
-    h.db.update(t.passkey).set({ createdAt: hoursAgo(24) }).where(eq(t.passkey.personId, 'p_robin')).run();
-    expect((await reset(h, 'p_robin', 'p_sam')).json()).toMatchObject({ approvedBy: null });
     h.db.update(t.passkey).set({ createdAt: MONTH_AGO }).where(eq(t.passkey.personId, 'p_robin')).run();
     expect((await reset(h, 'p_robin', 'p_sam')).json()).toMatchObject({ approvedBy: { id: 'p_robin' }, waitsFor: 'an_hour' });
-    expect(audit(h.db)[0]).toEqual(['p_alex', 'role_changed', 'p_robin']);
+    // Uma, promoted by Alex: the audit says so, and dating her back a month does not wash it out.
+    const u = await start();
+    u.db.insert(t.person).values({ id: 'p_uma', name: 'Uma', role: 'adult', createdAt: MONTH_AGO }).run();
+    u.db.insert(t.passkey).values({ id: 'pk-p_uma', personId: 'p_uma', publicKey: Buffer.from([1]), label: 'x', createdAt: MONTH_AGO }).run();
+    expect((await u.send('PATCH', '/api/people/p_uma', u.fresh('p_alex'), { role: 'admin' })).statusCode).toBe(200);
+    u.db.update(t.person).set({ adminSince: MONTH_AGO }).where(eq(t.person.id, 'p_uma')).run();
+    await reset(u, 'p_alex', 'p_sam');
+    expect((await reset(u, 'p_uma', 'p_sam')).json()).toMatchObject({ approvedBy: null, waitsFor: 'a_day' });
+    expect(audit(u.db)[0]).toEqual(['p_alex', 'role_changed', 'p_uma']);
   });
 
   it('an ask whose asker was removed is nobody\'s: the next admin\'s call asks again, a day from then', async () => {
@@ -183,5 +187,59 @@ describe('re-attack B1 (probe): a "second admin" the asker made is nobody\'s yes
     expect(await notices(h, 'p_sam')).toContainEqual(['reset_asked', 'p_mia', 'p_alex']);
     await reset(h, 'p_alex', 'p_leo');
     expect(await notices(h, 'p_robin')).not.toContainEqual(['reset_asked', 'p_leo', 'p_alex']);
+  });
+});
+
+describe('re-attack 2, C1 (probe): who made someone an admin decides, not the keys they have now', () => {
+  it('Helper, made and enrolled by Alex, adds a key from their own link and drops Alex\'s: a week on, still nobody\'s yes; the household is told at the batch', async () => {
+    const h = await start();
+    const made = await h.send('POST', '/api/people', h.fresh('p_alex'), { name: 'Helper', role: 'admin' });
+    const helperId = made.json().id as string;
+    const first = await enrolAs(h, helperId, 'cred-h1');
+    const own = await h.send('POST', '/api/me/passkeys/invite', first);
+    expect(own.statusCode, own.body).toBe(201);
+    const o = (await h.send('POST', '/api/auth/enrol/options', '', { token: own.json().url.split('#')[1] })).json();
+    const second = await h.send('POST', '/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: 'cred-h2', challenge: o.options.challenge }, label: 'Second' });
+    const helper2 = String([second.headers['set-cookie']].flat()[0]).split(';')[0]!;
+    expect((await h.send('DELETE', '/api/me/passkeys/cred-h1', helper2)).statusCode).toBe(204);
+    // The new key keeps the lineage of the one that made its link.
+    expect(passkeysOf(h, helperId).map((k) => [k.id, k.invitedBy])).toEqual([['cred-h2', 'p_alex']]);
+    // A week passes; even with the key's lineage gone, the audit says who made Helper.
+    h.db.update(t.person).set({ adminSince: MONTH_AGO }).where(eq(t.person.id, helperId)).run();
+    h.db.update(t.passkey).set({ createdAt: MONTH_AGO, invitedBy: null }).where(eq(t.passkey.personId, helperId)).run();
+    await reset(h, 'p_alex', 'p_sam');
+    const r = await h.send('POST', '/api/people/p_sam/passkeys/reset', `__Host-keepsake_session=${createSession(h.db, helperId, 'cred-h2').token}`);
+    expect(r.json()).toMatchObject({ state: 'asked', waitsFor: 'a_day', approvedBy: null });
+    // Only the asker qualifies: the day is the one path.
+    h.db.update(t.passkeyReset).set({ notBefore: new Date(Date.now() - 1000).toISOString() }).run();
+    expect((await reset(h, 'p_alex', 'p_sam')).json().state).toBe('done');
+    // Everyone else heard of the new admin, at the morning batch and not before.
+    const kinds = async () => (await notices(h, 'p_robin')).map((n) => `${n[0]} ${n[1]}`).sort();
+    const before = await kinds();
+    h.built.pusher.batch();
+    expect([before, await kinds()]).toEqual([
+      ['reset_asked p_sam', 'signin_reset p_sam'],
+      [`new_admin ${helperId}`, 'reset_asked p_sam', 'signin_reset p_sam'],
+    ]);
+  });
+});
+
+describe('re-attack 2, C2 (probe): ending Sam\'s sessions first does not silence his warning', () => {
+  it('Alex ends Sam\'s sessions: his phone stays subscribed and is told; the reset\'s warning reaches it; while a reset waits, his sessions are not ended', async () => {
+    const h = await start();
+    expect((await h.send('POST', '/api/people/p_sam/sessions/end', h.fresh('p_alex'))).statusCode).toBe(204);
+    const subs = () => h.db.select().from(t.pushSubscription).where(eq(t.pushSubscription.personId, 'p_sam')).all().length;
+    expect(subs()).toBe(1);
+    expect(await notices(h, 'p_sam')).toEqual([['sessions_ended', 'p_sam', 'p_alex']]);
+    expect(h.pushes.get('p_sam')).toBe(1);
+    await reset(h, 'p_alex', 'p_sam');
+    await h.built.pusher.idle();
+    expect([subs(), h.pushes.get('p_sam')]).toEqual([1, 2]);
+    const r = await h.send('POST', '/api/people/p_sam/sessions/end', h.fresh('p_alex'));
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'a reset of their sign-in waits: it is carried out or called off first' }]);
+    expect(audit(h.db).map((a) => a[1])).toEqual(['sessions_ended', 'reset_asked']);
+    // His own sign-out everywhere ends the kept subscription too.
+    expect((await h.send('POST', '/api/me/sessions/end', h.fresh('p_sam'))).statusCode).toBe(204);
+    expect(subs()).toBe(0);
   });
 });

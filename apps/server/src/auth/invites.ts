@@ -17,13 +17,13 @@ const HOUR = 3_600_000;
 export const SETUP_FILE = 'setup-link.txt';
 const HOURS: Record<InviteKind, number> = { setup: 24, admin: 7 * 24, self: 24, recovery: 24 };
 
-export function createInvite(db: Db, cfg: Pick<Config, 'origin'>, o: { kind: InviteKind; personId?: string; createdBy?: string; now?: Date }) {
+export function createInvite(db: Db, cfg: Pick<Config, 'origin'>, o: { kind: InviteKind; personId?: string; createdBy?: string; invitedBy?: string | null; now?: Date }) {
   const now = o.now ?? new Date();
   const token = newToken();
   const expiresAt = new Date(now.getTime() + HOURS[o.kind] * HOUR);
   db.insert(t.invite).values({
     id: ulid(), kind: o.kind, personId: o.personId ?? null, tokenHash: hashToken(token),
-    createdBy: o.createdBy ?? null, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
+    createdBy: o.createdBy ?? null, invitedBy: o.invitedBy ?? null, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
   }).run();
   return { url: `${cfg.origin}/${o.kind === 'setup' ? 'setup' : 'enrol'}#${token}`, token, expiresAt };
 }

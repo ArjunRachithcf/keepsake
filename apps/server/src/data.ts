@@ -11,7 +11,7 @@ import type { Config } from './config';
 import type { Db } from './db/open';
 import { callerOf } from './auth/hook';
 import { createInvite, findInvite } from './auth/invites';
-import { cancelReset, confirmReset, credentialsOf, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, RESET_FRESH_MINUTES, usedPasskey } from './auth/passkeys';
+import { cancelReset, confirmReset, credentialsOf, dropKeptSubscriptions, openReset, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, RESET_FRESH_MINUTES, usedPasskey } from './auth/passkeys';
 import { createSession, endAllSessions, endSession, isFresh, SESSION_COOKIE } from './auth/sessions';
 import type { NewCredential } from './auth/webauthn';
 import { addCelebration, canChange, editCelebration, getCelebration, mustGetCelebration, removeCelebration, settlePastCelebrations, type CelebrationInput } from './celebrations/celebrations';
@@ -19,7 +19,7 @@ import { today } from './celebrations/dates';
 import { Refused } from './errors';
 import { ulid } from 'ulid';
 import {
-  addPerson, currency, editPerson, hasPasskey, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
+  addPerson, currency, editPerson, hasPasskey, household, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
   type Person, type PersonInput,
 } from './household/people';
 import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, releaseImported, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
@@ -115,6 +115,9 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
   // The request only hands over what to tell; who is told, and the push, are the queue's (PR #12 review, L6).
   // One durable row per change; who is told is found at the tick (PR #12 review, N-M1).
   const tellLater = (kind: NoticeKind, subjectId: string, o?: { again?: boolean; people?: string[] }) => pusher.tell({ kind, subjectId, day: day(), people: o?.people, again: o?.again });
+  /** Someone became an admin (Gate re-attack 2, C1): everyone else in the household is told, at the morning batch. */
+  const tellNewAdmin = (id: string, by: string) =>
+    tellLater('new_admin', id, { people: household(db).map((p) => p.id).filter((p) => p !== id && p !== by) });
   pusher.resolve('answered', (id) => askersOf(db, id));
   pusher.resolve('thanked', (id, on) => thankRecipients(db, id, on));
   /** A change that may draw names, draw them again or clear them: the draw's people (but whoever did it) are told. */
@@ -179,7 +182,10 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
         fresh(r);
         // Audited (Gate routes M1): whoever holds an invite link can put a passkey on that account.
         return atomically(() => {
-          const made = createInvite(db, cfg, { kind, personId: mustGetPerson(db, personId).id, createdBy: p.id });
+          // A link for another device of one's own carries the lineage of the key signed in with (Gate re-attack 2, C1).
+          const key = kind === 'self' ? fastifyRequestOf(r).caller?.session?.passkeyId : null;
+          const invitedBy = key ? db.select({ by: t.passkey.invitedBy }).from(t.passkey).where(eq(t.passkey.id, key)).get()?.by ?? null : null;
+          const made = createInvite(db, cfg, { kind, personId: mustGetPerson(db, personId).id, createdBy: p.id, invitedBy });
           db.insert(t.audit).values({ id: ulid(), at: new Date().toISOString(), actorId: p.id, action: 'invite_created', subjectId: personId }).run();
           return linkAnswer(fastifyRequestOf(r), made);
         });
@@ -196,14 +202,26 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
         return createSession(db, personId, passkeyId).token;
       },
       endThisSession: (r: Req) => endSession(db, cookie(r)),
-      endMySessions: (r: Req) => endAllSessions(db, me(r).id),
-      removeMyPasskey: (r: Req, id: string) => removePasskey(db, me(r).id, id),
+      // One's own sign-out everywhere, or a passkey removed: the devices' subscriptions go too, those another's
+      // sign-out had kept (Gate re-attack 2, C2).
+      endMySessions: (r: Req) => atomically(() => { const id = me(r).id; endAllSessions(db, id); if (cfg.mode === 'standalone') dropKeptSubscriptions(db, id); }),
+      removeMyPasskey: (r: Req, id: string) => atomically(() => { const p = me(r).id; removePasskey(db, p, id); if (cfg.mode === 'standalone') dropKeptSubscriptions(db, p); }),
       /** A kid's parent or an admin ends someone's sessions. */
       endSessionsOf: (r: Req, personId: string) => {
         const p = mustGetPerson(db, personId);
         const by = me(r);
         if (by.role !== 'admin' && !managesKid(db, by, p)) throw new Refused(403, 'a kid\'s parent or an admin only');
-        endAllSessions(db, p.id);
+        // Gate re-attack 2, C2: ending someone's sessions silenced their phone before a reset. Never while a reset of
+        // them waits; their devices' subscriptions stay (only their own sign-out, a removed passkey or a reset carried
+        // out ends those); and they are told who signed them out, at once.
+        if (openReset(db, p.id)) throw new Refused(409, 'a reset of their sign-in waits: it is carried out or called off first');
+        atomically(() => {
+          db.update(t.pushSubscription).set({ sessionId: null }).where(eq(t.pushSubscription.personId, p.id)).run();
+          endAllSessions(db, p.id);
+          const id = ulid();
+          db.insert(t.audit).values({ id, at: new Date().toISOString(), actorId: by.id, action: 'sessions_ended', subjectId: p.id }).run();
+          tellLater('sessions_ended', id, { people: [p.id] });
+        });
       },
       /** An admin with a passkey sign-in of the last RESET_FRESH_MINUTES resets someone's passkeys. */
       /** Asks, or (a second admin's yes, or the asker a day later with one admin) carries out a reset (Gate routes M1). */
@@ -232,6 +250,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
         return atomically(() => {
           const p = addPerson(db, i);
           db.insert(t.audit).values({ id: ulid(), at: p.createdAt, actorId: by.id, action: 'person_created', subjectId: p.id }).run();
+          if (p.role === 'admin') tellNewAdmin(p.id, by.id);
           return p.id;
         });
       },
@@ -243,6 +262,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
           editPerson(db, id, patch);
           // Audited (Gate routes M1): a demotion before a reset was how "never an admin's passkeys" was got round.
           if (patch.role && patch.role !== was) db.insert(t.audit).values({ id: ulid(), at: new Date().toISOString(), actorId: by.id, action: 'role_changed', subjectId: id }).run();
+          if (patch.role === 'admin' && was !== 'admin') tellNewAdmin(id, by.id);
         });
       },
       /** Someone in a drawn draw leaves it first, under the re-draw rules (draws/draws.ts), in the same transaction. */
