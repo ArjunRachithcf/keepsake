@@ -5,6 +5,8 @@
 # must write its one-time setup link to the data folder (0600) instead of making the first visitor admin, and make the
 # keys that seal the draws and sign pushes in keys/ (0600), never in data/ and never in the log. homerslab mode must refuse to start
 # without its three settings, and run without a sealing key (draws off).
+# Logs are read whole before grep -q (never piped into it: under pipefail, grep -q stopping at its first match could
+# kill the writer with SIGPIPE and fail the check, PR #14 review).
 # Uses its own compose project (keepsake-m1test-*, or $KEEPSAKE_SMOKE_PROJECT) and removes everything it started.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -71,18 +73,18 @@ done
 [ "$(status "http://127.0.0.1:$port/api/household")" = 401 ] || { echo "standalone lets someone in without a passkey" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port/api/household" "$FORGED")" = 401 ] || { echo "standalone believes a HomersLab header" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port/api/guest")" = 401 ] || { echo "standalone lets a guest in without a link" >&2; exit 1; }
-dc logs keepsake 2>&1 | grep -q '/setup#' && { echo "the setup link reached the log" >&2; exit 1; }
+grep -q '/setup#' <<<"$(dc logs keepsake 2>&1)" && { echo "the setup link reached the log" >&2; exit 1; }
 # the draws' key: made once in keys/ for Keepsake's user only, 32 bytes, not in data/, not in the log
 [ "$(stat -c %a "$work/keys/sealing.key")" = 600 ] || { echo "no private sealing key in keys/" >&2; exit 1; }
 [ "$(stat -c %a "$work/keys")" = 700 ] || { echo "keys/ is not 0700" >&2; exit 1; }
 [ "$(base64 -d "$work/keys/sealing.key" | wc -c)" = 32 ] || { echo "the sealing key is not 32 bytes" >&2; exit 1; }
 grep -rqF "$(cat "$work/keys/sealing.key")" "$work/data" && { echo "the sealing key is in data/" >&2; exit 1; }
-dc logs keepsake 2>&1 | grep -qF "$(cat "$work/keys/sealing.key")" && { echo "the sealing key reached the log" >&2; exit 1; }
+grep -qF "$(cat "$work/keys/sealing.key")" <<<"$(dc logs keepsake 2>&1)" && { echo "the sealing key reached the log" >&2; exit 1; }
 # Web Push's key (ADR 0010): the same rules, keys/vapid.key, 32 bytes, base64url
 [ "$(stat -c %a "$work/keys/vapid.key")" = 600 ] || { echo "no private VAPID key in keys/" >&2; exit 1; }
 [ "$(tr '_-' '/+' < "$work/keys/vapid.key" | tr -d '\n' | sed 's/$/=/' | base64 -d 2>/dev/null | wc -c)" = 32 ] || { echo "the VAPID key is not 32 bytes" >&2; exit 1; }
 grep -rqF "$(cat "$work/keys/vapid.key")" "$work/data" && { echo "the VAPID key is in data/" >&2; exit 1; }
-dc logs keepsake 2>&1 | grep -qF "$(cat "$work/keys/vapid.key")" && { echo "the VAPID key reached the log" >&2; exit 1; }
+grep -qF "$(cat "$work/keys/vapid.key")" <<<"$(dc logs keepsake 2>&1)" && { echo "the VAPID key reached the log" >&2; exit 1; }
 # the PWA's files are served; the service worker with the security headers
 [ "$(status "http://127.0.0.1:$port/sw.js")" = 200 ] || { echo "no service worker" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port/site.webmanifest")" = 200 ] || { echo "no web app manifest" >&2; exit 1; }
@@ -97,7 +99,7 @@ port2=$((port + 1))
 # Without HomersLab's three settings it must not start.
 docker run --name "$hl-bare" "${env_args[@]}" --read-only --tmpfs /tmp --cap-drop ALL "$tag" >/dev/null 2>&1 \
   && { echo "homerslab mode started without its settings" >&2; exit 1; }
-docker logs "$hl-bare" 2>&1 | grep -q 'KEEPSAKE_ORIGIN must be set' || { echo "homerslab mode failed for another reason" >&2; docker logs "$hl-bare" >&2; exit 1; }
+grep -q 'KEEPSAKE_ORIGIN must be set' <<<"$(docker logs "$hl-bare" 2>&1)" || { echo "homerslab mode failed for another reason" >&2; docker logs "$hl-bare" >&2; exit 1; }
 # KEEPSAKE_EDGE_IDENTITY, KEEPSAKE_TRUSTED_PROXY and KEEPSAKE_ORIGIN are HomersLab's to give; stand-ins here. The
 # requests below arrive through -p (docker-proxy or the bridge's gateway), never from 127.0.0.1 inside the container:
 # so they are untrusted, and a forged identity must get nowhere.
@@ -105,8 +107,8 @@ docker run -d --name "$hl" "${env_args[@]}" -e KEEPSAKE_EDGE_IDENTITY=homerslab-
   --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
   -v "$hl-data:/data" -p "127.0.0.1:$port2:8080" "$tag" >/dev/null
 wait_health "http://127.0.0.1:$port2/api/health" homerslab
-docker logs "$hl" 2>&1 | grep -q 'no sealing key' || { echo "homerslab mode without a sealing key did not say draws are off" >&2; exit 1; }
-docker logs "$hl" 2>&1 | grep -q 'no VAPID key' || { echo "homerslab mode without a VAPID key did not say push is off" >&2; exit 1; }
+grep -q 'no sealing key' <<<"$(docker logs "$hl" 2>&1)" || { echo "homerslab mode without a sealing key did not say draws are off" >&2; exit 1; }
+grep -q 'no VAPID key' <<<"$(docker logs "$hl" 2>&1)" || { echo "homerslab mode without a VAPID key did not say push is off" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/household" "$FORGED")" = 401 ] || { echo "homerslab believes a header from outside the proxy" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/guest" "$FORGED")" = 401 ] || { echo "homerslab lets a guest in without a link" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/auth/sign-in/options" null POST)" = 403 ] || { echo "a change without Origin was not refused" >&2; exit 1; }
