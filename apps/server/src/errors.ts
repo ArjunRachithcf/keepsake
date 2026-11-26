@@ -32,11 +32,11 @@ export const MESSAGES = [
   'your own wishes are for others to give', 'grown-ups claim gifts and chip in', 'only a wish on the list can be given',
   'it is not a group gift', 'it is a group gift: chip in instead', 'you have given it already',
   'someone is getting it already', 'not that many are left to claim', 'you have not claimed it',
-  'it was given, and its celebration is over', 'it is given: mark it not given first', 'it was given: the reservation stays',
+  'it was given, and its celebration is over', 'it is given: mark it not given first', 'it was given: the reservation stays', 'a reset of their sign-in waits: it is carried out or called off first',
   'only for a gift you gave, once its celebration is over', 'it is a group gift already',
   'whoever started the group gift changes it', 'it is bought: the target stays',
   'others have chipped in: they take their share back first', 'it is bought: shares stay as they are',
-  'you have not chipped in', 'someone has chipped in: only whoever started it raises the target', 'you changed your share 3 times today: again tomorrow', 'targetMinor or state: one of them', 'that would go over the target',
+  'you have not chipped in', 'someone has chipped in: only whoever started it raises the target', 'you changed your share 3 times today: again tomorrow', 'the target went up today already: again tomorrow', 'targetMinor or state: one of them', 'that would go over the target',
   // draws (M3): a refusal names a rule, never who drew whom (ADR 0004)
   'this celebration has no draw', 'only the celebration\'s host runs its draw', 'people: someone is not in the celebration',
   'people: a kid draws only when kids draw too', 'exclusions: two different people of the draw each',

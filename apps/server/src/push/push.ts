@@ -111,7 +111,7 @@ export function webPushTransport(egress: Egress, vapid: () => Vapid | null, subj
  * up half a minute after a thank-you or an answer would show its writer who gave, or who asked. At the batch every
  * subscribed device is pushed, news or not (`batch`), so who had news says nothing either.
  */
-export const BATCH_KINDS: readonly NoticeKind[] = ['answered', 'thanked'];
+export const BATCH_KINDS: readonly NoticeKind[] = ['answered', 'thanked', 'new_admin', 'target_raised'];
 
 export interface Telling { kind: NoticeKind; subjectId: string; day: string; people?: string[]; again?: boolean }
 /** Who a pending change of this kind tells, found at the tick from its subject and day. */

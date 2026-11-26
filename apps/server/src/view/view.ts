@@ -382,6 +382,22 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         const p = x ? ref(x.personId) : null;
         return x && p ? [{ ...base, person: p, by: x.askedBy ? ref(x.askedBy) : null }] : [];
       }
+      // Someone became an admin (Gate re-attack 2, C1): everyone hears of it, so an admin made for the occasion shows.
+      case 'new_admin': {
+        const p = people().get(n.subjectId);
+        return p && p.role === 'admin' ? [{ ...base, person: ref(p.id) }] : [];
+      }
+      // Someone else signed the viewer (or a kid of theirs) out everywhere (C2): who, and whom.
+      case 'sessions_ended': {
+        const a = db.select().from(t.audit).where(eq(t.audit.id, n.subjectId)).get();
+        return a ? [{ ...base, person: ref(a.subjectId), by: ref(a.actorId) }] : [];
+      }
+      // The target of a group gift the viewer chipped in to went up (Q3): only while they still give to it.
+      case 'target_raised': {
+        const w = getWish(db, n.subjectId);
+        if (!w || !canSee(db, viewer, w) || !seesGifts(viewer, w) || sealedFor(w.personId)) return [];
+        return [{ ...base, person: ref(w.personId) }];
+      }
       case 'thanked': {
         const ty = getThankYou(db, n.subjectId);
         const mine = ty ? thankedList().find((x) => x.id === ty.id) : undefined;

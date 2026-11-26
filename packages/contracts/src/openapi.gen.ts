@@ -204,7 +204,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ends someone's sessions after a lost device (a kid's parent, or an admin; standalone) */
+        /** Ends someone's sessions after a lost device (a kid's parent, or an admin; standalone). Their devices stay subscribed to push, and they are told who did it (audited `sessions_ended`); refused while a reset of their sign-in waits (Gate re-attack 2, C2) */
         post: operations["endSessions"];
         delete?: never;
         options?: never;
@@ -1455,10 +1455,10 @@ export interface components {
         Notice: {
             id: string;
             /**
-             * @description reset_asked: someone asked to reset the sign-in of `person` (to them and the other admins); signin_reset: it was reset (to them and the people of their open draws); `by`: who asked
+             * @description reset_asked: someone asked to reset the sign-in of `person` (to them, the other admins, the people of their open draws, a kid's parents); signin_reset: it was reset (to the same); `by`: who asked. new_admin: `person` became an admin (to everyone, at the morning batch); sessions_ended: `by` signed the caller out everywhere (`person`: the caller, or a kid of theirs); target_raised: the target of a group gift the caller chipped in to went up (`person`: whose wish; at the morning batch)
              * @enum {string}
              */
-            kind: "question" | "answered" | "draw" | "remind" | "reveal" | "say_thanks" | "thanked" | "reset_asked" | "signin_reset";
+            kind: "question" | "answered" | "draw" | "remind" | "reveal" | "say_thanks" | "thanked" | "reset_asked" | "signin_reset" | "new_admin" | "sessions_ended" | "target_raised";
             on: components["schemas"]["Day"];
             read: boolean;
             celebration: components["schemas"]["CelebrationRef"] | null;
@@ -2361,6 +2361,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     resetPasskeys: {

@@ -209,12 +209,13 @@ paths:
     post:
       tags: [sign-in]
       operationId: endSessions
-      summary: Ends someone's sessions after a lost device (a kid's parent, or an admin; standalone)
+      summary: 'Ends someone''s sessions after a lost device (a kid''s parent, or an admin; standalone). Their devices stay subscribed to push, and they are told who did it (audited `sessions_ended`); refused while a reset of their sign-in waits (Gate re-attack 2, C2)'
       responses:
         '204': { description: Signed out everywhere }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /people/{personId}/passkeys/reset:
     parameters:
@@ -1850,7 +1851,7 @@ components:
       required: [id, kind, on, read, celebration, person, question, by]
       properties:
         id: { type: string }
-        kind: { type: string, enum: [question, answered, draw, remind, reveal, say_thanks, thanked, reset_asked, signin_reset], description: 'reset_asked: someone asked to reset the sign-in of `person` (to them and the other admins); signin_reset: it was reset (to them and the people of their open draws); `by`: who asked' }
+        kind: { type: string, enum: [question, answered, draw, remind, reveal, say_thanks, thanked, reset_asked, signin_reset, new_admin, sessions_ended, target_raised], description: 'reset_asked: someone asked to reset the sign-in of `person` (to them, the other admins, the people of their open draws, a kid''s parents); signin_reset: it was reset (to the same); `by`: who asked. new_admin: `person` became an admin (to everyone, at the morning batch); sessions_ended: `by` signed the caller out everywhere (`person`: the caller, or a kid of theirs); target_raised: the target of a group gift the caller chipped in to went up (`person`: whose wish; at the morning batch)' }
         on: { $ref: '#/components/schemas/Day' }
         read: { type: boolean }
         celebration: { anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "88db7e1e-68ef-41b5-b4cb-28d79d34855d",
+  "id": "9598164d-2f79-4ef1-af73-aea1c0fa9f6d",
   "prevId": "280d9e3d-8e7e-4b6c-a61d-580d22bf5f1b",
   "tables": {
     "audit": {
@@ -58,7 +58,7 @@
       "checkConstraints": {
         "audit_action": {
           "name": "audit_action",
-          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued', 'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed', 'reset_approved', 'person_created')"
+          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued', 'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed', 'reset_approved', 'person_created', 'sessions_ended')"
         }
       }
     },
@@ -1047,6 +1047,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "raised_on": {
+          "name": "raised_on",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {},
@@ -1489,6 +1496,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "invited_by": {
+          "name": "invited_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -1756,7 +1770,7 @@
       "checkConstraints": {
         "notice_kind": {
           "name": "notice_kind",
-          "value": "\"notice\".\"kind\" IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset')"
+          "value": "kind IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset', 'new_admin', 'sessions_ended', 'target_raised')"
         }
       }
     },

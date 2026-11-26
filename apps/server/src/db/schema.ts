@@ -93,6 +93,12 @@ export const invite = sqliteTable('invite', {
   createdAt: text('created_at').notNull(),
   expiresAt: text('expires_at').notNull(),
   usedAt: text('used_at'),
+  /**
+   * A link for another device of one's own: the `invited_by` of the passkey its session signed in with, which the new
+   * passkey inherits, so rotating keys never washes out who enrolled someone (Gate re-attack 2, C1). No foreign key (an
+   * ALTER TABLE cannot add one that sets null): enrol inherits it only while that person is still here.
+   */
+  invitedBy: text('invited_by'),
 }, (t) => [
   uniqueIndex('invite_token').on(t.tokenHash),
   check('invite_kind', sql`${t.kind} IN ('setup', 'admin', 'self', 'recovery')`),
@@ -180,6 +186,8 @@ export const AUDIT_ACTIONS = [
   'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed',
   // The Gate's re-attack (B1): the second admin's yes, and every person added (an admin made for the occasion shows).
   'reset_approved', 'person_created',
+  // The second re-attack (C2): someone ended another's sessions (the person is told who).
+  'sessions_ended',
 ] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
@@ -245,6 +253,8 @@ export const groupGift = sqliteTable('group_gift', {
   revealedOn: text('revealed_on'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+  /** The day its target last went up after someone chipped in: once a day at most (Gate re-attack 2, Q3). */
+  raisedOn: text('raised_on'),
 }, (t) => [
   check('group_gift_state', sql`${t.state} IN ('open', 'bought', 'given')`),
   check('group_gift_target', sql`${t.targetMinor} BETWEEN 1 AND 100000000`),
@@ -482,10 +492,16 @@ export const idea = sqliteTable('idea', {
  * (person, kind, subject, day), so the same notice is made once however often the morning batch runs. Only things the
  * person may know make one: never a gift, an idea, a hidden question or its asker, or another's reminder.
  */
+/**
+ * The kinds of notice. The Gate's second re-attack added three: someone became an admin (everyone, at the batch: C1),
+ * someone else ended your sessions (you, at once: C2), the target of a group gift you chipped in to went up (its
+ * sharers, at the batch: Q3).
+ */
+export const NOTICE_KINDS = ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset', 'new_admin', 'sessions_ended', 'target_raised'] as const;
 export const notice = sqliteTable('notice', {
   id: text('id').primaryKey(),
   personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
-  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset'] }).notNull(),
+  kind: text('kind', { enum: NOTICE_KINDS }).notNull(),
   subjectId: text('subject_id').notNull(),
   /** remind: whose celebration ("Remind me" about someone); null for one's own celebrations. */
   aboutId: text('about_id').references(() => person.id, { onDelete: 'cascade' }),
@@ -493,7 +509,7 @@ export const notice = sqliteTable('notice', {
   readAt: text('read_at'),
 }, (t) => [
   index('notice_person').on(t.personId, t.day),
-  check('notice_kind', sql`${t.kind} IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset')`),
+  check('notice_kind', sql.raw(`kind IN (${NOTICE_KINDS.map((k) => `'${k}'`).join(', ')})`)),
 ]);
 
 /**
@@ -547,7 +563,7 @@ export const thankYou = sqliteTable('thank_you', {
  */
 export const pendingNotice = sqliteTable('pending_notice', {
   id: text('id').primaryKey(),
-  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset'] }).notNull(),
+  kind: text('kind', { enum: NOTICE_KINDS }).notNull(),
   subjectId: text('subject_id').notNull(),
   day: text('day').notNull(),
   again: integer('again').notNull().default(0),

@@ -32,7 +32,7 @@ CREATE TABLE `__new_audit` (
 	`actor_id` text NOT NULL,
 	`action` text NOT NULL,
 	`subject_id` text NOT NULL,
-	CONSTRAINT "audit_action" CHECK(action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued', 'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed', 'reset_approved', 'person_created'))
+	CONSTRAINT "audit_action" CHECK(action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued', 'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed', 'reset_approved', 'person_created', 'sessions_ended'))
 );
 --> statement-breakpoint
 INSERT INTO `__new_audit`("id", "at", "actor_id", "action", "subject_id") SELECT "id", "at", "actor_id", "action", "subject_id" FROM `audit`;--> statement-breakpoint
@@ -50,13 +50,15 @@ CREATE TABLE `__new_notice` (
 	`read_at` text,
 	FOREIGN KEY (`person_id`) REFERENCES `person`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`about_id`) REFERENCES `person`(`id`) ON UPDATE no action ON DELETE cascade,
-	CONSTRAINT "notice_kind" CHECK("__new_notice"."kind" IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset'))
+	CONSTRAINT "notice_kind" CHECK(kind IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset', 'new_admin', 'sessions_ended', 'target_raised'))
 );
 --> statement-breakpoint
 INSERT INTO `__new_notice`("id", "person_id", "kind", "subject_id", "about_id", "day", "read_at") SELECT "id", "person_id", "kind", "subject_id", "about_id", "day", "read_at" FROM `notice`;--> statement-breakpoint
 DROP TABLE `notice`;--> statement-breakpoint
 ALTER TABLE `__new_notice` RENAME TO `notice`;--> statement-breakpoint
 CREATE INDEX `notice_person` ON `notice` (`person_id`,`day`);--> statement-breakpoint
+ALTER TABLE `group_gift` ADD `raised_on` text;--> statement-breakpoint
+ALTER TABLE `invite` ADD `invited_by` text;--> statement-breakpoint
 ALTER TABLE `person` ADD `last_seen_at` text;--> statement-breakpoint
 ALTER TABLE `person` ADD `admin_until` text;--> statement-breakpoint
 ALTER TABLE `person` ADD `draws_sealed_at` text;--> statement-breakpoint

@@ -25,6 +25,12 @@ function noticeText(n: NoticeT, you: (id: string | undefined) => string): { text
     case 'signin_reset': return n.person && you(n.person.id) === 'You'
       ? { text: `Your sign-in was reset by ${n.by?.name ?? 'an admin'}: confirm it was you to open your draws`, to: null }
       : { text: `${n.person?.name ?? 'Someone'}’s sign-in was reset by ${n.by?.name ?? 'an admin'}`, to: null };
+    // Gate re-attack 2: a new admin (C1), being signed out by someone else (C2), a group gift's target raised (Q3).
+    case 'new_admin': return { text: `${n.person?.name ?? 'Someone'} is an admin now`, to: '/family' };
+    case 'sessions_ended': return n.person && you(n.person.id) === 'You'
+      ? { text: `${n.by?.name ?? 'An admin'} signed you out everywhere`, to: null }
+      : { text: `${n.by?.name ?? 'Someone'} signed ${n.person?.name ?? 'someone'} out everywhere`, to: null };
+    case 'target_raised': return { text: `The target of a group gift for ${n.person?.name ?? 'someone'} went up`, to: n.person ? `/family/${n.person.id}` : null };
   }
 }
 
