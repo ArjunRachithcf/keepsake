@@ -369,7 +369,8 @@ export function guestGiving(db: Db, l: GuestLink, ring: Keyring, wishId: string)
  *
  * A draw guest's claim that a live draw or a veil covers (the guest and the wish's person in it, the claim made up to
  * its day) never goes, whatever happened (Gate surprise M1): it stays, unnamed as every claim between a draw's people
- * is, and still counts, until the veil lifts; the first change after that settles it. Otherwise the one unnamed claim
+ * is, and still counts, until the draw's day has passed (or the veil lifts, if earlier); the morning after, or the first
+ * change, settles it, a "never" draw's too (Gate re-attack R4). Otherwise the one unnamed claim
  * that went would sit on the wish of the guest's person, and every giver would know whom they drew.
  */
 export function settleGuestClaims(db: Db, ring: Keyring, today: string, tz: string, going: ReadonlySet<string> = new Set()): void {
@@ -398,8 +399,10 @@ export function settleGuestClaims(db: Db, ring: Keyring, today: string, tz: stri
     return v;
   };
   const live = unrevealedDraws(db, today);
+  // Covered until the draw's day has passed, whatever its reveal ("never" included, Gate re-attack R4): then the claim
+  // a guest can no longer reach goes with the rollover, as any other would.
   const covered = (personId: string, guestId: string, at: string) =>
-    live.some((d) => d.people.has(`g:${guestId}`) && d.people.has(personId) && dayOfInstant(tz, at) <= d.on);
+    live.some((d) => today <= d.on && d.people.has(`g:${guestId}`) && d.people.has(personId) && dayOfInstant(tz, at) <= d.on);
   for (const c of claims) {
     const r = reached(c.guestId!);
     if (r === 'keep') continue;

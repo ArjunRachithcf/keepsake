@@ -1,7 +1,7 @@
 // The Gate's surprise review (issue #6, comment 7180972935), M1 (probe P5): a draw guest's unnamed claim never goes
 // when their link is revoked, the wish moves, the names are drawn again or a kid edits the wish; while a draw or a veil
 // covers it, it stays a nobody's claim that still counts, so nothing points at whom the guest drew.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
@@ -9,7 +9,7 @@ import { ORIGIN, household, sessionCookie, standalone, withDraws } from './helpe
 import { ok } from './m4';
 
 const apps: BuiltApp[] = [];
-afterEach(async () => { for (const a of apps.splice(0)) await a.app.close(); });
+afterEach(async () => { vi.useRealTimers(); for (const a of apps.splice(0)) await a.app.close(); });
 const cookieOf = (r: { headers: Record<string, unknown> }) => String([r.headers['set-cookie']].flat()[0]).split(';')[0]!;
 async function start(db: Db) {
   const built = await buildApp(standalone(), db);
@@ -24,7 +24,7 @@ async function start(db: Db) {
     const headers = { cookie: cookieOf(r), 'x-keepsake-link': r.json().link };
     return { send: (method: 'POST' | 'PUT', url: string, payload?: object) => inject({ method, url, payload, headers: { ...headers, origin: ORIGIN } }) };
   };
-  return { person, exchange, guest };
+  return { person, exchange, guest, built };
 }
 
 /** Christmas drawn with a cousin by link; every puzzle claimed once, unnamed, by a household participant; the cousin claims their person's. */
@@ -49,7 +49,7 @@ async function drawnWithCousin() {
     const w = (await ok(s.person(viewer).get(`/api/people/p_${p}`))).json().wishes.find((x: { id: string }) => x.id === `w_${p}_xmas`);
     return [p, w ? [w.gift.claimed, w.gift.claims.filter((c: { mine: boolean }) => !c.mine).map((c: { giver: unknown; guest: unknown }) => [c.giver, c.guest])] : null];
   })));
-  return { db, s, made, target, claims };
+  return { db, s, g, made, target, claims };
 }
 
 describe('M1 (probe P5): a draw guest\'s claim stays, unnamed, while the draw or its veil covers it', () => {
@@ -79,6 +79,26 @@ describe('M1 (probe P5): a draw guest\'s claim stays, unnamed, while the draw or
     x.db.update(t.draw).set({ revealedAt: '2026-12-27T10:00:00.000Z' }).run();
     await ok(x.s.person('p_alex').send('PATCH', '/api/wishes/w_alex_xmas', { note: 'Any' }));
     expect(onTarget()).toBe(1);
+  });
+
+  it('after a re-draw, the cousin\'s old claim stays nobody\'s until Christmas has passed, then goes at the morning rollover, with a draw revealed never (Gate re-attack R4)', async () => {
+    for (let i = 0; i < 20; i++) {
+      const x = await drawnWithCousin();
+      expect(x.db.select().from(t.draw).get()!.revealOn).toBeNull();
+      await ok(x.s.person('p_alex').send('PATCH', '/api/celebrations/c_xmas/draw', { budgetMinor: 2000, kidsDraw: true, notLastYear: false, exclusions: [['p_alex', 'p_sam']] }));
+      if ((await ok(x.g.send('POST', '/api/guest/draw/open'))).json().person.id === x.target) continue;
+      const old = () => x.db.select().from(t.claim).all().filter((c) => c.wishId === `w_${x.target.slice(2)}_xmas` && c.guestId !== null).length;
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-12-24T09:00:00.000Z'));
+      x.s.built.morning(new Date());
+      await ok(x.s.person('p_alex').send('PATCH', '/api/wishes/w_alex_xmas', { note: 'Any' }));
+      expect(old()).toBe(1);
+      vi.setSystemTime(new Date('2026-12-26T09:00:00.000Z'));
+      x.s.built.morning(new Date());
+      expect(old()).toBe(0);
+      return;
+    }
+    throw new Error('the re-draw never gave the cousin someone else');
   });
 
   it('a kid\'s edit of a listed wish sends it back to a parent: the cousin\'s reservation is kept, there when the parent says yes', async () => {
