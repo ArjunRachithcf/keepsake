@@ -328,7 +328,12 @@ export function editGroup(db: Db, me: Person, wishId: string, patch: { targetMin
   const g = mustGroup(db, w.id);
   if (!managesGroup(db, me, g)) throw new Refused(403, 'whoever started the group gift changes it');
   if (patch.targetMinor !== undefined && g.state !== 'open') throw new Refused(409, 'it is bought: the target stays');
-  // Any target: one refused for what is in would let the organizer find the total, and so each share (Gate surprise L3).
+  // Any target until someone chips in: one refused for what is in would let the organizer find the total (Gate surprise
+  // L3). Then it only goes up, and only by whoever started it (re-attack R1): moving it to and fro, "enough" flipping,
+  // gave the total in a few tries.
+  if (patch.targetMinor !== undefined && patch.targetMinor !== g.targetMinor && db.select({ id: t.share.id }).from(t.share).where(eq(t.share.wishId, w.id)).get()) {
+    if (g.organizerId !== me.id || patch.targetMinor < g.targetMinor) throw new Refused(409, 'someone has chipped in: only whoever started it raises the target');
+  }
   const state = patch.state ?? g.state;
   if (state !== g.state && overNow(db, w, g, today)) throw new Refused(409, 'it was given, and its celebration is over');
   const dates = state === g.state ? {} : givenFields(db, w, state === 'given', today);
@@ -349,8 +354,22 @@ export function endGroup(db: Db, me: Person, wishId: string): void {
   db.delete(t.groupGift).where(eq(t.groupGift.wishId, w.id)).run();
 }
 
+/**
+ * How many times a day one giver chips in, changes or takes back their share of one gift (Gate re-attack R1): searching
+ * their own share for the point where "enough" flips found the others' amount in 14 tries; at 3 a day that takes
+ * weeks, by which time the gift is bought. Accepted as a slow oracle (ADR 0003).
+ */
+export const SHARE_CHANGES_A_DAY = 3;
+function countShareChange(db: Db, me: Person, wishId: string, today: string): void {
+  const row = db.select().from(t.shareChange).where(and(eq(t.shareChange.wishId, wishId), eq(t.shareChange.giverId, me.id))).get();
+  const changes = row && row.day === today ? row.changes : 0;
+  if (changes >= SHARE_CHANGES_A_DAY) throw new Refused(409, 'you changed your share 3 times today: again tomorrow');
+  db.insert(t.shareChange).values({ wishId, giverId: me.id, day: today, changes: changes + 1 })
+    .onConflictDoUpdate({ target: [t.shareChange.wishId, t.shareChange.giverId], set: { day: today, changes: changes + 1 } }).run();
+}
+
 /** Chips in (or changes your share) while the group gift is open, up to its target all together. */
-export function chipIn(db: Db, me: Person, wishId: string, amountMinor: number): Wish {
+export function chipIn(db: Db, me: Person, wishId: string, amountMinor: number, today: string): Wish {
   const w = giving(db, me, wishId);
   const g = mustGroup(db, w.id);
   if (g.state !== 'open') throw new Refused(409, 'it is bought: shares stay as they are');
@@ -358,16 +377,25 @@ export function chipIn(db: Db, me: Person, wishId: string, amountMinor: number):
   // would let a giver find their amounts (Gate surprise L3).
   if (amountMinor > g.targetMinor) throw new Refused(409, 'that would go over the target');
   const mine = myShare(db, me, w.id);
-  if (mine) db.update(t.share).set({ amountMinor, updatedAt: ts() }).where(eq(t.share.id, mine.id)).run();
-  else db.insert(t.share).values({ id: ulid(), wishId: w.id, giverId: me.id, amountMinor, createdAt: ts(), updatedAt: ts() }).run();
+  if (mine?.amountMinor === amountMinor) return w;
+  db.transaction((tx0) => {
+    const tx = asDb(tx0);
+    countShareChange(tx, me, w.id, today);
+    if (mine) tx.update(t.share).set({ amountMinor, updatedAt: ts() }).where(eq(t.share.id, mine.id)).run();
+    else tx.insert(t.share).values({ id: ulid(), wishId: w.id, giverId: me.id, amountMinor, createdAt: ts(), updatedAt: ts() }).run();
+  });
   return w;
 }
 
-export function withdrawShare(db: Db, me: Person, wishId: string): void {
+export function withdrawShare(db: Db, me: Person, wishId: string, today: string): void {
   const w = giving(db, me, wishId);
   const g = mustGroup(db, w.id);
   if (g.state !== 'open') throw new Refused(409, 'it is bought: shares stay as they are');
   const mine = myShare(db, me, w.id);
   if (!mine) throw new Refused(404, 'you have not chipped in');
-  db.delete(t.share).where(eq(t.share.id, mine.id)).run();
+  db.transaction((tx0) => {
+    const tx = asDb(tx0);
+    countShareChange(tx, me, w.id, today);
+    tx.delete(t.share).where(eq(t.share.id, mine.id)).run();
+  });
 }

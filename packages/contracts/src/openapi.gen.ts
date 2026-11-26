@@ -552,7 +552,7 @@ export interface paths {
         delete: operations["endGroupGift"];
         options?: never;
         head?: never;
-        /** The target (while open, never below what is chipped in) or the state, by whoever started it */
+        /** The target (while open; once anyone has chipped in, only up and only by whoever started it) or the state, by whoever started it */
         patch: operations["editGroupGift"];
         trace?: never;
     };
@@ -566,7 +566,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Chips in, or changes your share, while the group gift is open (all shares together at most the target) */
+        /** Chips in, or changes your share, while the group gift is open (a share alone at most the target; chipping in, changing and taking back at most 3 times a day per gift) */
         put: operations["chipIn"];
         post?: never;
         /** Takes your share back while the group gift is open */

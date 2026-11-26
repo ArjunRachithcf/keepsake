@@ -58,8 +58,9 @@ describe('L3 (probe P8): "not each other\'s amounts" holds with two sharers', ()
     expect((await as(h, 'alex').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 4901 })).statusCode).toBe(200);
     expect((await pan(h, 'alex')).enough).toBe(true);
     expect((await as(h, 'alex').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 8001 })).statusCode).toBe(409);
-    // The organizer may set any target; nothing refuses it for what is in.
-    expect((await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 100 })).statusCode).toBe(200);
+    // The organizer raises the target; nothing refuses it for what is in (lowering it is refused once anyone chipped in,
+    // whatever is in: Gate re-attack R1).
+    expect((await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 100_000 })).statusCode).toBe(200);
   });
 });
 

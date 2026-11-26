@@ -85,3 +85,37 @@ describe('R2: while the draw is sealed after a reset, nothing of the person\'s o
     expect((await ok(send('GET', '/api/home', sam()))).json().gave).toHaveLength(1);
   });
 });
+
+describe('R1: "enough" is no quick oracle: the target is locked once anyone chipped in, and a share changes 3 times a day', () => {
+  const group = async (h: Home) => (await ok(as(h, 'alex').get('/api/people/p_sam'))).json().wishes.find((w: { id: string }) => w.id === 'w_sam_pan').gift.group as { enough: boolean; targetMinor: number };
+  it.each([3100, 4999, 1])('Robin puts in %i; Alex\'s binary search over his own share stops after 3 writes a day', async (robin) => {
+    const h = await home();
+    await ok(as(h, 'robin').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: robin }));
+    const target = (await group(h)).targetMinor;
+    let lo = 1, hi = target, writes = 0, refused = 0;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const r = await as(h, 'alex').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: mid });
+      if (r.statusCode !== 200) { refused++; expect(r.json()).toEqual({ error: 'you changed your share 3 times today: again tomorrow' }); break; }
+      writes++;
+      if ((await group(h)).enough) hi = mid; else lo = mid + 1;
+    }
+    expect([writes, refused]).toEqual([3, 1]);
+    // Taking it back is a change too, and counts the same day; the next day there are 3 again.
+    expect((await as(h, 'alex').send('DELETE', '/api/wishes/w_sam_pan/group/share')).statusCode).toBe(409);
+    setNow(new Date('2026-12-02T10:00:00.000Z'));
+    for (const p of ['alex', 'robin'] as const) h.cookies[p] = sessionCookie(h.db, `p_${p}`);
+    expect((await as(h, 'alex').send('DELETE', '/api/wishes/w_sam_pan/group/share')).statusCode).toBe(204);
+  });
+
+  it.each([3100, 7999])('Robin puts in %i; Alex (the organizer) cannot move the target down to find the total', async (robin) => {
+    const h = await home();
+    await ok(as(h, 'robin').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: robin }));
+    const r = await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 4000 });
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'someone has chipped in: only whoever started it raises the target' }]);
+    // Only up, and only by whoever started it.
+    expect((await as(h, 'robin').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 9000 })).statusCode).toBe(403);
+    expect((await ok(as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 9000 }))).json().gift.group.targetMinor).toBe(9000);
+    expect((await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 8999 })).statusCode).toBe(409);
+  });
+});

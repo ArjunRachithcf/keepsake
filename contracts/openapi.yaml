@@ -652,7 +652,7 @@ paths:
     patch:
       tags: [gifts]
       operationId: editGroupGift
-      summary: The target (while open, never below what is chipped in) or the state, by whoever started it
+      summary: 'The target (while open; once anyone has chipped in, only up and only by whoever started it) or the state, by whoever started it'
       requestBody:
         required: true
         content:
@@ -682,7 +682,7 @@ paths:
     put:
       tags: [gifts]
       operationId: chipIn
-      summary: Chips in, or changes your share, while the group gift is open (all shares together at most the target)
+      summary: 'Chips in, or changes your share, while the group gift is open (a share alone at most the target; chipping in, changing and taking back at most 3 times a day per gift)'
       requestBody:
         required: true
         content:

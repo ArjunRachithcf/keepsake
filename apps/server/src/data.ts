@@ -275,8 +275,8 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       startGroup: (r: Req, wishId: string, targetMinor: number) => changed(startGroup(db, me(r), wishId, targetMinor).id),
       editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => changed(editGroup(db, me(r), wishId, patch, day()).id),
       endGroup: (r: Req, wishId: string) => changed(endGroup(db, me(r), wishId)),
-      chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, me(r), wishId, amountMinor).id),
-      withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, me(r), wishId)),
+      chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, me(r), wishId, amountMinor, day()).id),
+      withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, me(r), wishId, day())),
     },
     /** A celebration's draw (draws/draws.ts), as the request's person: each returns the celebration's id for the view layer. */
     draws: {

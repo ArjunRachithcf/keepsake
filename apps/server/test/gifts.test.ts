@@ -527,8 +527,9 @@ describe('group gifts', () => {
     expect((await as('alex').send('PUT', `${url}/share`, { amountMinor: 6001 })).statusCode).toBe(409);
     expect((await as('alex').send('PUT', `${url}/share`, { amountMinor: 2501 })).json().gift.group.enough).toBe(true);
     await ok(as('alex').send('DELETE', `${url}/share`));
-    expect((await as('quinn').send('PATCH', url, { targetMinor: 3499 })).json().gift.group.enough).toBe(true);
-    expect((await as('quinn').send('PATCH', url, { targetMinor: 4000 })).json().gift.group).toMatchObject({ targetMinor: 4000, enough: false });
+    // Once someone has chipped in, the target only goes up, and only by whoever started it (Gate re-attack R1).
+    expect((await as('quinn').send('PATCH', url, { targetMinor: 3499 })).json()).toEqual({ error: 'someone has chipped in: only whoever started it raises the target' });
+    expect((await as('quinn').send('PATCH', url, { targetMinor: 6500 })).json().gift.group).toMatchObject({ targetMinor: 6500, enough: false });
     await ok(as('quinn').send('PATCH', url, { state: 'bought' }));
     expect((await as('robin').send('DELETE', `${url}/share`)).statusCode).toBe(409);
     expect((await as('quinn').send('PATCH', url, { targetMinor: 5000 })).statusCode).toBe(409);
