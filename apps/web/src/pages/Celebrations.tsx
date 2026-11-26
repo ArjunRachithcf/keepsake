@@ -11,7 +11,7 @@ import { Icon } from '../icons';
 import { useRows } from '../motion';
 import { useGo } from '../router';
 import { AccountButton } from '../account';
-import { AddRow, Avatar, Check, Field, Group, IconButton, Link, Loading, Notice, PageHead, POSTER_LABEL, Poster, Sheet, Switch, TopLine, usePageTitle, useConfirm } from '../ui';
+import { AddRow, Avatar, Check, Field, Group, IconButton, Link, Loading, Notice, PageHead, POSTER_LABEL, Poster, Sheet, Switch, TopLine, usePageTitle, useConfirm, useBusy } from '../ui';
 import { WishForm } from '../wish';
 import { DrawCard, DrawFields, DrawRest, defaultDrawOptions, drawInput, useDraw, useManagesDraw, type DrawOptions } from '../draw';
 
@@ -190,7 +190,7 @@ function CelebrationForm({ celebration, onDone }: { celebration?: Celebration; o
   const [touchedYearly, setTouchedYearly] = useState(Boolean(celebration));
   const [people, setPeople] = useState<string[]>(celebration?.people ?? [me.id]);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   // The celebration was made but its draw was refused: why, and the way to its page.
   const [made, setMade] = useState<{ c: Celebration; why: string } | null>(null);
   const kids = new Set(household.people.filter((p) => p.role === 'kid').map((p) => p.id));
@@ -203,7 +203,7 @@ function CelebrationForm({ celebration, onDone }: { celebration?: Celebration; o
     const body: CelebrationInput = { name: name.trim(), date, place: place.trim() || null, poster, recurrence: yearly ? 'yearly' : 'none', people };
     const drawBody = drawing ? drawInput(drawOpts, household.currency) : null;
     if (typeof drawBody === 'string') { setError(drawBody); return; }
-    setBusy(true); setError(null);
+    if (!guard.start()) return; setError(null);
     try {
       const c = celebration ? await api<Celebration>(`/celebrations/${celebration.id}`, { method: 'PATCH', body })
         : await api<Celebration>('/celebrations', { method: 'POST', body });
@@ -212,7 +212,7 @@ function CelebrationForm({ celebration, onDone }: { celebration?: Celebration; o
         try { await api(`/celebrations/${c.id}/draw`, { method: 'POST', body: drawBody }); } catch (err) { setMade({ c, why: message(err) }); return; }
       }
       onDone(celebration ? undefined : c);
-    } catch (err) { setError(message(err)); } finally { setBusy(false); }
+    } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   if (made) {
     return (

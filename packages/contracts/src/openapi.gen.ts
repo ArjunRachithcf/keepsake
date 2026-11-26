@@ -927,7 +927,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made */
+        /** Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made and its SHA-256, so the same file is imported once (409 already imported, also for a second request while the first runs) */
         post: operations["importSheet"];
         delete?: never;
         options?: never;
@@ -1287,6 +1287,8 @@ export interface components {
             passkeys: components["schemas"]["Passkey"][];
         };
         Household: {
+            /** @description The household's IANA time zone (KEEPSAKE_TZ): every day and time is written in it, whatever the device's */
+            timeZone: string;
             /** @description Whether this server reads shop pages for "Add from a link" (ADR 0011: it lists shops, and egress is on) */
             addFromLink: boolean;
             mode: components["schemas"]["Mode"];
@@ -1676,6 +1678,8 @@ export interface components {
             name: string;
         };
         GuestPage: {
+            /** @description The household's IANA time zone (KEEPSAKE_TZ): every day and time is written in it, whatever the device's */
+            timeZone: string;
             /** @description The link's id: the guest page names it in X-Keepsake-Link */
             link: components["schemas"]["Id"];
             /** @enum {unknown} */

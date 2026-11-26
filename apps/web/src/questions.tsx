@@ -5,7 +5,7 @@ import { useEffect, useId, useState } from 'react';
 import { api, message, type AskedQuestion, type Celebration, type Celebrations, type Idea, type QuestionToAnswer } from './api';
 import { day } from './format';
 import { Icon } from './icons';
-import { Chips, Field, Group, Notice, Sheet, useConfirm } from './ui';
+import { Chips, Field, Group, Notice, Sheet, useConfirm, useBusy } from './ui';
 import { WishForm } from './wish';
 
 const STARTERS = ['Which size?', 'Which colour?', 'Do you have one already?', 'Big or small?', 'Something to do, or something to keep?'];
@@ -21,17 +21,17 @@ export function AskSheet({ name, url, open, onClose, onSent, canTakeBack = true 
   const [text, setText] = useState('');
   const [sent, setSent] = useState<AskedQuestion | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   useEffect(() => { if (open) { setText(''); setSent(null); setError(null); } }, [open]);
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true); setError(null);
-    try { setSent(await api<AskedQuestion>(url, { method: 'POST', body: { text: text.trim() } })); onSent(); } catch (err) { setError(message(err)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { setSent(await api<AskedQuestion>(url, { method: 'POST', body: { text: text.trim() } })); onSent(); } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   const takeBack = async () => {
     if (!sent) return;
-    setBusy(true); setError(null);
-    try { await api(`/questions/${sent.id}`, { method: 'DELETE' }); onSent(); onClose(); } catch (err) { setError(message(err)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { await api(`/questions/${sent.id}`, { method: 'DELETE' }); onSent(); onClose(); } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   // One sheet throughout: once sent it turns into "Sent, anonymously", with Done.
   return (

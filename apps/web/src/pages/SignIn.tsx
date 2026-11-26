@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { message, type AuthSession } from '../api';
 import { Icon } from '../icons';
 import { enrolOptions, finishEnrol, signIn } from '../passkeys';
-import { AppIcon, Field, Logo, Notice, tabTitle } from '../ui';
+import { AppIcon, Field, Logo, Notice, tabTitle, useBusy } from '../ui';
 
 export function takeToken(): string | null {
   const t = location.hash.slice(1);
@@ -54,7 +54,7 @@ function AuthFrame({ badge, intro, children, foot }: { badge?: ReactNode; intro:
 const Host = () => <span className="pill"><span className="dot dot-green dot-sm" aria-hidden="true" /><span className="mono">{location.host}</span></span>;
 
 export function SignIn({ session, onSignedIn }: { session: AuthSession; onSignedIn: (s: AuthSession) => void }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { document.title = tabTitle('Keepsake'); }, []);
   const intro = (
@@ -74,8 +74,8 @@ export function SignIn({ session, onSignedIn }: { session: AuthSession; onSigned
     );
   }
   const go = async () => {
-    setBusy(true); setError(null);
-    try { onSignedIn(await signIn()); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { onSignedIn(await signIn()); } catch (e) { setError(message(e)); } finally { guard.end(); }
   };
   return (
     <AuthFrame badge={<Host />} intro={intro}>
@@ -115,7 +115,7 @@ export function Enrol({ kind, token, onSignedIn }: { kind: 'setup' | 'enrol'; to
   const [label, setLabel] = useState(() => passkeyName('', navigator.userAgent));
   const [labelTouched, setLabelTouched] = useState(false);
   const [invitee, setInvitee] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   const [error, setError] = useState<string | null>(token ? null : 'This link is incomplete. Open the whole link again.');
   useEffect(() => {
     if (kind !== 'enrol' || !token) return;
@@ -129,9 +129,9 @@ export function Enrol({ kind, token, onSignedIn }: { kind: 'setup' | 'enrol'; to
   const go = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) return;
-    setBusy(true); setError(null);
+    if (!guard.start()) return; setError(null);
     try { onSignedIn(await finishEnrol(await enrolOptions(token, kind === 'setup' ? name.trim() : undefined), label.trim() || 'Passkey')); }
-    catch (err) { setError(message(err)); } finally { setBusy(false); }
+    catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   const lede = kind === 'setup' ? 'You become the household’s admin. A passkey on this device signs you in; there is no password.' : 'A passkey on this device signs you in; there is no password.';
   return (

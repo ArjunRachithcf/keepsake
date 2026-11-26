@@ -17,14 +17,27 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const two = (n: number) => String(n).padStart(2, '0');
 
-/** A YYYY-MM-DD calendar day as its parts; an instant (with a time) as the day it is here. */
-function parts(d: string): { y: number; m: number; day: number; wd: number } {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+// Every instant is written in the household's time zone (KEEPSAKE_TZ, from the household or a guest's page), never
+// the device's: "You drew the names · 26 Nov" is the household's 26 Nov, as the days of its celebrations are.
+let zone: string | undefined;
+let zoned: Intl.DateTimeFormat | null = null;
+/** The household's time zone, once it is known (an unknown name leaves the device's). */
+export function setTimeZone(tz: string | null | undefined) {
+  try { zoned = tz ? new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }) : null; zone = tz ?? undefined; }
+  catch { zoned = null; zone = undefined; }
+}
+export const timeZone = () => zone;
+
+/** A YYYY-MM-DD calendar day as its parts; an instant (with a time) as the day and time it is in the household. */
+function parts(d: string | Date): { y: number; m: number; day: number; wd: number; h: number; min: number } {
+  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
     const x = new Date(`${d}T00:00:00Z`);
-    return { y: x.getUTCFullYear(), m: x.getUTCMonth(), day: x.getUTCDate(), wd: x.getUTCDay() };
+    return { y: x.getUTCFullYear(), m: x.getUTCMonth(), day: x.getUTCDate(), wd: x.getUTCDay(), h: 0, min: 0 };
   }
-  const x = new Date(d);
-  return { y: x.getFullYear(), m: x.getMonth(), day: x.getDate(), wd: x.getDay() };
+  const x = typeof d === 'string' ? new Date(d) : d;
+  if (!zoned) return { y: x.getFullYear(), m: x.getMonth(), day: x.getDate(), wd: x.getDay(), h: x.getHours(), min: x.getMinutes() };
+  const f = Object.fromEntries(zoned.formatToParts(x).map((p) => [p.type, p.value]));
+  return { y: Number(f.year), m: Number(f.month) - 1, day: Number(f.day), wd: WEEKDAYS.indexOf(f.weekday!), h: Number(f.hour), min: Number(f.minute) };
 }
 
 /** "25.12.2026" */
@@ -36,12 +49,12 @@ export const dayMonth = (d: string) => { const p = parts(d); return `${two(p.day
 /** "26 Nov" (and its year when it is not this year): when something happened. */
 export function day(d: string, now = new Date()): string {
   const p = parts(d);
-  return `${p.day} ${MONTHS[p.m]}${p.y === now.getFullYear() ? '' : ` ${p.y}`}`;
+  return `${p.day} ${MONTHS[p.m]}${p.y === parts(now).y ? '' : ` ${p.y}`}`;
 }
-/** "Fri 25.12.2026, 18:00": an instant, in this device's time. */
+/** "Fri 25.12.2026, 18:00": an instant, in the household's time. */
 export function dateTime(iso: string): string {
-  const x = new Date(iso);
-  return `${weekdayDate(iso)}, ${two(x.getHours())}:${two(x.getMinutes())}`;
+  const p = parts(iso);
+  return `${weekdayDate(iso)}, ${two(p.h)}:${two(p.min)}`;
 }
 
 /** "from October 2026", for a dated profile part. */

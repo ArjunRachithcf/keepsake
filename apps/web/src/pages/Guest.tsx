@@ -6,7 +6,7 @@
 // guest request carries it. Claims wait for the guest's name; a guest sees nobody's name on a gift, only their own.
 import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
 import { api, ApiError, message, setGuestLink, type AskedQuestion, type GuestPage, type Wish } from '../api';
-import { dateTime, day, host, money, numericDate, since, weekdayDate } from '../format';
+import { dateTime, day, host, money, numericDate, setTimeZone, since, weekdayDate } from '../format';
 import { GiftLine, isBought } from '../gift';
 import { Icon, Star } from '../icons';
 import { AskSheet } from '../questions';
@@ -40,6 +40,8 @@ export function Guest() {
   const ask = useConfirm();
   const [token] = useState(tokenInAddress);
   const [page, setPage] = useState<GuestPage | null>(null);
+  // the household's days and times, before anything on the page writes one
+  if (page) setTimeZone(page.timeZone);
   const [ended, setEnded] = useState<'ended' | 'elsewhere' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);

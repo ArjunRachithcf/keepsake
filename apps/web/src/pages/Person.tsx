@@ -10,7 +10,7 @@ import { roleLabel, useHousehold } from '../household';
 import { Icon } from '../icons';
 import { useRows } from '../motion';
 import { useGo } from '../router';
-import { AddRow, Avatar, Chips, Field, Group, IconButton, Loading, Notice, PageHead, Sheet, TopLine, useConfirm } from '../ui';
+import { AddRow, Avatar, Chips, Field, Group, IconButton, Loading, Notice, PageHead, Sheet, TopLine, useBusy, useConfirm } from '../ui';
 import { WishForm, WishRow } from '../wish';
 import { AskSheet, IdeasGroup, QuestionsGroup } from '../questions';
 import { RemindMe } from '../notify';
@@ -127,6 +127,7 @@ function ProfileForm({ personId, profile, onDone }: { personId: string; profile:
   const [likes, setLikes] = useState(profile.likes.join('\n'));
   const [pleaseNo, setPleaseNo] = useState(profile.pleaseNo.join('\n'));
   const [error, setError] = useState<string | null>(null);
+  const [saving, guard] = useBusy();
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsed: Size[] = [];
@@ -135,7 +136,8 @@ function ProfileForm({ personId, profile, onDone }: { personId: string; profile:
       if (!m) return setError(`Sizes: one per line, like “Shoes: EU 38” (not “${l}”).`);
       parsed.push({ label: m[1]!.trim(), value: m[2]!.trim() });
     }
-    try { await api(`/people/${personId}/profile`, { method: 'PUT', body: { sizes: parsed, likes: lines(likes), pleaseNo: lines(pleaseNo) } }); onDone(); } catch (err) { setError(message(err)); }
+    if (!guard.start()) return;
+    try { await api(`/people/${personId}/profile`, { method: 'PUT', body: { sizes: parsed, likes: lines(likes), pleaseNo: lines(pleaseNo) } }); onDone(); } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   return (
     <form onSubmit={save} noValidate>
@@ -149,7 +151,7 @@ function ProfileForm({ personId, profile, onDone }: { personId: string; profile:
         <textarea className="textarea" id={`${id}-n`} rows={3} value={pleaseNo} onChange={(e) => setPleaseNo(e.target.value)} aria-describedby={`${id}-n-hint`} />
       </Field>
       {error && <Notice kind="error">{error}</Notice>}
-      <button type="submit" className="btn btn-primary btn-lg btn-block">Save</button>
+      <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={saving}>Save</button>
     </form>
   );
 }

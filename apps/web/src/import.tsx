@@ -6,7 +6,7 @@ import { useId, useRef, useState } from 'react';
 import { api, message, type Celebration, type ImportDone, type ImportPlan } from './api';
 import { useHousehold } from './household';
 import { Icon } from './icons';
-import { Notice, Sheet } from './ui';
+import { Notice, Sheet, useBusy } from './ui';
 
 const MAX = 512 * 1024;
 const REASONS: Record<ImportPlan['skipped'][number]['reason'], string> = {
@@ -38,6 +38,8 @@ export function ImportWizard({ celebrations }: { celebrations: Celebration[] }) 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
+  // the import itself runs once: a second click (or one on the leaving sheet) does nothing
+  const [importing, once] = useBusy();
   const check = async (text = csv, p = people, o = occasions) => {
     if (!text) return;
     setBusy(true); setError(null);
@@ -52,10 +54,10 @@ export function ImportWizard({ celebrations }: { celebrations: Celebration[] }) 
     await check(text, {}, {});
   };
   const apply = async () => {
-    if (!csv) return;
+    if (!csv || !once.start()) return;
     setAsking(false);
     setBusy(true); setError(null);
-    try { setDone(await api<ImportDone>('/import', { method: 'POST', body: { csv, people, occasions } })); setCsv(null); setPlan(null); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    try { setDone(await api<ImportDone>('/import', { method: 'POST', body: { csv, people, occasions } })); setCsv(null); setPlan(null); } catch (e) { setError(message(e)); } finally { setBusy(false); once.end(); }
   };
   const mapPerson = (name: string, v: string) => { const next = { ...people, [name]: v === 'skip' ? null : v }; setPeople(next); void check(csv, next, occasions); };
   const mapOccasion = (name: string, v: string) => { const next = { ...occasions, [name]: v || null }; setOccasions(next); void check(csv, people, next); };
@@ -106,12 +108,12 @@ export function ImportWizard({ celebrations }: { celebrations: Celebration[] }) 
           {plan.warnings.length > 0 && <p className="hint">Imported with a change: {counted(plan.warnings.map((w) => w.kind), WARNINGS).join('; ')}.</p>}
           {!plan.ready && <Notice>Choose who each name is, or skip their rows, to import.</Notice>}
           <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
-            <button type="button" className="btn btn-primary" disabled={!plan.ready || busy || plan.wishes === 0} onClick={() => setAsking(true)}>{what}…</button>
+            <button type="button" className="btn btn-primary" disabled={!plan.ready || busy || importing || plan.wishes === 0} onClick={() => setAsking(true)}>{what}…</button>
           </div>
           <Sheet title={`${what}?`} sub="Do it once: there is no undo. Keepsake keeps nothing of the file but the wishes and claims it makes." open={asking} onClose={() => setAsking(false)}
             footer={<>
               <button type="button" className="btn" onClick={() => setAsking(false)}>Not yet</button>
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void apply()}>Import</button>
+              <button type="button" className="btn btn-primary" disabled={busy || importing} onClick={() => void apply()}>Import</button>
             </>}>
             <ul className="group">
               <li className="row"><span className="row-lead"><Icon name="gift" className="icon icon-md" /></span><span className="row-main"><span className="row-title">{count(plan.wishes, 'wish', 'wishes')}</span>{whose.length > 0 && <span className="row-sub wrap">For {listNames(whose)}</span>}</span></li>

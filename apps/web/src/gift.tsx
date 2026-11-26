@@ -8,7 +8,7 @@ import { useContext, useId, useState, type ReactNode } from 'react';
 import { api, message, type Gift, type Wish } from './api';
 import { money, parseMoney, toMoneyText } from './format';
 import { HouseholdContext } from './household';
-import { Field, Notice, Sheet, useConfirm } from './ui';
+import { Field, Notice, Sheet, useConfirm, useBusy } from './ui';
 
 const names = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
 
@@ -33,12 +33,12 @@ export function GiftLine({ wish, onChanged, guest, currency }: { wish: Wish; onC
   const ctx = useContext(HouseholdContext);
   const cur = ctx?.household.currency ?? currency ?? null;
   const ask = useConfirm();
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   const [error, setError] = useState<string | null>(null);
   const [sheet, setSheet] = useState<'chip' | 'group' | null>(null);
   const call = async (path: string, method: string, body?: unknown) => {
-    setBusy(true); setError(null);
-    try { await api(`${guest ? '/guest' : ''}/wishes/${wish.id}${path}`, { method, body }); onChanged(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { await api(`${guest ? '/guest' : ''}/wishes/${wish.id}${path}`, { method, body }); onChanged(); } catch (e) { setError(message(e)); } finally { guard.end(); }
   };
   const mine = g.claims.find((c) => c.mine);
   const others = g.claims.filter((c) => !c.mine);
@@ -112,15 +112,17 @@ function AmountForm({ currency, wish, kind, onDone }: { currency: string; wish: 
   const start = kind === 'chip' ? g.group?.myShareMinor ?? null : wish.priceMinor;
   const [text, setText] = useState(toMoneyText(start, currency));
   const [error, setError] = useState<string | null>(null);
+  const [saving, guard] = useBusy();
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     const minor = parseMoney(text, currency);
     if (!minor) return setError('An amount, like 30 or 30.50.');
+    if (!guard.start()) return;
     try {
       if (kind === 'chip') await api(`/wishes/${wish.id}/group/share`, { method: 'PUT', body: { amountMinor: minor } });
       else await api(`/wishes/${wish.id}/group`, { method: 'POST', body: { targetMinor: minor } });
       onDone();
-    } catch (err) { setError(message(err)); }
+    } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   return (
     <form onSubmit={save} noValidate>
@@ -131,7 +133,7 @@ function AmountForm({ currency, wish, kind, onDone }: { currency: string; wish: 
         <input className="input" id={`${id}-a`} inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} autoComplete="off" />
       </Field>
       {error && <Notice kind="error">{error}</Notice>}
-      <button type="submit" className="btn btn-primary btn-lg btn-block">{kind === 'chip' ? 'Chip in' : 'Start the group gift'}</button>
+      <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={saving}>{kind === 'chip' ? 'Chip in' : 'Start the group gift'}</button>
     </form>
   );
 }

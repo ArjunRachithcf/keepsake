@@ -2,7 +2,7 @@
 // order), the passkey's sensible name, the draw's "Kids draw too" line, plurals, page titles, how screens move, and a
 // group gift that never says more than "enough" or "not enough yet" and your own share.
 import { describe, expect, it } from 'vitest';
-import { dateTime, day, dayMonth, money, numericDate, since, weekdayDate } from '../src/format';
+import { dateTime, day, dayMonth, money, numericDate, setTimeZone, since, weekdayDate } from '../src/format';
 import { kidsDrawWords } from '../src/draw';
 import { groupWords } from '../src/gift';
 import { count, rowsLeftOut } from '../src/import';
@@ -38,6 +38,27 @@ describe('dates, day first', () => {
   it('writes a price with its cents', () => {
     expect(money(8900, 'CHF')).toMatch(/89\.00/);
     expect(money(4550, 'CHF')).toMatch(/45\.50/);
+  });
+});
+
+describe('times in the household\'s time zone, not the device\'s', () => {
+  it('writes the household\'s day and time even where the device is elsewhere and the day would flip', () => {
+    const was = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      const drawn = '2026-11-26T23:30:00.000Z'; // 18:30 on the 26th in New York, 00:30 on the 27th in Zurich
+      const now = new Date('2026-11-27T08:00:00Z');
+      setTimeZone(null);
+      expect(day(drawn, now)).toBe('26 Nov');
+      setTimeZone('Europe/Zurich');
+      expect(day(drawn, now)).toBe('27 Nov');
+      expect(dateTime(drawn)).toBe('Fri 27.11.2026, 00:30');
+      expect(weekdayDate(drawn)).toBe('Fri 27.11.2026');
+      // the year turns there too
+      expect(day('2026-12-31T23:30:00.000Z', new Date('2026-12-31T12:00:00Z'))).toBe('1 Jan 2027');
+      // a calendar day stays the day it is, wherever
+      expect(weekdayDate('2026-12-25')).toBe('Fri 25.12.2026');
+    } finally { setTimeZone(null); if (was === undefined) delete process.env.TZ; else process.env.TZ = was; }
   });
 });
 

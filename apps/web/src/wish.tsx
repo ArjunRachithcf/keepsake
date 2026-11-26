@@ -6,7 +6,7 @@ import { host, money, parseMoney, toMoneyText } from './format';
 import { GiftLine, isBought } from './gift';
 import { useHousehold } from './household';
 import { Star } from './icons';
-import { Field, Notice, Switch, useConfirm } from './ui';
+import { Field, Notice, Switch, useConfirm, useBusy } from './ui';
 
 const STATE_LABEL: Record<Wish['state'], string | null> = { listed: null, awaiting_parent: 'Waiting for a parent', suggested: 'Suggestion' };
 
@@ -17,7 +17,7 @@ export function WishRow({ wish, celebrations, onEdit, onChanged, showFor = true,
   guest?: boolean;
 }) {
   const { household, name } = useHousehold();
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   const [error, setError] = useState<string | null>(null);
   const forName = wish.celebrationId ? celebrations.find((c) => c.id === wish.celebrationId)?.name ?? 'A celebration' : 'Any time';
   const grp = wish.gift?.group;
@@ -31,8 +31,8 @@ export function WishRow({ wish, celebrations, onEdit, onChanged, showFor = true,
     wish.addedBy && wish.state === 'suggested' ? `${name(wish.addedBy.id)} suggested it for ${name(wish.personId).replace(/^You$/, 'you')}` : null,
   ].filter(Boolean).join(' · ');
   const act = async (what: 'approve' | 'decline') => {
-    setBusy(true); setError(null);
-    try { await api(`/wishes/${wish.id}/${what}`, { method: 'POST' }); onChanged(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { await api(`/wishes/${wish.id}/${what}`, { method: 'POST' }); onChanged(); } catch (e) { setError(message(e)); } finally { guard.end(); }
   };
   const state = STATE_LABEL[wish.state];
   const edit = wish.canEdit && onEdit;
@@ -84,7 +84,7 @@ export function WishForm({ personId, wish, celebrations, initialFor, onDone, ans
   const [forId, setForId] = useState<string>(wish ? wish.celebrationId ?? '' : initialFor ?? '');
   const [mostWanted, setMostWanted] = useState(wish?.mostWanted ?? false);
   const [note, setNote] = useState(wish?.note ?? '');
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   const [error, setError] = useState<string | null>(null);
   const forOptions = celebrations.filter((c) => c.people.includes(personId));
   const owner = person(personId);
@@ -102,18 +102,18 @@ export function WishForm({ personId, wish, celebrations, initialFor, onDone, ans
       name: name.trim(), link: link.trim() || null, quantity: q, note: note.trim() || null, mostWanted,
       celebrationId: forId || null, ...(currency ? { priceMinor } : {}),
     } satisfies WishPatch;
-    setBusy(true); setError(null);
+    if (!guard.start()) return; setError(null);
     try {
       if (wish) await api(`/wishes/${wish.id}`, { method: 'PATCH', body: fields });
       else if (answering) await api(`/questions/${answering}/wish`, { method: 'POST', body: fields });
       else await api('/wishes', { method: 'POST', body: { ...fields, personId } satisfies WishInput });
       onDone();
-    } catch (err) { setError(message(err)); } finally { setBusy(false); }
+    } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   /** "Add from a link" (ADR 0011): the server reads the shop's page; what it finds fills the empty fields, to check. */
   const [found, setFound] = useState<string | null>(null);
   const fill = async () => {
-    setBusy(true); setError(null); setFound(null);
+    if (!guard.start()) return; setError(null); setFound(null);
     try {
       const p = await api<LinkPreview>('/link-preview', { method: 'POST', body: { url: link.trim() } });
       if (p.name && !name.trim()) setName(p.name);
@@ -121,13 +121,13 @@ export function WishForm({ personId, wish, celebrations, initialFor, onDone, ans
       setFound(p.name || p.pagePrice
         ? `From the page: ${[p.name, p.pagePrice ? money(p.pagePrice.amountMinor, p.pagePrice.currency) : null].filter(Boolean).join(', ')}. Check it before you save.`
         : 'The page did not say its name or price: type them in.');
-    } catch (err) { setError(message(err)); } finally { setBusy(false); }
+    } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   const remove = async () => {
     if (!wish) return;
     if (!(await ask({ title: `Remove “${wish.name}”?`, body: 'It goes from every list it is on. This cannot be undone.', confirm: 'Remove', dismiss: 'Keep it', destructive: true }))) return;
-    setBusy(true); setError(null);
-    try { await api(`/wishes/${wish.id}`, { method: 'DELETE' }); onDone(); } catch (err) { setError(message(err)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { await api(`/wishes/${wish.id}`, { method: 'DELETE' }); onDone(); } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
 
   return (

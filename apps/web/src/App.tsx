@@ -1,6 +1,7 @@
 // Keepsake's web app (spec §4, UI round 4): My wishes · Family · Celebrations, on Homeward's floating glass tab bar on a
 // phone and its floating glass sidebar from a tablet up (with Coming up, Household for admins and the account at its
 // foot); the sign-in and the one-time links before them. A screen never calls the network beyond Keepsake's own API.
+import { setTimeZone } from './format';
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, message, type AuthSession, type Celebration, type Celebrations as List, type Household } from './api';
 import { HouseholdContext, roleLabel } from './household';
@@ -39,7 +40,7 @@ function Keepsake() {
   const [error, setError] = useState<string | null>(null);
   const [account, setAccount] = useState(false);
 
-  const reload = useCallback(async () => setHousehold(await api<Household>('/household')), []);
+  const reload = useCallback(async () => { const h = await api<Household>('/household'); setTimeZone(h.timeZone); setHousehold(h); }, []);
   useEffect(() => { if (route.tab !== 'guest') api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e))); }, [route.tab]);
   useEffect(() => { if (session?.signedIn) reload().catch((e) => setError(message(e))); }, [session, reload]);
   useKeepSubscription(session?.signedIn && route.tab !== 'guest' ? household?.me.id ?? null : null);

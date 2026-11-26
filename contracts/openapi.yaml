@@ -1099,7 +1099,7 @@ paths:
     post:
       tags: [import]
       operationId: importSheet
-      summary: 'Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made'
+      summary: 'Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made and its SHA-256, so the same file is imported once (409 already imported, also for a second request while the first runs)'
       requestBody:
         required: true
         content:
@@ -1619,8 +1619,9 @@ components:
     Household:
       type: object
       additionalProperties: false
-      required: [mode, me, people, currency, addFromLink]
+      required: [mode, me, people, currency, addFromLink, timeZone]
       properties:
+        timeZone: { type: string, description: 'The household''s IANA time zone (KEEPSAKE_TZ): every day and time is written in it, whatever the device''s' }
         addFromLink: { type: boolean, description: 'Whether this server reads shop pages for "Add from a link" (ADR 0011: it lists shops, and egress is on)' }
         mode: { $ref: '#/components/schemas/Mode' }
         me: { $ref: '#/components/schemas/Person' }
@@ -2177,8 +2178,9 @@ components:
     GuestPage:
       type: object
       additionalProperties: false
-      required: [link, kind, name, currency, person, profile, celebration, draw, wishes, questions, lastDay, reissued]
+      required: [link, kind, name, currency, person, profile, celebration, draw, wishes, questions, lastDay, reissued, timeZone]
       properties:
+        timeZone: { type: string, description: 'The household''s IANA time zone (KEEPSAKE_TZ): every day and time is written in it, whatever the device''s' }
         link: { $ref: '#/components/schemas/Id', description: 'The link''s id: the guest page names it in X-Keepsake-Link' }
         kind: { enum: [share, draw] }
         name: { type: [string, 'null'], description: 'The guest''s own name (claims wait for it)' }

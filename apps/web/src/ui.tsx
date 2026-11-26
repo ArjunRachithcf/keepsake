@@ -2,7 +2,7 @@
 // the app's sheets (never the browser's boxes), posters, fields, switches, the logo and the made-here link. Every
 // control is a real button, link or form field; every sheet keeps the focus inside, closes on Escape and gives the
 // focus back to what opened it.
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { Poster as PosterName } from './api';
 import { Icon, type IconName } from './icons';
@@ -131,6 +131,20 @@ export function Notice({ kind = 'info', title, children }: { kind?: 'info' | 'er
 
 // ======================================================================== sheets
 
+/**
+ * An action that runs once at a time: `start()` is false while it already runs (a double click, a click on a sheet
+ * that is leaving), so the caller returns; `end()` when the call has settled. `busy` disables its buttons.
+ */
+export function useBusy() {
+  const [busy, setBusy] = useState(false);
+  const on = useRef(false);
+  const guard = useMemo(() => ({
+    start: () => { if (on.current) return false; on.current = true; setBusy(true); return true; },
+    end: () => { on.current = false; setBusy(false); },
+  }), []);
+  return [busy, guard] as const;
+}
+
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 /** How long the kit's sheet takes to leave (its snappy spring); none under reduced motion. */
 const LEAVE_MS = 420;
@@ -210,8 +224,9 @@ export function Sheet({ title, sub, open, onClose, children, footer, icon, closa
   return createPortal(
     <dialog ref={ref} className="ks-dialog" aria-labelledby={`${id}-t`} aria-describedby={k.sub ? `${id}-s` : undefined}
       onCancel={(e) => { e.preventDefault(); if (open) close.current(); }} onKeyDown={onKey}>
-      <div className={`scrim${shown ? ' is-open' : ''}`} onClick={() => { if (open) close.current(); }} aria-hidden="true" />
-      <section ref={panel} className={`sheet${wide ? ' sheet-wide' : ''}${shown ? ' is-open' : ''}`} tabIndex={-1}>
+      <div className={`scrim${shown ? ' is-open' : ''}${open ? '' : ' is-leaving'}`} onClick={() => { if (open) close.current(); }} aria-hidden="true" />
+      <section ref={panel} className={`sheet${wide ? ' sheet-wide' : ''}${shown ? ' is-open' : ''}${open ? '' : ' is-leaving'}`} tabIndex={-1}
+        inert={!open} aria-hidden={open ? undefined : true}>
         <span className="sheet-grab" aria-hidden="true" />
         <div className="sheet-head">
           <div className="sheet-head-text">
@@ -246,8 +261,10 @@ export const useConfirm = () => useContext(ConfirmContext);
 /** Holds the app's one question sheet; `useConfirm()` asks it and resolves with the answer. */
 export function ConfirmHost({ children }: { children: ReactNode }) {
   const [ask, setAsk] = useState<{ a: Ask; done: (v: boolean) => void } | null>(null);
-  const asker = useCallback<Asker>((a) => new Promise<boolean>((resolve) => setAsk({ a, done: resolve })), []);
-  const answer = (v: boolean) => { ask?.done(v); setAsk(null); };
+  const answered = useRef(false);
+  const asker = useCallback<Asker>((a) => new Promise<boolean>((resolve) => { answered.current = false; setAsk({ a, done: resolve }); }), []);
+  // The first answer counts; a second click (or one on the leaving sheet) does nothing.
+  const answer = (v: boolean) => { if (answered.current) return; answered.current = true; ask?.done(v); setAsk(null); };
   return (
     <ConfirmContext.Provider value={asker}>
       {children}

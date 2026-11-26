@@ -6,7 +6,7 @@ import { api, message, type Notice as NoticeT, type Notices, type PushInfo, type
 import { day } from './format';
 import { b64uToBytes, browserOwner, freshSubscription, syncSubscription, type PushServer } from './push';
 import { useHousehold } from './household';
-import { Avatar, Group, Link, Notice, Switch } from './ui';
+import { Avatar, Group, Link, Notice, Switch, useBusy } from './ui';
 import { Icon } from './icons';
 
 function noticeText(n: NoticeT, you: (id: string | undefined) => string): { text: string; to: string | null } {
@@ -186,13 +186,13 @@ export function ThankYou({ thanks, onChanged }: { thanks: Thanks; onChanged: () 
   const [text, setText] = useState('');
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   if (thanks.sent) return <p className="row-note">You said: “{thanks.sent.text}” ({day(thanks.sent.on)}{thanks.sent.by ? `, written by ${thanks.sent.by.name}` : ''})</p>;
   if (!open) return <span className="ks-wish-actions"><button type="button" className="btn btn-sm" onClick={() => setOpen(true)}>Say thank you<span className="sr-only"> for {thanks.wish.name}</span></button></span>;
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true); setError(null);
-    try { await api(`/wishes/${thanks.wish.id}/thanks`, { method: 'PUT', body: { text: text.trim() } }); onChanged(); } catch (err) { setError(message(err)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { await api(`/wishes/${thanks.wish.id}/thanks`, { method: 'PUT', body: { text: text.trim() } }); onChanged(); } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   return (
     <form className="ks-stack" onSubmit={send} style={{ marginTop: 10 }}>

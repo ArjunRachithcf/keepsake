@@ -4,7 +4,7 @@
 import { act, createElement as h, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ConfirmHost, Sheet, useConfirm } from '../src/ui';
+import { ConfirmHost, Sheet, useBusy, useConfirm } from '../src/ui';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const wait = (ms: number) => act(() => new Promise<void>((r) => setTimeout(r, ms)));
@@ -90,5 +90,64 @@ describe('useConfirm: a question in the app\'s own sheet', () => {
     key(document.querySelector('.sheet')!, 'Escape');
     await wait(10);
     expect(answers).toEqual([true, false]);
+  });
+});
+
+describe('a sheet\'s action runs once (review of #16: a double click imported twice)', () => {
+  // An action like Import or "Add the wish": a call to the server, then the sheet closes.
+  function Acts({ calls, settle }: { calls: string[]; settle: Promise<void> }) {
+    const [open, setOpen] = useState(true);
+    const [busy, guard] = useBusy();
+    const go = async () => {
+      if (!guard.start()) return;
+      try { calls.push('call'); await settle; setOpen(false); } finally { guard.end(); }
+    };
+    return h(Sheet, { title: 'Import 2 wishes?', open, onClose: () => setOpen(false),
+      footer: h('button', { type: 'button', disabled: busy, onClick: () => void go() }, 'Import') });
+  }
+
+  it('a double click before the call settles runs it once', async () => {
+    const calls: string[] = [];
+    let settle!: () => void;
+    act(() => root.render(h(Acts, { calls, settle: new Promise<void>((r) => { settle = r; }) })));
+    await wait(50);
+    const b = button('Import');
+    // both clicks land before React re-renders the button disabled
+    act(() => { b.dispatchEvent(new MouseEvent('click', { bubbles: true })); b.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(calls).toEqual(['call']);
+    expect(button('Import').disabled).toBe(true);
+    await act(async () => { settle(); });
+  });
+
+  it('a click while the sheet is leaving does nothing: the panel is inert and takes no pointer', async () => {
+    const calls: string[] = [];
+    act(() => root.render(h(Acts, { calls, settle: Promise.resolve() })));
+    await wait(50);
+    await act(async () => button('Import').click());
+    expect(calls).toEqual(['call']);
+    // closing: still there for its 420 ms, but inert and marked as leaving
+    const panel = document.querySelector('.sheet')!;
+    expect(panel.hasAttribute('inert')).toBe(true);
+    expect(panel.classList.contains('is-leaving')).toBe(true);
+    expect(document.querySelector('.scrim')!.classList.contains('is-leaving')).toBe(true);
+    // the guard holds too, should anything still deliver a click
+    await act(async () => button('Import').click());
+    expect(calls).toEqual(['call']);
+    await wait(500);
+    expect(document.querySelector('dialog.ks-dialog')).toBeNull();
+  });
+
+  it('a confirm sheet answers once, whatever is clicked after', async () => {
+    const answers: boolean[] = [];
+    function Asks() {
+      const ask = useConfirm();
+      return h('button', { type: 'button', onClick: async () => { answers.push(await ask({ title: 'Import?', confirm: 'Import', dismiss: 'Not yet' })); } }, 'Go');
+    }
+    act(() => root.render(h(ConfirmHost, null, h(Asks))));
+    act(() => button('Go').click());
+    await wait(50);
+    const yes = button('Import');
+    await act(async () => { yes.click(); yes.click(); button('Not yet').click(); });
+    expect(answers).toEqual([true]);
   });
 });

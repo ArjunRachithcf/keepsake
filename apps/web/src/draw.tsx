@@ -9,7 +9,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { api, message, ApiError, type Celebration, type Draw, type DrawInput } from './api';
 import { dateTime, day, fractionDigits, money, numericDate, parseMoney, toMoneyText } from './format';
 import { useHousehold } from './household';
-import { Check, Field, Group, Link, Notice, Sheet, Switch, useConfirm } from './ui';
+import { Check, Field, Group, Link, Notice, Sheet, Switch, useConfirm, useBusy } from './ui';
 import { AskSheet } from './questions';
 import { DrawGuests } from './links';
 
@@ -60,7 +60,7 @@ export function DrawCard({ draw: d, setDraw, setError, celebration, onChanged, u
   const [shown, setShown] = useState(false);
   const [revealing, setRevealing] = useState(false);
   const [ask, setAsk] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   useEffect(() => { if (!revealing) return; const t = setTimeout(() => setRevealing(false), REVEAL_MS); return () => clearTimeout(t); }, [revealing]);
   if (!d || d === 'none' || !d.mine) return null;
   const cur = household.currency;
@@ -68,8 +68,8 @@ export function DrawCard({ draw: d, setDraw, setError, celebration, onChanged, u
   const receiver = mine.receiver;
   const budget = d.budgetMinor !== null && cur ? `Budget about ${money(d.budgetMinor, cur)}.` : '';
   const open = async () => {
-    setBusy(true); setError(null);
-    try { setDraw(await api<Draw>(`${url}/open`, { method: 'POST' })); setShown(true); setRevealing(true); onChanged(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { setDraw(await api<Draw>(`${url}/open`, { method: 'POST' })); setShown(true); setRevealing(true); onChanged(); } catch (e) { setError(message(e)); } finally { guard.end(); }
   };
   const isOpen = shown && Boolean(receiver);
   return (
@@ -117,10 +117,10 @@ export function DrawRest({ draw: d, setDraw, error, setError, load, url, celebra
   const manages = useManagesDraw(celebration);
   const ask = useConfirm();
   const [sheet, setSheet] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   const act = async (f: () => Promise<Draw | undefined>) => {
-    setBusy(true); setError(null);
-    try { const next = await f(); if (next) setDraw(next); else await load(); onChanged(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+    if (!guard.start()) return; setError(null);
+    try { const next = await f(); if (next) setDraw(next); else await load(); onChanged(); } catch (e) { setError(message(e)); } finally { guard.end(); }
   };
   const kidsOf = (ids: string[]) => household.people.filter((p) => p.role === 'kid' && ids.includes(p.id));
 
@@ -340,7 +340,7 @@ function DrawForm({ celebration, draw, onDone }: { celebration: Celebration; dra
     return { ...v, budget: toMoneyText(draw.budgetMinor, household.currency) };
   });
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, guard] = useBusy();
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     const input = drawInput(o, household.currency);
@@ -349,12 +349,12 @@ function DrawForm({ celebration, draw, onDone }: { celebration: Celebration; dra
     const key = (x: DrawOptions) => JSON.stringify([[...x.people].sort(), x.kidsDraw, x.notLastYear, x.exclusions.map((p) => [...p].sort().join()).sort()]);
     if (draw?.drawn && before && key(before) !== key(o)
       && !(await ask({ title: 'Save and draw again?', body: 'Saving these draws the names again: everyone’s person may change.', confirm: 'Save and draw again', dismiss: 'Not yet' }))) return;
-    setBusy(true); setError(null);
+    if (!guard.start()) return; setError(null);
     try {
       const url = `/celebrations/${celebration.id}/draw`;
       const body = draw?.over ? { revealOn: input.revealOn } : input;
       onDone(await api<Draw>(url, { method: draw ? 'PATCH' : 'POST', body }));
-    } catch (err) { setError(message(err)); } finally { setBusy(false); }
+    } catch (err) { setError(message(err)); } finally { guard.end(); }
   };
   return (
     <form onSubmit={save} noValidate>
