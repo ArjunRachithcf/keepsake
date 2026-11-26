@@ -164,6 +164,13 @@ describe('sign-in', () => {
     expect(other.every((c) => c === 200)).toBe(true);
   });
 
+  it('the five sign-in steps share one budget of 20 a minute per client (Gate routes L3)', async () => {
+    const routes = ['/api/auth/sign-in/options', '/api/auth/sign-in/verify', '/api/auth/enrol/options', '/api/auth/enrol/verify', '/api/guest/session'];
+    const codes: number[] = [];
+    for (let i = 0; i < 25; i++) codes.push((await app.inject({ method: 'POST', url: routes[i % 5]!, headers: H, payload: {}, remoteAddress: '192.0.2.44' })).statusCode);
+    expect([codes.slice(0, 20).includes(429), codes.slice(20)]).toEqual([false, [429, 429, 429, 429, 429]]);
+  });
+
   it('IPv6 counts by /64: one host cannot spread its tries over its addresses', async () => {
     const from = (remoteAddress: string) => app.inject({ method: 'POST', url: '/api/auth/sign-in/options', headers: H, remoteAddress });
     const codes = [];
