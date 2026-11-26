@@ -30,14 +30,19 @@ something is new.
   go only through the egress client (ADR 0011) and only to a known push service (Google, Mozilla, Apple, Microsoft): a
   subscription's endpoint is checked when it is made, so a subscription cannot point Keepsake at the household's
   network. A stop (SIGTERM) arms no further tick, waits at most 2 s for pushes being sent, and makes what is pending
-  into its notices before it ends; whoever has a push not yet sent keeps it in `pending_push`, sent at the next start.
-  After a crash, both are still there. The pending row is written in the transaction of the change it belongs to. A
+  into its notices before it ends. A person's `pending_push` row goes only once each of their devices has been tried
+  (issue #13), so whoever a stop or a crash caught before that, the device being sent to included, is pushed again at
+  the next start; a device already reached may get a second push, which says nothing new. After a crash, both are
+  still there. The pending row is written in the transaction of the change it belongs to. A
   row that fails is logged by its id and kind only, tried again after 1, 2, 4 … minutes (at most an hour) and set
   aside after 8 tries; it never holds up the others (third review, L1–L4). A row set aside is kept 14 days after its
   last try, long enough for whoever reads the log to look at it, then pruned with the people it names (issue #13).
 - **What a push service answers** (L4; only its status is read, the body is never parsed): 404 or 410 drops the
-  subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then); a 5xx, a
-  timeout or our own failure never drops one; another 4xx drops it only after 3 days of failing.
+  subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then; their people
+  stay in `pending_push`, so a crash meanwhile loses nothing, and their devices already reached are not pushed again
+  by that process); a 5xx, a timeout or our own failure never drops one; another 4xx drops it only after 3 days of
+  failing. **What can still be lost** (accepted): a push a service failed with a 5xx or a timeout, or accepted and
+  never delivered, is not tried again; its notice is still in the app, read at the next open.
 - **Kept in step** (M2, L7, N4): the app sends its subscription again at every start and whenever it is shown again, so
   a session that ended takes the subscription only until the next start. It does so only for the person who turned
   the switch on in that browser (kept in `localStorage`), and marks it `sync`: a sync never moves a device from one
