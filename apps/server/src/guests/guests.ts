@@ -82,12 +82,13 @@ export function createShareLink(db: Db, me: Person, personId: string, label: str
 }
 
 /**
- * Letters of other scripts that draw like a Latin one, the way UTS #39's skeleton folds them (Gate re-attack): Cyrillic
- * and Greek look-alikes, a few Latin ones (dotless i, script a and g), and digits that pass for letters. Capitals that
+ * Letters of other scripts that draw like a Latin one, the way UTS #39's skeleton folds them (Gate re-attack, and the
+ * second: whole-word Cyrillic such as "Сам", Armenian, Cherokee): Cyrillic, Greek, Armenian and Cherokee look-alikes,
+ * a few Latin ones (dotless i, script a and g), and digits that pass for letters. A small table, not all of Unicode. Capitals that
  * lower to a letter that no longer looks Latin (Cyrillic В, Н, М, Т, К; Greek Η, Ν, Β, Μ, Ρ…) fold before lowering.
  */
-const LOOKS_UPPER: Record<string, string> = Object.fromEntries([...'АAВBЕEЅSІIЈJКKМMНHОOРPСCТTУYХXҮYԚQԜWΑAΒBΕEΖZΗHΙIΚKΜMΝNΟOΡPΤTΥYΧX'.matchAll(/(.)(.)/gu)].map((m) => [m[1], m[2]]));
-const LOOKS_LOWER: Record<string, string> = Object.fromEntries([...'аaеeоoрpсcуyхxѕsіiјjһhӏlүyԁdԛqԝwοoιiαaνvρpυuıiɑaɡg0o1l'.matchAll(/(.)(.)/gu)].map((m) => [m[1], m[2]]));
+const LOOKS_UPPER: Record<string, string> = Object.fromEntries([...'АAВBЕEЅSІIЈJКKМMНHОOРPСCТTУYХXҮYԚQԜWΑAΒBΕEΖZΗHΙIΚKΜMΝNΟOΡPΤTΥYΧXՕOՍUԼLᎪAᏴBᏟCᎠDᎬEᏀGᎻHᎫJᏦKᏞLᎷMᏢPᎡRᏚSᎢTᏙVᏔWᏃZ'.matchAll(/(.)(.)/gu)].map((m) => [m[1], m[2]]));
+const LOOKS_LOWER: Record<string, string> = Object.fromEntries([...'аaеeоoрpсcуyхxѕsіiјjһhӏlүyԁdԛqԝwмmкkтtвbнhпnгrοoιiαaνvρpυuκkօoսuոnհhցgզqıiɑaɡg0o1l'.matchAll(/(.)(.)/gu)].map((m) => [m[1], m[2]]));
 /** The letters a name shows: case, accents, spacing, characters that show nothing (review L-b) and look-alikes aside. */
 export function nameSkeleton(s: string): string {
   const bare = s.normalize('NFKD').replace(/[\p{M}\p{Default_Ignorable_Code_Point}]/gu, '').replace(/\s+/g, ' ').trim();
