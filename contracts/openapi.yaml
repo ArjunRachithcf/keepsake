@@ -1734,11 +1734,11 @@ components:
     GroupGift:
       type: object
       additionalProperties: false
-      required: [organizer, targetMinor, totalMinor, state, givers, myShareMinor, canManage]
+      required: [organizer, targetMinor, enough, state, givers, myShareMinor, canManage]
       properties:
         organizer: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
         targetMinor: { type: integer, minimum: 1 }
-        totalMinor: { type: integer, minimum: 0 }
+        enough: { type: boolean, description: 'Whether the shares together reach the target. Never the total: with two sharers it would give the other''s amount (ADR 0003)' }
         state: { $ref: '#/components/schemas/GroupState' }
         givers:
           type: array

@@ -207,7 +207,8 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       })),
       group: g.group ? {
         organizer: giverRef(w, g.group.organizerId, g.group.createdAt), targetMinor: g.group.targetMinor, state: g.group.state,
-        totalMinor: g.shares.reduce((n, x) => n + x.amountMinor, 0),
+        // Enough or not, never the total: with two sharers the total less your own is the other's (Gate surprise L3).
+        enough: g.shares.reduce((n, x) => n + x.amountMinor, 0) >= g.group.targetMinor,
         givers: byTime(g.shares).map((x) => ({ giver: giverRef(w, x.giverId, x.createdAt), mine: x.giverId === viewer.id })),
         myShareMinor: myShare?.amountMinor ?? null,
         canManage: managesGroup(db, viewer, g.group),
@@ -580,7 +581,7 @@ export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'se
       claimed, left: g.group ? 0 : Math.max(0, w.quantity - claimed), given: fullyGiven(w, g),
       claims: byTime(g.claims).map((c) => ({ giver: null, guest: null, imported: c.imported === 1, quantity: c.quantity, state: c.state, mine: c.guestId === l.id })),
       group: g.group ? {
-        organizer: null, targetMinor: g.group.targetMinor, state: g.group.state, totalMinor: g.shares.reduce((n, x) => n + x.amountMinor, 0),
+        organizer: null, targetMinor: g.group.targetMinor, state: g.group.state, enough: g.shares.reduce((n, x) => n + x.amountMinor, 0) >= g.group.targetMinor,
         givers: byTime(g.shares).map(() => ({ giver: null, mine: false })), myShareMinor: null, canManage: false,
       } : null,
       mine: mine ? (() => {

@@ -1379,7 +1379,8 @@ export interface components {
         GroupGift: {
             organizer: components["schemas"]["PersonRef"] | null;
             targetMinor: number;
-            totalMinor: number;
+            /** @description Whether the shares together reach the target. Never the total: with two sharers it would give the other's amount (ADR 0003) */
+            enough: boolean;
             state: components["schemas"]["GroupState"];
             /** @description Who chipped in (names only) */
             givers: {

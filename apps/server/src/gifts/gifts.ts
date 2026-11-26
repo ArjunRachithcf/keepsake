@@ -319,16 +319,12 @@ export function managesGroup(db: Db, me: Pick<Person, 'id'>, g: GroupGift): bool
   return Boolean(myShare(db, me, g.wishId));
 }
 
-/** What is chipped in, without `except`'s own share. */
-const totalOf = (db: Db, wishId: string, except?: string) =>
-  db.select().from(t.share).where(eq(t.share.wishId, wishId)).all().filter((s) => !except || s.giverId !== except).reduce((n, s) => n + s.amountMinor, 0);
-
 export function editGroup(db: Db, me: Person, wishId: string, patch: { targetMinor?: number; state?: GroupState }, today: string): Wish {
   const w = giving(db, me, wishId);
   const g = mustGroup(db, w.id);
   if (!managesGroup(db, me, g)) throw new Refused(403, 'whoever started the group gift changes it');
   if (patch.targetMinor !== undefined && g.state !== 'open') throw new Refused(409, 'it is bought: the target stays');
-  if (patch.targetMinor !== undefined && patch.targetMinor < totalOf(db, w.id)) throw new Refused(409, 'the target cannot go below what is chipped in');
+  // Any target: one refused for what is in would let the organizer find the total, and so each share (Gate surprise L3).
   const state = patch.state ?? g.state;
   if (state !== g.state && overNow(db, w, g, today)) throw new Refused(409, 'it was given, and its celebration is over');
   const dates = state === g.state ? {} : givenFields(db, w, state === 'given', today);
@@ -354,7 +350,9 @@ export function chipIn(db: Db, me: Person, wishId: string, amountMinor: number):
   const w = giving(db, me, wishId);
   const g = mustGroup(db, w.id);
   if (g.state !== 'open') throw new Refused(409, 'it is bought: shares stay as they are');
-  if (totalOf(db, w.id, me.id) + amountMinor > g.targetMinor) throw new Refused(409, 'that would go over the target');
+  // A share alone within the target; the shares together may go past it ("enough"): a refusal for what others put in
+  // would let a giver find their amounts (Gate surprise L3).
+  if (amountMinor > g.targetMinor) throw new Refused(409, 'that would go over the target');
   const mine = myShare(db, me, w.id);
   if (mine) db.update(t.share).set({ amountMinor, updatedAt: ts() }).where(eq(t.share.id, mine.id)).run();
   else db.insert(t.share).values({ id: ulid(), wishId: w.id, giverId: me.id, amountMinor, createdAt: ts(), updatedAt: ts() }).run();

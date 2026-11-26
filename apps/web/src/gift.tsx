@@ -43,9 +43,10 @@ export function GiftLine({ wish, onChanged, guest, currency }: { wish: Wish; onC
   if (wish.quantity > 1 && !g.group && g.claimed > 0) lines.push(`${g.claimed} of ${wish.quantity} claimed`);
 
   const grp = g.group;
-  const pct = grp ? Math.min(100, Math.round((grp.totalMinor / grp.targetMinor) * 100)) : 0;
+  // Enough or not, never a total (ADR 0003: with two sharers it would give the other's amount).
+  const pct = !grp ? 0 : grp.enough ? 100 : Math.min(100, Math.round(((grp.myShareMinor ?? 0) / grp.targetMinor) * 100));
   const who2 = grp ? grp.givers.map((x) => (x.mine ? 'you' : x.giver?.name ?? 'someone')) : [];
-  const grpText = grp && cur ? `${money(grp.totalMinor, cur)} of ${money(grp.targetMinor, cur)}${who2.length ? ` · ${who2.some((x) => x === 'you') ? names(who2) : `${names(who2)} chipped in`}` : ''}` : '';
+  const grpText = grp && cur ? `${grp.enough ? 'Enough' : 'Not enough yet'} for ${money(grp.targetMinor, cur)}${who2.length ? ` · ${who2.some((x) => x === 'you') ? names(who2) : `${names(who2)} chipped in`}` : ''}` : '';
 
   return (
     <div className="gift">

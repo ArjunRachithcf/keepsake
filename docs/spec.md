@@ -112,7 +112,9 @@ celebration's own people hear of it a week before.
 2026-11-25: logo A, the Tied K.
 
 2026-11-25 (M2, decided by default, open to change): kids see no claims or shares of anyone and do not claim; givers
-see who chipped in and the total, not each other's amounts, and the shares together stay within the target; a wish
+see who chipped in, whether it is enough and their own share, never each other's amounts nor the total (Gate,
+2026-11-26: with two sharers the total less your own is the other's; and a refusal for going over the target would let
+a giver find it, so only a share alone is kept within the target); a wish
 is either claimed or a group gift, not both; the person learns a gift was given on the day after the latest of the
 occasion kept when it was marked given, the wish's current occasion and the day it was given, so the reveal only ever
 moves later, and once revealed it stays revealed (ADR 0003); a giver who leaves the household takes their claims that

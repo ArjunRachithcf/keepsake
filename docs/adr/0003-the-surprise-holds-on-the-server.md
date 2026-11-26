@@ -23,7 +23,11 @@ assignment of a draw other than the one where they give (ADR 0004).
   coordinate), unless they are the one it's for. A guest is a viewer like any giver, never "meant for".
 - **Kids see no gifts at all** (decided 2026-11-25, PR #8): not on anyone's wishes, so nothing spoils through a kid. A
   kid sees every list as its person does, and claims and chips in from M5 at the earliest, if ever.
-- **Givers' shares**: other givers see who chipped in and the total, not each other's amounts.
+- **Givers' shares**: other givers see who chipped in and whether it is enough, never each other's amounts nor the
+  total (Gate surprise L3: with two sharers the total less your own share is the other's, and with more the total
+  before and after gives each new share). Nothing refuses a share for what the others put in (only a share alone above
+  the target), and the organizer may set any target, so no refusal can be used to find the total either. Accepted:
+  "enough or not" with one other sharer bounds their amount (at least the target less yours, or less than it).
 - **Givers in a draw** (M3, PR #10 review): while a draw is drawn and not revealed, a claim, share or group gift by one of
   its people for another (made up to its day) names no giver to anyone but the giver, so a gift never says who drew
   whom (ADR 0004). The counts stay.

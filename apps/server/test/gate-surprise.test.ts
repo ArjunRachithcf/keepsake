@@ -28,3 +28,30 @@ describe('L2 (probe P4): once a gift reached her, Robin still orders her list', 
     expect((await as(h, 'robin').send('PUT', '/api/people/p_robin/wish-order', { wishIds: [...ids, 'w_robin_scarf'] })).statusCode).toBe(400);
   });
 });
+
+describe('L3 (probe P8): "not each other\'s amounts" holds with two sharers', () => {
+  const pan = async (h: Home, who: 'alex' | 'quinn') => (await ok(as(h, who).get('/api/people/p_sam'))).json().wishes.find((w: { id: string }) => w.id === 'w_sam_pan').gift.group;
+  it('Alex reads no total: only whether it is enough, and his own share; the same whatever Robin put in', async () => {
+    const seen: string[] = [];
+    for (const amount of [3100, 1000]) {
+      const h = await home();
+      await ok(as(h, 'robin').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: amount }));
+      const g = await pan(h, 'alex');
+      expect(g).not.toHaveProperty('totalMinor');
+      expect([g.givers.map((x: { giver: { name: string } }) => x.giver.name), g.enough, g.myShareMinor]).toEqual([['Robin'], false, null]);
+      seen.push(JSON.stringify(g));
+    }
+    expect(seen[0]).toBe(seen[1]);
+  });
+
+  it('chipping in is refused only for a share above the target itself, never by what others put in (no probing the total)', async () => {
+    const h = await home();
+    await ok(as(h, 'robin').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 3100 }));
+    // 3100 + 4901 is over the 8000 target: no 409 that would tell Alex where Robin's amount ends.
+    expect((await as(h, 'alex').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 4901 })).statusCode).toBe(200);
+    expect((await pan(h, 'alex')).enough).toBe(true);
+    expect((await as(h, 'alex').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 8001 })).statusCode).toBe(409);
+    // The organizer may set any target; nothing refuses it for what is in.
+    expect((await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 100 })).statusCode).toBe(200);
+  });
+});
