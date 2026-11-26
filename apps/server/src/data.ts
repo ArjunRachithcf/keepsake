@@ -44,7 +44,7 @@ import { claimFor, setClaimStateFor, unclaimFor } from './gifts/gifts';
 import { applyImport, dryRun, type ImportInput } from './import/import';
 import { createEgress, type Egress } from './net/egress';
 import { drawStamps, drawsChanged, markRead, type NoticeKind } from './notices/notices';
-import { morning } from './jobs/morning';
+import { due, morning } from './jobs/morning';
 import { Pusher, subscribe, unsubscribe, type SubscriptionInput } from './push/push';
 import { usableVapid } from './push/keys';
 import { thankRecipients, writeThanks } from './thanks/thanks';
@@ -365,7 +365,8 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
         else db.insert(t.reminder).values({ personId: by.id, aboutId: p.id, days }).onConflictDoUpdate({ target: [t.reminder.personId, t.reminder.aboutId], set: { days } }).run();
       },
       /** The morning batch (jobs/morning.ts), from the scheduler: who was told is woken in the push queue. */
-      morning: (now: Date) => pusher.wake(morning(db, cfg, now)),
+      // Once a day: the batch kinds' notices, and a push to every subscribed device whatever it was told (Gate surprise H1).
+      morning: (now: Date) => { const first = due(db, cfg, now); morning(db, cfg, now); if (first) pusher.batch(); },
     },
     /** This device's Web Push subscription (push/push.ts): the caller's own; a standalone one ends with this session. */
     push: {

@@ -60,11 +60,20 @@ something is new.
 - **A device's subscription is its session's** (standalone): signing out, or a lost device's sessions ended, ends it,
   so a family computer someone signed out of gets nothing more for them. At most 10 devices a person.
 - **The morning batch** (ADR 0008's 08:00, household time): questions that reached their person, celebrations a week
-  away, "Remind me", reveal dates and gifts received, for everyone at once. It runs once a day (`job_run`); a server
-  that was off at 08:00 runs it at its next start that day, catching up a week of questions, reveals and thank-you
-  prompts (reminders only on their day); a batch that fails is tried again 15 minutes later while it is still due
-  (L8). Answers to a question, draws and thank-yous are told at the queue's next tick: only the person told could learn
-  anything from their timing, and they know it already.
+  away, "Remind me", reveal dates and gifts received, and the answers to questions and the thank-yous written since
+  the last one (`BATCH_KINDS`), for everyone at once. It runs once a day (`job_run`); a server that was off at 08:00
+  runs it at its next start that day, catching up a week of questions, reveals and thank-you prompts (reminders only
+  on their day); a batch that fails is tried again 15 minutes later while it is still due (L8).
+- **Who is pushed says nothing either** (Gate surprise H1, 2026-11-26). The earlier reasoning, "only the person told
+  could learn anything from their timing, and they know it already", was wrong: the one who **caused** the notice
+  knows the moment they acted. Robin thanks for a gift whose giver stays hidden from her for good, and half a minute
+  later exactly that giver's phone says "Something new"; she answers an anonymous question and only the asker's phone
+  does, or nobody's when a guest asked. So answers and thank-yous wait for the next batch (their pending row is still
+  written in the change's own transaction), and at each day's batch **every subscribed device of the household is
+  pushed, news or not** (cover): which phones light up at 08:00 is the same whatever anyone did, so it no longer
+  points at who gave, who asked or who keeps a "Remind me" about whom. Only draws are still told at the queue's next
+  tick: they go to all of a draw's people but its host, who already knows who is in it. Accepted: an answer or a
+  thank-you reaches its reader up to a day later, and every device gets one push a day.
 - **"Remind me"** (`PUT /api/people/{id}/reminder`): 1 to 60 days before each of that person's celebrations, at the
   batch; the caller's own, never about themselves; `PersonPage.reminder` shows only the caller's, so nobody learns
   who keeps a reminder about them. A celebration's own people are reminded a week before without asking.

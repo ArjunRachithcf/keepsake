@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { openDb } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { Pusher } from '../src/push/push';
+import { sessionCookie } from './helpers';
 import { as, makeHome, ok, pin, reads, setNow, type Home } from './m4';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
@@ -111,5 +112,40 @@ describe('H2 (probe P3): what the sheet says was bought never shows on its perso
     }
     expect(robin.slice(1)).toEqual([robin[0], robin[0], robin[0], robin[0]]);
     expect(robin[0]).toContain('A kettle');
+  });
+});
+
+describe('H1 (probes P1, P2): whose phone lights up after a thank-you or an answer names nobody', () => {
+  const BATCH = new Date('2026-12-02T08:00:00.000Z');
+  const NEXT = new Date('2026-12-03T08:00:00.000Z');
+  const pushedSince = async (h: Home) => { await h.built.pusher.idle(); const m = Object.fromEntries(h.pushes); h.pushes.clear(); return m; };
+  /** The batch at `at`, with the household signed in again (sessions idle out after 7 days). */
+  const batch = async (h: Home, at: Date) => { setNow(at); h.built.morning(at); return pushedSince(h); };
+
+  it.each(['p_alex', 'p_sam'])('P1: the scarf given by %s, unnamed: nobody is pushed after Robin thanks; at the batch, every device, the same', async (giver) => {
+    const h = await home();
+    h.db.update(t.claim).set({ giverId: giver, named: 0 }).where(eq(t.claim.id, 'cl_scarf')).run();
+    await pushedSince(h);
+    const home1 = (await ok(as(h, 'robin').get('/api/home'))).json();
+    expect(home1.thanks.map((x: { wish: { id: string }; from: unknown[] }) => [x.wish.id, x.from])).toEqual([['w_robin_scarf', []]]);
+    await ok(as(h, 'robin').send('PUT', '/api/wishes/w_robin_scarf/thanks', { text: 'Thank you!' }));
+    // The queue's next ticks: nobody's phone.
+    expect(await pushedSince(h)).toEqual({});
+    const every = Object.fromEntries([...new Set(h.db.select().from(t.pushSubscription).all().map((s) => s.personId))].map((p) => [p, 1]));
+    expect(await batch(h, BATCH)).toEqual(every);
+    // The giver reads it from then on.
+    expect(h.db.select().from(t.notice).where(eq(t.notice.kind, 'thanked')).all().map((n) => n.personId)).toEqual([giver]);
+  });
+
+  it.each(['quinn', 'uma', 'gR'] as const)('P2: asked by %s: nobody is pushed after Robin answers; at the next batch, every device, the same', async (asker) => {
+    const h = await home();
+    const url = asker.startsWith('g') ? '/api/guest/questions' : '/api/people/p_robin/questions';
+    const q = (await ok(as(h, asker).send('POST', url, { text: 'Leather or wool?' }))).json().id;
+    await batch(h, BATCH);
+    for (const p of ['robin', 'quinn', 'uma'] as const) h.cookies[p] = sessionCookie(h.db, `p_${p}`);
+    await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'Wool' }));
+    expect(await pushedSince(h)).toEqual({});
+    const every = Object.fromEntries([...new Set(h.db.select().from(t.pushSubscription).all().map((s) => s.personId))].map((p) => [p, 1]));
+    expect(await batch(h, NEXT)).toEqual(every);
   });
 });

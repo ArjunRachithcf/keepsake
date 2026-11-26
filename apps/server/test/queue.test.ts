@@ -54,6 +54,8 @@ describe('the push queue', () => {
     p.resolve('answered', () => { throw new Error('q_secret is broken'); });
     p.tell({ kind: 'answered', subjectId: 'q_secret', day: '2026-12-01' });
     p.tell({ kind: 'draw', subjectId: 'c_one', day: '2026-12-01', people: ['p_robin'] });
+    // An answer is made at the batch (Gate surprise H1), a draw at the tick.
+    p.batch();
     await p.idle();
     const notices = h.db.select().from(t.notice).where(eq(t.notice.subjectId, 'c_one')).all().map((n) => n.personId);
     const bad = () => h.db.select().from(t.pendingNotice).all();
@@ -62,6 +64,7 @@ describe('the push queue', () => {
     // Tried again once due, until set aside; idle() never spins on it.
     for (let i = 0; i < MAX_ATTEMPTS + 2; i++) {
       h.db.update(t.pendingNotice).set({ nextAt: null }).run();
+      p.batch();
       await p.idle();
     }
     expect(bad().map((r) => r.attempts)).toEqual([MAX_ATTEMPTS]);
@@ -78,8 +81,9 @@ describe('the push queue', () => {
 
   it('the notices a stop makes keep their push pending in the database; the next start sends it (L4)', async () => {
     const h = await makeHome(ON);
-    const q = await asked(h);
-    await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'M' }));
+    await asked(h);
+    // A change told at the tick (a draw's): the stop makes its notice.
+    h.built.pusher.tell({ kind: 'draw', subjectId: 'c_xmas', day: '2026-12-02', people: ['p_quinn'] });
     await h.built.app.close();
     expect(h.db.select().from(t.pendingPush).all().map((r) => r.personId)).toEqual(['p_quinn']);
     const sent: Subscription[] = [];
@@ -97,17 +101,19 @@ describe('the push queue', () => {
     p.tell({ kind: 'answered', subjectId: 'q_aside', day: '2026-12-01' });
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       h.db.update(t.pendingNotice).set({ nextAt: null }).run();
-      await p.idle();
+      p.batch();
     }
     p.tell({ kind: 'answered', subjectId: 'q_waiting', day: '2026-12-01' });
-    await p.idle();
+    p.batch();
     const rows = () => h.db.select().from(t.pendingNotice).all().map((r) => [r.subjectId, r.attempts]);
     expect(rows()).toEqual([['q_aside', MAX_ATTEMPTS], ['q_waiting', 1]]);
     // Its last try's retry time is an hour after T0 at most: just before the retention, it stays.
     vi.setSystemTime(new Date(T0.getTime() + SET_ASIDE_DAYS * 86_400_000));
+    p.batch();
     await p.tick();
     expect(rows().map((r) => r[0])).toEqual(['q_aside', 'q_waiting']);
     vi.setSystemTime(new Date(T0.getTime() + (SET_ASIDE_DAYS + 1) * 86_400_000));
+    p.batch();
     await p.tick();
     expect(rows()).toEqual([['q_waiting', 3]]);
   });

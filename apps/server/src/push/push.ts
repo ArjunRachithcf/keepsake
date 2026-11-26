@@ -10,7 +10,7 @@
 // - The key (VAPID) is kept like the sealing key (push/keys.ts): outside the database and its backup.
 // - A standalone subscription is the session's: it ends when that session ends (sign-out, a lost device).
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, isNull, lt, lte, notInArray, or } from 'drizzle-orm';
 import { tell, type NoticeKind } from '../notices/notices';
 import { asDb, checkpoint, type Db } from '../db/open';
 import * as t from '../db/schema';
@@ -106,6 +106,13 @@ export function webPushTransport(egress: Egress, vapid: () => Vapid | null, subj
  * A change that tells someone. `people` only where the change itself names them (a draw's people); otherwise who is
  * told is found at the tick by the kind's resolver (`resolve`), so the request's work never depends on it.
  */
+/**
+ * Kinds whose notices are made only at the morning batch, never at the next tick (Gate surprise H1): whose phone lights
+ * up half a minute after a thank-you or an answer would show its writer who gave, or who asked. At the batch every
+ * subscribed device is pushed, news or not (`batch`), so who had news says nothing either.
+ */
+export const BATCH_KINDS: readonly NoticeKind[] = ['answered', 'thanked'];
+
 export interface Telling { kind: NoticeKind; subjectId: string; day: string; people?: string[]; again?: boolean }
 /** Who a pending change of this kind tells, found at the tick from its subject and day. */
 export type Resolver = (subjectId: string, day: string) => string[];
@@ -224,9 +231,10 @@ export class Pusher {
    * transaction with them. A row that fails is reported without its content, tried again later and set aside after
    * MAX_ATTEMPTS; it never stops the other rows (third review, L2).
    */
-  private makeNotices(): void {
+  private makeNotices(at: 'tick' | 'batch' = 'tick'): void {
     const now = new Date();
-    const due = this.db.select().from(t.pendingNotice).where(and(lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now.toISOString()))))
+    const kinds = at === 'batch' ? inArray(t.pendingNotice.kind, [...BATCH_KINDS]) : notInArray(t.pendingNotice.kind, [...BATCH_KINDS]);
+    const due = this.db.select().from(t.pendingNotice).where(and(kinds, lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now.toISOString()))))
       .orderBy(asc(t.pendingNotice.createdAt), asc(t.pendingNotice.id)).all();
     for (const x of due) {
       try {
@@ -249,8 +257,19 @@ export class Pusher {
   private pending(): boolean {
     const now = new Date().toISOString();
     return Boolean(this.db.select({ id: t.pendingNotice.id }).from(t.pendingNotice)
-      .where(and(lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now)))).limit(1).get())
+      .where(and(notInArray(t.pendingNotice.kind, [...BATCH_KINDS]), lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now)))).limit(1).get())
       || this.db.select({ id: t.pendingPush.personId }).from(t.pendingPush).all().some((r) => !this.heldBack.has(r.id) || this.woken.has(r.id));
+  }
+
+  /**
+   * The morning batch (jobs/morning.ts has told its own): the batch kinds' pending changes become notices, and every
+   * person with a subscribed device gets a push at the next tick, news or not, as cover (Gate surprise H1): which
+   * phones light up at 08:00 is the same whatever happened, and says nothing of who gave, who asked or who keeps a
+   * "Remind me" about whom.
+   */
+  batch(): void {
+    this.makeNotices('batch');
+    this.wake(this.db.selectDistinct({ id: t.pushSubscription.personId }).from(t.pushSubscription).all().map((r) => r.id));
   }
 
   /** One tick: what was handed over so far is told and pushed. */

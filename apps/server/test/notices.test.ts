@@ -18,6 +18,8 @@ import { standalone } from './helpers';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
 const BATCH = new Date('2026-12-02T08:00:00.000Z');
+/** The batch after BATCH: answers and thank-yous of the day before are told then (Gate surprise H1). */
+const NEXT = new Date('2026-12-03T08:00:00.000Z');
 beforeAll(() => pin(T0));
 afterAll(() => { vi.useRealTimers(); });
 const homes: Home[] = [];
@@ -99,7 +101,8 @@ describe('a push says nothing', () => {
     await morning(h, BATCH);
     await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'Wool, please' }));
     await h.built.pusher.idle();
-    expect(sent.map((s) => [s.url, s.rules])).toEqual([['https://fcm.googleapis.com/fcm/send/robin', 'push service'], ['https://fcm.googleapis.com/fcm/send/quinn', 'push service']]);
+    // The batch pushes every device, whatever it was told (Gate surprise H1); the answer waits for the next one.
+    expect(sent.map((s) => [s.url, s.rules]).sort()).toEqual([['https://fcm.googleapis.com/fcm/send/quinn', 'push service'], ['https://fcm.googleapis.com/fcm/send/robin', 'push service']]);
     expect(new Set(sent.map((s) => s.body.length)).size).toBe(1);
     for (const s of sent) {
       expect(Object.keys(s.headers).sort()).toEqual(['authorization', 'content-encoding', 'content-type', 'topic', 'ttl', 'urgency']);
@@ -187,7 +190,7 @@ describe('a push says nothing', () => {
     expect(robin()).toHaveLength(1);
   });
 
-  it('the request that causes a notice makes none and sends nothing: the queue does, on its tick (PR #12 review, L6)', async () => {
+  it('the request that causes a notice makes none and sends nothing; an answer is told at the next batch, with a push to every device (PR #12 review, L6; Gate surprise H1)', async () => {
     const calls: string[] = [];
     const h = await home(ON, { pushTransport: async (s) => { calls.push(s.personId); return 201; } });
     const q = (await ok(as(h, 'quinn').send('POST', '/api/people/p_robin/questions', { text: 'Which size?' }))).json().id;
@@ -198,8 +201,12 @@ describe('a push says nothing', () => {
     await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'M' }));
     await new Promise((ok) => setTimeout(ok, 50));
     expect([count(), calls]).toEqual([before, []]);
+    // Its ticks tell nobody: whose phone lights up after an answer would name the asker.
     await h.built.pusher.tick();
-    expect([count(), calls]).toEqual([before + 1, ['p_quinn']]);
+    expect([count(), calls]).toEqual([before, []]);
+    await morning(h, NEXT);
+    expect(h.db.select().from(t.notice).where(eq(t.notice.kind, 'answered')).all().map((n) => n.personId)).toEqual(['p_quinn']);
+    expect([...calls].sort()).toEqual([...new Set(h.db.select().from(t.pushSubscription).all().map((s) => s.personId))].sort());
   });
 
   it('the app\'s own re-sending (sync) never moves a device from one person to another; the switch does (PR #12 second review, N-M2)', async () => {
@@ -238,10 +245,16 @@ describe('a push says nothing', () => {
       return { h, told };
     };
 
-    it('a stop (SIGTERM: app.close) makes what is pending into its notices first', async () => {
+    it('a stop (SIGTERM: app.close) keeps an answer pending for the next batch, which makes it', async () => {
       const { h, told } = await answered();
       await h.built.app.close();
-      expect([told(), h.db.select().from(t.pendingNotice).all()]).toEqual([['p_quinn'], []]);
+      expect([told(), h.db.select().from(t.pendingNotice).all().length]).toEqual([[], 1]);
+      const next = await buildApp(standalone(ON), h.db, { pushTransport: async () => 201 });
+      try {
+        setNow(NEXT);
+        next.morning(NEXT);
+        expect([told(), h.db.select().from(t.pendingNotice).all()]).toEqual([['p_quinn'], []]);
+      } finally { await next.app.close(); }
     });
 
     it('after a crash, the next start makes them', async () => {
@@ -250,6 +263,9 @@ describe('a push says nothing', () => {
       const next = await buildApp(standalone(ON), h.db, { pushTransport: async () => 201 });
       try {
         await next.pusher.tick();
+        expect(told()).toEqual([]);
+        setNow(NEXT);
+        next.morning(NEXT);
         expect([told(), h.db.select().from(t.pendingNotice).all()]).toEqual([['p_quinn'], []]);
       } finally { await next.app.close(); await h.built.app.close(); }
     });
@@ -271,7 +287,8 @@ describe('the morning batch', () => {
     expect((await notices(h, 'alex')).notices.map((n) => n.question)).toEqual([ql]);
     for (const who of ['mia', 'leo', 'quinn', 'uma'] as const) expect(await kinds(h, who), who).toEqual([]);
     const before = Object.fromEntries(await Promise.all(PEOPLE.map(async (p) => [p, await pushed(h, p)])));
-    expect(before).toMatchObject({ robin: 1, sam: 1, alex: 1, mia: 0, leo: 0, quinn: 0 });
+    // Every device is pushed at each day's batch, told something or not (Gate surprise H1): two batches, two each.
+    expect(before).toEqual(Object.fromEntries(PEOPLE.map((p) => [p, 2])));
     // Again (a restart, the next tick): nothing new, no push.
     await morning(h, new Date(BATCH.getTime() + 3_600_000));
     for (const p of PEOPLE) expect(await pushed(h, p), p).toBe(before[p]);
@@ -334,6 +351,8 @@ describe('an answer tells its asker, and nobody else', () => {
     await morning(h, BATCH);
     await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'Wool' }));
     await ok(as(h, 'robin').send('POST', `/api/questions/${g}/decline`));
+    expect(await kinds(h, 'quinn')).toEqual([]);
+    await morning(h, NEXT);
     expect((await notices(h, 'quinn')).notices).toMatchObject([{ kind: 'answered', question: q, person: { id: 'p_robin' } }]);
     for (const who of ['alex', 'sam', 'mia', 'leo', 'uma'] as const) expect(await kinds(h, who), who).toEqual([]);
     expect(await kinds(h, 'robin')).toEqual(['question', 'question']);
@@ -392,7 +411,8 @@ describe('thank-yous never name a giver to someone who may not know', () => {
     expect(ra.body).toBe(rb.body);
     expect(ra.json()).toMatchObject({ wish: { id: 'w_gift' }, from: [], sent: { text: THANKS.text, on: '2026-12-01', by: { id: 'p_sam' } } });
     for (const v of viewers) expect(await reads(a, v), `after: ${v}`).toEqual(await reads(b, v));
-    // Every giver reads it, named or not; nobody else.
+    // Every giver reads it, named or not, from the next batch on (Gate surprise H1); nobody else.
+    for (const h of [a, b]) await morning(h, BATCH);
     for (const [h, gs] of [[a, ga], [b, gb]] as const) {
       for (const who of ['quinn', 'uma'] as const) {
         const home = (await as(h, who).get('/api/home')).json();
