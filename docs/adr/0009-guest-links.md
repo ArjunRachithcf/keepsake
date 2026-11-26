@@ -39,7 +39,14 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   guest someone else, the wish moves to another celebration than a draw guest's (second review, L-a), or their
   celebration or draw goes, their claims only made go (the wish is free again) and bought
   or given ones stay with nobody's name, as when a giver leaves (ADR 0003). The changing request does it, never a
-  person's reading one.
+  person's reading one. **Except while a draw or its veil covers the claim** (Gate surprise M1, 2026-11-26: the guest
+  and the wish's person in it, the claim made up to its day): then nothing goes. The claim stays as it is, unnamed like
+  every claim between a draw's people, and still counts, until the veil lifts; the first change after that settles it
+  as above. Had it gone, the one unnamed claim that went would sit on the wish of the guest's person, and every giver,
+  the host who revoked included, would know whom the guest drew. A wish a kid edits (waiting for a parent again)
+  keeps its guests' claims too: the reservation is there when the parent says yes. Accepted: once the celebration
+  itself is removed, its draw links go and such a claim becomes nobody's for good (it still counts; nothing releases
+  it but removing the wish).
 - **Under HomersLab** no guest link is made, given a new address or exchanged for a session (409, and the screens say
   so; a link left from a standalone past included, Gate routes L5) until HomersLab's edge lets guests through to
   `guest_paths` (Homeward #317).

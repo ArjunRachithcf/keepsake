@@ -693,7 +693,7 @@ describe('a guest\'s claims once they cannot manage them (review M1)', () => {
     }
   }, 60_000);
 
-  it('a re-draw that gives a draw guest someone else, and removing their celebration, take their only-made claims', async () => {
+  it('a re-draw that gives a draw guest someone else, and removing their celebration, keep their claims while the draw\'s veil covers them (Gate surprise M1)', async () => {
     const db = withDraws(household());
     db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
     for (const p of ['alex', 'sam', 'robin', 'mia']) db.insert(t.wish).values({ id: `w_${p}_xmas`, personId: `p_${p}`, celebrationId: 'c_xmas', name: 'A puzzle', state: 'listed', position: 9, addedBy: `p_${p}`, createdAt: '2026-11-01T10:00:00.000Z', updatedAt: '2026-11-01T10:00:00.000Z' }).run();
@@ -705,26 +705,27 @@ describe('a guest\'s claims once they cannot manage them (review M1)', () => {
     await ok(g.send('PUT', `/api/guest/wishes/w_${first.slice(2)}_xmas/claim`, { quantity: 1 }));
     const guestClaims = () => db.select().from(t.claim).all().filter((c) => c.guestId === made.link.id || (c.giverId === null && c.wishId.endsWith('_xmas')));
     expect(guestClaims()).toHaveLength(1);
-    // Drawn again until the guest has someone else: their claim on the first person's wish goes with it.
+    // Drawn again until the guest has someone else: their claim on the first person's wish stays, and counts (were it
+    // to go, the one claim that went would name whom they drew, Gate surprise M1).
     let now = first;
     for (let i = 0; i < 15 && now === first; i++) {
       await ok(s.person('p_alex').send('POST', '/api/celebrations/c_xmas/draw/run'));
-      if (guestClaims().length === 0) { now = 'changed'; break; }
+      now = (await ok(g.send('POST', '/api/guest/draw/open'))).json().person.id as string;
     }
-    expect(now).toBe('changed');
-    // With their new person: a claim, then the celebration goes, and the claim with it (not left with no giver).
-    const second = (await ok(g.send('POST', '/api/guest/draw/open'))).json().person.id as string;
-    await ok(g.send('PUT', `/api/guest/wishes/w_${second.slice(2)}_xmas/claim`, { quantity: 1 }));
+    expect(now).not.toBe(first);
     expect(guestClaims()).toHaveLength(1);
+    // With their new person: a claim, then the celebration goes; both stay, as nobody's claims, under its veil.
+    await ok(g.send('PUT', `/api/guest/wishes/w_${now.slice(2)}_xmas/claim`, { quantity: 1 }));
+    expect(guestClaims()).toHaveLength(2);
     expect((await s.person('p_alex').send('DELETE', '/api/celebrations/c_xmas')).statusCode).toBe(204);
-    expect(db.select().from(t.claim).all().filter((c) => c.giverId === null && c.imported === 0)).toEqual([]);
+    expect(db.select().from(t.claim).all().filter((c) => c.giverId === null && c.guestId === null && c.imported === 0)).toHaveLength(2);
   });
 });
 
 describe('a wish moved out of a draw guest\'s reach (review L-a)', () => {
   afterEach(() => { vi.useRealTimers(); });
 
-  it('their only-made claim goes and a bought one stays unnamed; the person and kids learn nothing', async () => {
+  it('their claims stay while the draw covers them (Gate surprise M1), unnamed; the person and kids learn nothing', async () => {
     pin(new Date());
     const db = withDraws(household());
     db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
@@ -768,10 +769,11 @@ describe('a wish moved out of a draw guest\'s reach (review L-a)', () => {
     };
     const [x, y] = [await answers(s.inject), await answers(twin.app.inject.bind(twin.app))];
     expect(x).toEqual(y);
-    // The only-made claim went: the household may claim it; the bought one stays, with nobody's name.
-    expect(db.select().from(t.claim).all().filter((c) => c.wishId.includes('_xmas')).map((c) => [c.wishId, c.state, c.guestId, c.giverId])).toEqual([[`w_${p}_xmas2`, 'bought', null, null]]);
+    // Both stay, the only-made one too, and still count: nobody claims it twice, and nothing says it was the guest's.
+    expect(db.select().from(t.claim).all().filter((c) => c.wishId.includes('_xmas')).map((c) => [c.wishId, c.state, c.guestId, c.giverId]).sort())
+      .toEqual([[`w_${p}_xmas1`, 'claimed', made.link.id, null], [`w_${p}_xmas2`, 'bought', made.link.id, null]]);
     const other = ['p_alex', 'p_sam', 'p_robin'].find((q) => q !== person && q !== mover)!;
-    expect((await s.person(other).send('PUT', `/api/wishes/w_${p}_xmas1/claim`, { quantity: 1 })).statusCode).toBe(200);
+    expect((await s.person(other).send('PUT', `/api/wishes/w_${p}_xmas1/claim`, { quantity: 1 })).statusCode).toBe(409);
   });
 });
 

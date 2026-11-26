@@ -29,7 +29,7 @@ import { getCelebration } from '../celebrations/celebrations';
 import { Refused } from '../errors';
 import { getPerson, managesKid, mustGetPerson, type Person } from '../household/people';
 import { seesGifts } from '../gifts/gifts';
-import { drawnBy, guestPlace, hostRoleOf, managesDraw, occasionOf, openOwn, participantsOf } from '../draws/draws';
+import { dayOfInstant, drawnBy, guestPlace, hostRoleOf, managesDraw, occasionOf, openOwn, participantsOf, unrevealedDraws } from '../draws/draws';
 import type { Keyring } from '../draws/sealed';
 import { getWish, type Wish } from '../wishes/wishes';
 
@@ -354,9 +354,14 @@ export function guestGiving(db: Db, l: GuestLink, ring: Keyring, wishId: string)
  * else, or the wish moved out of what their link reaches (to another celebration than a draw guest's, review L-a). A
  * claim only made goes; a bought or given one stays, with nobody's name. Run by the changing request (never a
  * person's reading one), after the change or, for `going`, before it. A wish waiting for a parent stays within reach:
- * it comes back as it was.
+ * it comes back as it was (Gate surprise M1: a kid's edit never costs a guest their reservation).
+ *
+ * A draw guest's claim that a live draw or a veil covers (the guest and the wish's person in it, the claim made up to
+ * its day) never goes, whatever happened (Gate surprise M1): it stays, unnamed as every claim between a draw's people
+ * is, and still counts, until the veil lifts; the first change after that settles it. Otherwise the one unnamed claim
+ * that went would sit on the wish of the guest's person, and every giver would know whom they drew.
  */
-export function settleGuestClaims(db: Db, ring: Keyring, going: ReadonlySet<string> = new Set()): void {
+export function settleGuestClaims(db: Db, ring: Keyring, today: string, tz: string, going: ReadonlySet<string> = new Set()): void {
   const claims = db.select().from(t.claim).where(isNotNull(t.claim.guestId)).all();
   if (!claims.length) return;
   type Reach = { personId: string; celebrationId: string | null } | null | 'keep';
@@ -381,10 +386,14 @@ export function settleGuestClaims(db: Db, ring: Keyring, going: ReadonlySet<stri
     reachOfLink.set(linkId, v);
     return v;
   };
+  const live = unrevealedDraws(db, today);
+  const covered = (personId: string, guestId: string, at: string) =>
+    live.some((d) => d.people.has(`g:${guestId}`) && d.people.has(personId) && dayOfInstant(tz, at) <= d.on);
   for (const c of claims) {
     const r = reached(c.guestId!);
     if (r === 'keep') continue;
     const w = getWish(db, c.wishId);
+    if (w && (w.state === 'awaiting_parent' || covered(w.personId, c.guestId!, c.createdAt))) continue;
     if (w && r && w.personId === r.personId && (r.celebrationId === null || w.celebrationId === null || w.celebrationId === r.celebrationId)) continue;
     if (c.state === 'claimed') db.delete(t.claim).where(eq(t.claim.id, c.id)).run();
     else db.update(t.claim).set({ guestId: null, updatedAt: ts() }).where(eq(t.claim.id, c.id)).run();

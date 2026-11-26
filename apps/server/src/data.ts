@@ -94,7 +94,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
    */
   const changed = <T>(v: T): T => { refreshRevealed(db, day()); return v; };
   /** After a change to a draw or a link: a guest's claims they can no longer manage go (review M1), then `changed`. */
-  const settled = <T>(v: T): T => { settleGuestClaims(db, keyring(cfg)); return changed(v); };
+  const settled = <T>(v: T): T => { settleGuestClaims(db, keyring(cfg), day(), cfg.timezone); return changed(v); };
   const fresh = (r: Req, minutes?: number) => {
     const s = fastifyRequestOf(r).caller?.session;
     if (!s || !isFresh(s, new Date(), minutes)) throw new Refused(403, 'sign in again to do this');
@@ -421,7 +421,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
           veilCelebration(asDb(tx), id, day());
           // Its draw links go with it: their guests' claims are settled first (only-made ones go, review M1).
           // (A refused removal rolls this back with it.)
-          settleGuestClaims(asDb(tx), keyring(cfg), drawLinksOf(asDb(tx), id));
+          settleGuestClaims(asDb(tx), keyring(cfg), day(), cfg.timezone, drawLinksOf(asDb(tx), id));
           removeCelebration(asDb(tx), me(r), id);
         });
         return changed(undefined);
