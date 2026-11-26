@@ -695,7 +695,7 @@ paths:
     post:
       tags: [celebrations]
       operationId: addCelebration
-      summary: A new celebration, hosted by the caller (grown-ups)
+      summary: A new celebration, hosted by the caller (grown-ups; at most 100 each)
       requestBody:
         required: true
         content:
@@ -710,6 +710,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /celebrations/{celebrationId}:
     parameters:

@@ -568,7 +568,7 @@ export interface paths {
         /** Coming up (by next date) and past ones */
         get: operations["listCelebrations"];
         put?: never;
-        /** A new celebration, hosted by the caller (grown-ups) */
+        /** A new celebration, hosted by the caller (grown-ups; at most 100 each) */
         post: operations["addCelebration"];
         delete?: never;
         options?: never;
@@ -3062,6 +3062,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
     getCelebration: {
