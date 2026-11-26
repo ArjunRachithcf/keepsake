@@ -32,7 +32,7 @@ export const MESSAGES = [
   'your own wishes are for others to give', 'grown-ups claim gifts and chip in', 'only a wish on the list can be given',
   'it is not a group gift', 'it is a group gift: chip in instead', 'you have given it already',
   'someone is getting it already', 'not that many are left to claim', 'you have not claimed it',
-  'it was given, and its celebration is over', 'it is given: mark it not given first',
+  'it was given, and its celebration is over', 'it is given: mark it not given first', 'it was given: the reservation stays',
   'only for a gift you gave, once its celebration is over', 'it is a group gift already',
   'whoever started the group gift changes it', 'it is bought: the target stays',
   'others have chipped in: they take their share back first', 'it is bought: shares stay as they are',

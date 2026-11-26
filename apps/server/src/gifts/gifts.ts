@@ -280,6 +280,10 @@ export function unclaimFor(db: Db, w: Wish, who: Giver): void {
 export function releaseImported(db: Db, me: Person, wishId: string): Wish {
   const w = giving(db, me, wishId);
   if (me.role !== 'admin') throw new Refused(403, 'admins release an imported reservation');
+  // A given one (the sheet's Given rows, ADR 0005) is the person's once revealed: released, it would come back to their
+  // list and leave their thank-yous (Gate re-attack R3). Only a reservation nobody has given yet is released.
+  const held = db.select().from(t.claim).where(and(eq(t.claim.wishId, w.id), eq(t.claim.imported, 1))).get();
+  if (held && (held.state === 'given' || held.revealedOn !== null)) throw new Refused(409, 'it was given: the reservation stays');
   const gone = db.delete(t.claim).where(and(eq(t.claim.wishId, w.id), eq(t.claim.imported, 1))).run().changes;
   if (!gone) throw new Refused(404, 'no such reservation');
   db.insert(t.audit).values({ id: ulid(), at: ts(), actorId: me.id, action: 'reservation_released', subjectId: w.id }).run();

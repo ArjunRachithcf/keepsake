@@ -602,12 +602,13 @@ paths:
     delete:
       tags: [gifts]
       operationId: releaseImportedClaim
-      summary: 'An admin releases the wish''s imported reservation (refused first, like any giving, to its person and kids)'
+      summary: 'An admin releases the wish''s imported reservation (refused first, like any giving, to its person and kids); a given one stays'
       responses:
         '204': { description: Released }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /wishes/{wishId}/named:
     parameters:

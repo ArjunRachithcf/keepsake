@@ -509,7 +509,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** An admin releases the wish's imported reservation (refused first, like any giving, to its person and kids) */
+        /** An admin releases the wish's imported reservation (refused first, like any giving, to its person and kids); a given one stays */
         delete: operations["releaseImportedClaim"];
         options?: never;
         head?: never;
@@ -2956,6 +2956,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     nameOnGift: {

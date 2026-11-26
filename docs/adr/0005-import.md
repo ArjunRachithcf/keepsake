@@ -17,7 +17,8 @@ audited). Bought (or Purchased) and Given rows are imported the same way, as cla
 surprise H2, 2026-11-26: skipped, they were missing from their person's list, which said exactly what was bought for
 them); a Given row counts as given on the day of the import, so it is revealed the day after the occasion that follows
 (ADR 0003), never earlier: an old sheet's Given rows from a past celebration show as received only after the next one,
-with a thank-you prompt then (an admin deletes such a wish first if that is not wanted). The person's answers are the
+with a thank-you prompt then (an admin deletes such a wish first if that is not wanted). A given one is never released:
+the release would put it back on its person's list and take it from their thank-yous (Gate re-attack R3). The person's answers are the
 same bytes whatever the Status column says (`test/gate-surprise.test.ts`); Priority "High", "Most wanted" or "1" is most wanted. Limits:
 512 KB, 2000 rows. A cell's leading `=`, `+`, `-`, `@`, tab or CR is dropped. A fictional sample is in `seed-sample/`.
 
