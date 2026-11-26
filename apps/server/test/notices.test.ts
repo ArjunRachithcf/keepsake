@@ -12,7 +12,7 @@ import { refreshRevealed } from '../src/gifts/gifts';
 import { ORIGIN, TEST_P256DH, TEST_VAPID, sessionCookie } from './helpers';
 import { GUESTS, PEOPLE, as, makeHome, ok, pin, reads, setNow, type Guest, type Home, type Who } from './m4';
 import { vapidFrom } from '../src/push/webpush';
-import { subscribe } from '../src/push/push';
+import { subscribe, unsubscribe } from '../src/push/push';
 import { buildApp } from '../src/app';
 import { standalone } from './helpers';
 
@@ -68,6 +68,21 @@ describe('a device subscribes for its person, to a known push service only', () 
     // Signing out on this browser ends its session, and its devices' subscriptions with it.
     await ok(as(h, 'robin').send('POST', '/api/auth/sign-out'));
     expect(robin().filter((s) => s.sessionId !== null)).toEqual([]);
+  });
+});
+
+describe('unsubscribing (Gate routes, Info)', () => {
+  it('takes the endpoint as subscribing kept it: one the URL parser spells otherwise is still found', async () => {
+    const h = await home(ON);
+    const mine = () => h.db.select().from(t.pushSubscription).where(eq(t.pushSubscription.personId, 'p_robin')).all();
+    h.db.delete(t.pushSubscription).run();
+    const endpoint = 'https://FCM.googleapis.com/fcm/send/robin';
+    subscribe(h.db, 'p_robin', null, { endpoint, ...SUB('x').keys });
+    expect(mine().map((s) => s.endpoint)).toEqual(['https://fcm.googleapis.com/fcm/send/robin']);
+    unsubscribe(h.db, 'p_robin', endpoint);
+    expect(mine()).toEqual([]);
+    // Something that is no address changes nothing, and says nothing.
+    expect(() => unsubscribe(h.db, 'p_robin', 'not a url')).not.toThrow();
   });
 });
 

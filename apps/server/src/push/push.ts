@@ -71,7 +71,10 @@ export function subscribe(db: Db, personId: string, sessionId: string | null, i:
 
 /** Ends a device's subscription: the caller's only (another's endpoint changes nothing, and says nothing). */
 export function unsubscribe(db: Db, personId: string, endpoint: string): void {
-  db.delete(t.pushSubscription).where(and(eq(t.pushSubscription.id, subscriptionId(endpoint)), eq(t.pushSubscription.personId, personId))).run();
+  // Spelt as subscribe() kept it (new URL(...).href), so an endpoint the parser changes is still found (Gate routes, Info).
+  let href: string;
+  try { href = new URL(endpoint).href; } catch { return; }
+  db.delete(t.pushSubscription).where(and(eq(t.pushSubscription.id, subscriptionId(href)), eq(t.pushSubscription.personId, personId))).run();
 }
 
 /** What sends one push: the status the push service answered (production: through the egress client). */
