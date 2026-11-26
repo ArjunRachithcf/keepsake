@@ -8,25 +8,53 @@ export function inDays(n: number): string {
   return `in ${n} days`;
 }
 
-const dayFmt = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long', timeZone: 'UTC' });
-const dayYearFmt = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
-/** A YYYY-MM-DD day, in words ("24 December"; the year when it is not this year). */
-export function day(d: string): string {
-  const date = new Date(`${d}T00:00:00Z`);
-  return (date.getUTCFullYear() === new Date().getFullYear() ? dayFmt : dayYearFmt).format(date);
+// Dates as the household writes them (UI round 4): day first, never the US order. A calendar day is
+// "25.12.2026", with its weekday "Fri 25.12.2026", without its year "25.12."; when something happened, "26 Nov" (its
+// year added when it is not this year); a time is 24-hour ("Fri 25.12.2026, 18:00"). The words stay English, as the
+// app's are. Written out here rather than left to Intl, so a browser set to en-US still shows the household's dates.
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const two = (n: number) => String(n).padStart(2, '0');
+
+/** A YYYY-MM-DD calendar day as its parts; an instant (with a time) as the day it is here. */
+function parts(d: string): { y: number; m: number; day: number; wd: number } {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    const x = new Date(`${d}T00:00:00Z`);
+    return { y: x.getUTCFullYear(), m: x.getUTCMonth(), day: x.getUTCDate(), wd: x.getUTCDay() };
+  }
+  const x = new Date(d);
+  return { y: x.getFullYear(), m: x.getMonth(), day: x.getDate(), wd: x.getDay() };
 }
 
-const monthFmt = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
+/** "25.12.2026" */
+export const numericDate = (d: string) => { const p = parts(d); return `${two(p.day)}.${two(p.m + 1)}.${p.y}`; };
+/** "Fri 25.12.2026": a celebration's day. */
+export const weekdayDate = (d: string) => `${WEEKDAYS[parts(d).wd]} ${numericDate(d)}`;
+/** "25.12.": a day in the sidebar's Coming up. */
+export const dayMonth = (d: string) => { const p = parts(d); return `${two(p.day)}.${two(p.m + 1)}.`; };
+/** "26 Nov" (and its year when it is not this year): when something happened. */
+export function day(d: string, now = new Date()): string {
+  const p = parts(d);
+  return `${p.day} ${MONTHS[p.m]}${p.y === now.getFullYear() ? '' : ` ${p.y}`}`;
+}
+/** "Fri 25.12.2026, 18:00": an instant, in this device's time. */
+export function dateTime(iso: string): string {
+  const x = new Date(iso);
+  return `${weekdayDate(iso)}, ${two(x.getHours())}:${two(x.getMinutes())}`;
+}
+
 /** "from October 2026", for a dated profile part. */
-export const since = (iso: string | null) => (iso ? `from ${monthFmt.format(new Date(iso))}` : '');
+export const since = (iso: string | null) => { if (!iso) return ''; const p = parts(iso); return `from ${MONTHS_LONG[p.m]} ${p.y}`; };
 
 export function fractionDigits(currency: string): number {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
 }
 
+/** "CHF 89.00": always with the currency's cents, as a price tag has them. */
 export function money(minor: number, currency: string): string {
   const digits = fractionDigits(currency);
-  return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: digits, minimumFractionDigits: minor % 10 ** digits ? digits : 0 }).format(minor / 10 ** digits);
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: digits, minimumFractionDigits: digits }).format(minor / 10 ** digits);
 }
 
 /** What someone typed as a price ("12.50", "12,5", "1 200") in minor units; undefined if it is not a price. */
@@ -48,4 +76,5 @@ export const toMoneyText = (minor: number | null, currency: string | null) => {
 
 export const host = (link: string) => { try { return new URL(link).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
-export const celebrationLine = (c: Celebration) => [day(c.nextDate), c.place].filter(Boolean).join(' · ');
+/** "Fri 25.12.2026 · at Avó’s": a celebration's day and place. */
+export const celebrationLine = (c: Celebration) => [weekdayDate(c.nextDate), c.place].filter(Boolean).join(' · ');

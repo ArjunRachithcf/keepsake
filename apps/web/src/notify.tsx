@@ -6,7 +6,8 @@ import { api, message, type Notice as NoticeT, type Notices, type PushInfo, type
 import { day } from './format';
 import { b64uToBytes, browserOwner, freshSubscription, syncSubscription, type PushServer } from './push';
 import { useHousehold } from './household';
-import { Group, Link, Notice, Switch } from './ui';
+import { Avatar, Group, Link, Notice, Switch } from './ui';
+import { Icon } from './icons';
 
 function noticeText(n: NoticeT, you: (id: string | undefined) => string): { text: string; to: string | null } {
   const c = n.celebration;
@@ -34,34 +35,44 @@ function noticeText(n: NoticeT, you: (id: string | undefined) => string): { text
   }
 }
 
-/** The notices at the top of My wishes, while any is unread; "Seen" marks them read. */
+/** The notices at the top of My wishes, while any is unread; "Mark seen" marks them read. */
 export function NoticesGroup({ refresh }: { refresh: number }) {
   const { name, me } = useHousehold();
   const [data, setData] = useState<Notices | null>(null);
   const [all, setAll] = useState(false);
   const load = useCallback(async () => { try { setData(await api<Notices>('/notices')); } catch { setData(null); } }, []);
   useEffect(() => { void load(); }, [load, refresh]);
-  if (!data || (!data.unread && !all)) return data?.notices.length ? <p className="section"><button type="button" className="btn-text" onClick={() => setAll(true)}>Earlier news</button></p> : null;
+  if (!data || (!data.unread && !all)) return data?.notices.length ? <p><button type="button" className="btn btn-plain" onClick={() => setAll(true)}>Earlier news</button></p> : null;
   const shown = all ? data.notices : data.notices.filter((n) => !n.read);
   const seen = async () => { await api('/notices/read', { method: 'POST' }).catch(() => undefined); setAll(false); await load(); };
   return (
-    <Group title={all ? 'News' : `New (${data.unread})`} footer={data.unread ? <button type="button" className="btn-text" onClick={seen}>Seen</button> : undefined}>
+    <Group title={all ? 'News' : `New · ${data.unread}`} lead="sm"
+      head={data.unread ? <button type="button" className="btn btn-plain" onClick={() => void seen()}>Mark seen</button> : undefined}>
       {shown.map((n) => {
         const t = noticeText(n, (id) => (id ? name(id) : ''));
         // Your own sign-in's reset: call it off while it waits, or confirm it on your new device (Gate routes M1).
         const mine = n.person?.id === me.id && (n.kind === 'reset_asked' || n.kind === 'signin_reset');
-        const act = mine ? (
-          <button type="button" className="btn btn-sm" onClick={() => void (n.kind === 'reset_asked'
-            ? api(`/people/${me.id}/passkeys/reset`, { method: 'DELETE' })
-            : api('/me/reset/confirm', { method: 'POST' })).catch(() => undefined).then(load)}>
-            {n.kind === 'reset_asked' ? 'Call it off' : 'That was me'}
-          </button>
-        ) : null;
+        const lead = <span className="row-lead">{n.celebration ? <span className="poster-small poster-pine" style={{ width: 28, height: 28, borderRadius: 8 }} aria-hidden="true" />
+          : n.person ? <Avatar id={n.person.id} name={n.person.name} /> : <Icon name="bell" className="icon icon-md" />}</span>;
+        const text = <span className="row-main"><span className="row-title wrap">{t.text}</span><span className="row-sub">{day(n.on)}</span></span>;
+        if (mine) {
+          return (
+            <li key={n.id} className="row" data-row={n.id}>
+              {lead}{text}
+              <span className="row-trail">
+                <button type="button" className="btn btn-sm" onClick={() => void (n.kind === 'reset_asked'
+                  ? api(`/people/${me.id}/passkeys/reset`, { method: 'DELETE' })
+                  : api('/me/reset/confirm', { method: 'POST' })).catch(() => undefined).then(load)}>
+                  {n.kind === 'reset_asked' ? 'Call it off' : 'That was me'}
+                </button>
+              </span>
+            </li>
+          );
+        }
         return (
-          <li key={n.id} className="row">
-            {act}
-            {t.to ? <Link to={t.to} className="row-link"><span className="row-text"><span className="row-title">{t.text}</span><span className="row-sub">{day(n.on)}</span></span><span className="chevron" aria-hidden="true">›</span></Link>
-              : <span className="row-text"><span className="row-title">{t.text}</span><span className="row-sub">{day(n.on)}</span></span>}
+          <li key={n.id} data-row={n.id}>
+            {t.to ? <Link to={t.to} className="row row-link">{lead}{text}<Icon name="chevronRight" className="icon row-chev" /></Link>
+              : <div className="row">{lead}{text}</div>}
           </li>
         );
       })}
@@ -134,12 +145,14 @@ export function PushSwitch() {
       setOn(true);
     } catch (e) { setError(message(e)); }
   };
+  const phone = typeof navigator !== 'undefined' && /iPhone|Android.+Mobile/.test(navigator.userAgent);
   return (
-    <Group title="This device" footer={info.available
-      ? 'A notification says only “Something new in Keepsake”: never a gift, a wish or a name. Open Keepsake to see what it is.'
+    <Group title={phone ? 'This phone' : 'This device'} footer={info.available
+      ? undefined
       : 'This Keepsake does not send notifications. What is new shows on My wishes.'}>
-      {info.available && supported && <li className="row"><Switch label="Notifications" checked={on} onChange={(v) => void set(v)} /></li>}
-      {info.available && !supported && <li className="row"><span className="row-sub">This browser cannot show notifications from Keepsake (on an iPhone: add Keepsake to the Home Screen first).</span></li>}
+      {info.available && supported && <Switch row label="Notifications" checked={on} onChange={(v) => void set(v)}
+        hint="One a day at most, at 8:00. It says only “Something new in Keepsake”: never a gift or a person." />}
+      {info.available && !supported && <li className="row"><span className="row-sub wrap">This browser cannot show notifications from Keepsake (on an iPhone: add Keepsake to the Home Screen first).</span></li>}
       {error && <li className="row"><p className="row-error" role="alert">{error}</p></li>}
     </Group>
   );
@@ -156,9 +169,9 @@ export function RemindMe({ personId, name, days, onChanged }: { personId: string
   };
   return (
     <Group title="Remind me" footer={`A note on My wishes (and a notification, if this device has them) before each of ${name}’s celebrations, in the morning. Only you see it.`}>
-      <li className="row row-inline">
-        <label className="row-title" htmlFor={id}>Before {name}’s celebrations</label>
-        <select className="input input-short" id={id} value={days ?? ''} onChange={(e) => void set(e.target.value)}>
+      <li className="row">
+        <label className="row-main row-label wrap" htmlFor={id}>Before {name}’s celebrations</label>
+        <select className="select input-short" id={id} value={days ?? ''} onChange={(e) => void set(e.target.value)}>
           {REMIND.map((d) => <option key={String(d)} value={d ?? ''}>{d === null ? 'Off' : d === 1 ? 'A day before' : `${d} days before`}</option>)}
         </select>
       </li>
@@ -175,19 +188,19 @@ export function ThankYou({ thanks, onChanged }: { thanks: Thanks; onChanged: () 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (thanks.sent) return <p className="row-note">You said: “{thanks.sent.text}” ({day(thanks.sent.on)}{thanks.sent.by ? `, written by ${thanks.sent.by.name}` : ''})</p>;
-  if (!open) return <button type="button" className="btn btn-sm" onClick={() => setOpen(true)}>Say thank you<span className="sr-only"> for {thanks.wish.name}</span></button>;
+  if (!open) return <span className="ks-wish-actions"><button type="button" className="btn btn-sm" onClick={() => setOpen(true)}>Say thank you<span className="sr-only"> for {thanks.wish.name}</span></button></span>;
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true); setError(null);
     try { await api(`/wishes/${thanks.wish.id}/thanks`, { method: 'PUT', body: { text: text.trim() } }); onChanged(); } catch (err) { setError(message(err)); } finally { setBusy(false); }
   };
   return (
-    <form className="stack" onSubmit={send}>
+    <form className="ks-stack" onSubmit={send} style={{ marginTop: 10 }}>
       <label className="field-label" htmlFor={id}>Your thank-you</label>
-      <textarea className="input" id={id} rows={3} maxLength={500} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${id}-hint`} />
+      <textarea className="textarea" id={id} rows={3} maxLength={500} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${id}-hint`} />
       <p className="hint" id={`${id}-hint`}>It goes to everyone who gave it, also those who kept it a surprise. You will not learn who they are. Once sent, it stays.</p>
       {error && <Notice kind="error">{error}</Notice>}
-      <button type="submit" className="btn btn-primary" disabled={busy || !text.trim()} aria-busy={busy}>Send</button>
+      <div className="btn-row"><button type="submit" className="btn btn-primary" disabled={busy || !text.trim()} aria-busy={busy}>Send</button></div>
     </form>
   );
 }

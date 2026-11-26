@@ -28,4 +28,8 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   return data as T;
 }
 
-export const message = (e: unknown) => (e instanceof Error ? e.message : 'Something went wrong.');
+// The server writes its messages in lower case, to fit in a sentence; on their own they start with a capital.
+export const message = (e: unknown) => {
+  const m = e instanceof Error && e.message ? e.message : 'Something went wrong.';
+  return m.charAt(0).toUpperCase() + m.slice(1);
+};
