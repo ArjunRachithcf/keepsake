@@ -5,10 +5,14 @@
 // "Bought by", or nobody's imported reservation (Gate surprise H2: a skipped Bought row would be missing from its
 // person's list, which says it was bought). Applying
 // makes everything in one transaction, or nothing. Nothing of the file is kept but the wishes and claims it made: no
-// table holds it, no log gets it, and the plan names only what the admin needs to map.
+// table holds it, no log gets it, and the plan names only what the admin needs to map. One fingerprint stays: the
+// SHA-256 of the file's cells (setting `import.sha256:<hash>`), so the same file is never imported twice (409 "already imported": a
+// double click, a second tab). Applying is one synchronous transaction, so a second request waits for the first and
+// then finds its fingerprint.
 //
 // Spreadsheet formulas never come through: a cell that starts with =, +, -, @, a tab or a carriage return loses those
 // characters (CSV injection, should anything be exported to a sheet again), links must be http(s) and prices numbers.
+import { createHash } from 'node:crypto';
 import { and, count, eq, inArray, max } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { asDb, type Db } from '../db/open';
@@ -217,6 +221,9 @@ export function applyImport(db: Db, me: Person, i: ImportInput, tz = 'UTC'): { w
   adminOnly(me);
   return db.transaction((tx0) => {
     const tx = asDb(tx0);
+    // the file's cells, not its bytes: a byte order mark makes no other file
+    const seen = `import.sha256:${createHash('sha256').update(JSON.stringify(parseCsv(i.csv))).digest('hex')}`;
+    if (tx.select().from(t.setting).where(eq(t.setting.key, seen)).get()) throw new Refused(409, 'already imported');
     const { plan, make } = planOf(tx, i);
     if (!plan.ready) throw new Refused(409, 'map or skip every name in the file first');
     const now = new Date().toISOString();
@@ -237,6 +244,7 @@ export function applyImport(db: Db, me: Person, i: ImportInput, tz = 'UTC'): { w
       }
     }
     tx.insert(t.audit).values({ id: ulid(), at: now, actorId: me.id, action: 'imported', subjectId: ulid() }).run();
+    tx.insert(t.setting).values({ key: seen, value: now }).run();
     return { wishes: plan.wishes, claims: plan.claims, skipped: plan.skipped.length };
   });
 }

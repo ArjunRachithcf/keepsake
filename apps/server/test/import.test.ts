@@ -27,6 +27,29 @@ const everything = (db: Db) => JSON.stringify(['wish', 'claim', 'group_gift', 's
   .map((n) => db.$client.prepare(`select * from ${n}`).all()));
 
 describe('the sheet import', () => {
+  it('imports a file once: the same file again is refused (a double click, a second tab), even with other choices', async () => {
+    const { db, post } = await start();
+    const body = { csv: SAMPLE, people: { 'grandpa joe': null }, occasions: { Easter: 'c_xmas' } };
+    // two requests at once, as from a double click: one imports, the other finds it imported
+    const [a, b] = await Promise.all([post('/api/import', body), post('/api/import', body)]);
+    expect([a.statusCode, b.statusCode].sort(), a.body + b.body).toEqual([200, 409]);
+    expect((a.statusCode === 409 ? a : b).json().error).toBe('already imported');
+    const after = everything(db);
+    const again = await post('/api/import', { ...body, people: { 'grandpa joe': 'p_sam' } });
+    expect([again.statusCode, again.json().error]).toEqual([409, 'already imported']);
+    expect(everything(db)).toBe(after);
+    // the same cells with or without a byte order mark (a browser drops it when it reads the file): the same file
+    const resaved = await post('/api/import', { ...body, csv: SAMPLE.startsWith('\uFEFF') ? SAMPLE.slice(1) : `\uFEFF${SAMPLE}` });
+    expect([resaved.statusCode, resaved.json().error]).toEqual([409, 'already imported']);
+    // what stays of the file is its fingerprint only: no cell of it
+    const kept = db.select().from(t.setting).all().filter((x) => x.key.startsWith('import.'));
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.key).toMatch(/^import\.sha256:[0-9a-f]{64}$/);
+    // a different file still imports
+    const other = SAMPLE.replace('A two-person tent', 'A three-person tent');
+    expect((await post('/api/import', { ...body, csv: other })).statusCode).toBe(200);
+  });
+
   it('the dry run: the plan, and nothing written', async () => {
     const { db, post } = await start();
     const before = everything(db);
