@@ -8,7 +8,7 @@ import type { Config } from '../config';
 import { RESET_FRESH_MINUTES, type Data } from '../data';
 import { Refused } from '../errors';
 import type { Req, Res, Router } from '../router';
-import { object, text } from '../validate';
+import { object, plainText } from '../validate';
 
 export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAuthn, challenges: Challenges) {
   const standaloneOnly = () => {
@@ -29,7 +29,7 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
     const invite = data.auth.findInvite(b.token);
     if (!invite) throw new Refused(401, 'this link is unknown, used or expired');
     if (invite.kind === 'setup') {
-      const name = text(b, 'name', 60, { required: true })!.trim();
+      const name = plainText(b, 'name', 60, { required: true })!.trim();
       // The first admin's id is chosen now, so the authenticator's user handle is the person's id.
       const newPersonId = ulid();
       const { challenge, options } = await webauthn.registrationOptions({ userId: newPersonId, userName: name, exclude: [] });

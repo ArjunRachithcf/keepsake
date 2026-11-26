@@ -215,7 +215,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       },
       edit: (r: Req, id: string, patch: Partial<PersonInput>, confirmed: boolean) => {
         const by = admin(r);
-        if (patch.name !== undefined && !confirmed && !sameName(mustGetPerson(db, id).name, patch.name)) checkMemberName(db, by, patch.name);
+        if (patch.name !== undefined && !confirmed && !sameName(mustGetPerson(db, id).name, patch.name)) checkMemberName(db, by, patch.name, id);
         editPerson(db, id, patch);
       },
       /** Someone in a drawn draw leaves it first, under the re-draw rules (draws/draws.ts), in the same transaction. */

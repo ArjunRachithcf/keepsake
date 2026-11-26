@@ -97,7 +97,11 @@ function checkGuestName(db: Db, name: string): void {
  * The other way round (review L-b): a new member, or a new name, like a guest's that the caller already sees (the
  * guests of links they manage, so nobody learns of a link to their own wishes) is refused until confirmed.
  */
-export function checkMemberName(db: Db, me: Person, name: string): void {
+export function checkMemberName(db: Db, me: Person, name: string, self?: string): void {
+  // A member named like another (case, accents and characters that show nothing aside) reads as them (Gate routes L6).
+  if (db.select({ id: t.person.id, name: t.person.name }).from(t.person).all().some((p) => p.id !== self && sameName(p.name, name))) {
+    throw new Refused(409, 'someone in the household has a name like that: add something to tell them apart, or confirm');
+  }
   const guests = db.select().from(t.guestLink).where(isNull(t.guestLink.revokedAt)).all().filter((l) => managesLink(db, me, l));
   if (guests.some((l) => [l.guestName, l.kind === 'draw' ? l.label : null].some((g) => g && sameName(g, name)))) {
     throw new Refused(409, 'a guest by link has that name: add something to tell them apart, or confirm');

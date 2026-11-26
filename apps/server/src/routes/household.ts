@@ -5,7 +5,7 @@ import type { Config } from '../config';
 import type { Data } from '../data';
 import { Refused } from '../errors';
 import type { Req, Router } from '../router';
-import { bool, ids, object, oneOf, sizes, strings, text } from '../validate';
+import { bool, ids, object, oneOf, plainText, sizes, strings } from '../validate';
 
 export function householdRoutes(api: Router, cfg: Config, data: Data) {
   const admin = (r: Req) => {
@@ -30,7 +30,7 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
     admin(r);
     standalone();
     const b = object(r.body, ['name', 'role', 'confirmName']);
-    const id = data.people.add(r, { name: text(b, 'name', 60, { required: true })!, role: oneOf(b, 'role', ROLES, { required: true })! }, bool(b, 'confirmName') ?? false);
+    const id = data.people.add(r, { name: plainText(b, 'name', 60, { required: true })!, role: oneOf(b, 'role', ROLES, { required: true })! }, bool(b, 'confirmName') ?? false);
     res.created();
     return data.view(r).person(id);
   });
@@ -41,7 +41,7 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
     admin(r);
     standalone();
     const b = object(r.body, ['name', 'role', 'confirmName']);
-    data.people.edit(r, r.params.personId, { name: text(b, 'name', 60), role: oneOf(b, 'role', ROLES) }, bool(b, 'confirmName') ?? false);
+    data.people.edit(r, r.params.personId, { name: plainText(b, 'name', 60), role: oneOf(b, 'role', ROLES) }, bool(b, 'confirmName') ?? false);
     return data.view(r).person(r.params.personId);
   });
 
@@ -73,8 +73,8 @@ export function householdRoutes(api: Router, cfg: Config, data: Data) {
     const b = object(r.body, ['sizes', 'likes', 'pleaseNo']);
     data.people.setProfile(r, r.params.personId, {
       sizes: sizes(b),
-      likes: strings(b, 'likes', { maxItems: 50, maxLength: 80 }),
-      pleaseNo: strings(b, 'pleaseNo', { maxItems: 50, maxLength: 80 }),
+      likes: strings(b, 'likes', { maxItems: 50, maxLength: 80, plain: true }),
+      pleaseNo: strings(b, 'pleaseNo', { maxItems: 50, maxLength: 80, plain: true }),
     });
     return data.view(r).profile(r.params.personId);
   });

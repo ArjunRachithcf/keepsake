@@ -3,7 +3,7 @@ import { POSTERS } from '@keepsake/contracts';
 import type { CelebrationInput, Data } from '../data';
 import { Refused } from '../errors';
 import type { Router } from '../router';
-import { ids, isDate, nullableText, object, oneOf, text, type Body } from '../validate';
+import { ids, isDate, nullablePlainText, object, oneOf, plainText, type Body } from '../validate';
 
 const FIELDS = ['name', 'date', 'place', 'poster', 'recurrence', 'people'];
 const RECURRENCES = ['none', 'yearly'] as const;
@@ -14,9 +14,9 @@ function fields(b: Body, required: boolean): Partial<CelebrationInput> {
   const people = ids(b, 'people', { min: 1, max: 100 });
   if (required && !people) throw Refused.field('people', 'required');
   const out: Partial<CelebrationInput> = {
-    name: text(b, 'name', 60, { required }),
+    name: plainText(b, 'name', 60, { required }),
     date: b.date as string | undefined,
-    place: nullableText(b, 'place', 80),
+    place: nullablePlainText(b, 'place', 80),
     poster: oneOf(b, 'poster', POSTERS, { required }),
     recurrence: oneOf(b, 'recurrence', RECURRENCES, { required }),
     people,

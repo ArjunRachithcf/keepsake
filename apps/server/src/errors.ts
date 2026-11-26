@@ -69,6 +69,7 @@ export const MESSAGES = [
   'admins release an imported reservation', 'no such reservation',
   'this link was opened on another device: ask whoever sent it for a new address',
   'a guest by link has that name: add something to tell them apart, or confirm',
+  'someone in the household has a name like that: add something to tell them apart, or confirm',
   // the sheet import (M4, ADR 0005)
   'the file is not a CSV the importer reads', 'the file has more than 2000 rows', 'the file needs the columns Person and Item',
   'map or skip every name in the file first', 'people and occasions: names of up to 200 characters, each to an id or null',
@@ -99,6 +100,7 @@ export const TEMPLATES = [
   'a whole number from # to #', 'true or false', 'an id', 'an id, or null', '# to # ids', 'up to # texts of 1 to # characters',
   'a web address (http or https) of up to # characters', 'a web address (http or https)',
   'a web address (http or https) without a user name or password', 'one of @', '1 to # characters, without control characters',
+  'up to # characters without control characters, or null', 'up to # texts of 1 to # characters, without control characters',
   'up to # pairs of two ids', 'a date and time (ISO 8601 with a time zone), or null', 'a day (YYYY-MM-DD), or null',
 ] as const;
 export type Template = (typeof TEMPLATES)[number];
