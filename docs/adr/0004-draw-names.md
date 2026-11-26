@@ -122,8 +122,10 @@ pair, and the veils would lift).
   admin first got round "never an admin's"); then a lone admin made a "second admin", enrolled them from their own
   invite and had the yes at once. Now a reset needs a second admin's yes or a day; the yes counts only from someone who
   was an admin, with a passkey of their own, a week before the ask, whom the asker never added, changed the role of or
-  made a sign-in link for (decided by the person in the audit, not by their keys: a second re-attack rotated the key
-  away; a key made from one's own link inherits the lineage of the one that made it), and it is carried out an hour
+  made a sign-in link for, nor anyone those people made, at any depth (decided by the person in the audit, not by their
+  keys: a second re-attack rotated the key away, a third went one hop further, Alex → Helper → Helper Two; a key made
+  from one's own link inherits the lineage of the one that made it). Accepted: every admin descends from the setup
+  admin, so the setup admin's own asks always take the day, and it is carried out an hour
   after the yes at the earliest. Everyone is told, at the morning batch, when someone becomes an admin. Ending the
   person's sessions keeps their devices subscribed and tells them, and is refused while a reset waits (C2). An ask whose asker has gone is nobody's. At the ask,
   before anything is reset, the person is warned (a notice and a push to their devices, their sessions kept, so they

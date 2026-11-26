@@ -44,8 +44,8 @@ const audit = (db: Db) => db.select().from(t.audit).all().map((a) => [a.actorId,
 const notices = async (h: Home, who: string) => { await h.built.pusher.idle(); return ((await h.send('GET', '/api/notices', sessionCookie(h.db, who))).json().notices as { kind: string; person: { id: string }; by: { id: string } | null }[]).filter((n) => n.kind !== 'draw').map((n) => [n.kind, n.person?.id, n.by?.id]); };
 
 /** An invite from Alex, enrolled with a new passkey `cred`: the cookie of that sign-in. */
-async function enrolAs(h: Home, personId: string, cred: string) {
-  const inv = await h.send('POST', `/api/people/${personId}/invites`, h.fresh('p_alex'));
+async function enrolAs(h: Home, personId: string, cred: string, inviter = h.fresh('p_alex')) {
+  const inv = await h.send('POST', `/api/people/${personId}/invites`, inviter);
   expect(inv.statusCode, inv.body).toBe(201);
   const o = (await h.send('POST', '/api/auth/enrol/options', '', { token: inv.json().url.split('#')[1] })).json();
   const enrolled = await h.send('POST', '/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: cred, challenge: o.options.challenge }, label: 'New phone' });
@@ -241,5 +241,49 @@ describe('re-attack 2, C2 (probe): ending Sam\'s sessions first does not silence
     // His own sign-out everywhere ends the kept subscription too.
     expect((await h.send('POST', '/api/me/sessions/end', h.fresh('p_sam'))).statusCode).toBe(204);
     expect(subs()).toBe(0);
+  });
+});
+
+describe('re-attack 3, D1 (probe): no yes from anyone descended from the asker, at any depth', () => {
+  /** An admin made and enrolled by `maker` (a cookie), dated a month back: their sign-in cookie maker. */
+  async function made(h: Home, maker: string, name: string, cred: string) {
+    const r = await h.send('POST', '/api/people', maker, { name, role: 'admin' });
+    expect(r.statusCode, r.body).toBe(201);
+    const id = r.json().id as string;
+    await enrolAs(h, id, cred, maker);
+    h.db.update(t.person).set({ adminSince: MONTH_AGO }).where(eq(t.person.id, id)).run();
+    h.db.update(t.passkey).set({ createdAt: MONTH_AGO }).where(eq(t.passkey.personId, id)).run();
+    return { id, cookie: () => `__Host-keepsake_session=${createSession(h.db, id, cred).token}` };
+  }
+
+  it.each([2, 3])('Alex → Helper → … %i levels deep: the last one\'s yes does not count; the reset waits the day', async (depth) => {
+    const h = await start();
+    let maker = h.fresh('p_alex');
+    let last: Awaited<ReturnType<typeof made>> | undefined;
+    for (let i = 1; i <= depth; i++) { last = await made(h, maker, `Helper ${i}`, `cred-h${i}`); maker = last.cookie(); }
+    await reset(h, 'p_alex', 'p_sam');
+    const r = await h.send('POST', '/api/people/p_sam/passkeys/reset', last!.cookie());
+    expect(r.json()).toMatchObject({ state: 'asked', waitsFor: 'a_day', approvedBy: null });
+    h.db.update(t.passkeyReset).set({ approvedAt: hoursAgo(2) }).run();
+    expect((await reset(h, 'p_alex', 'p_sam')).json().state).toBe('asked');
+    expect(passkeysOf(h, 'p_sam')).toHaveLength(1);
+  });
+
+  it('an admin not descended from the asker still says yes, even one the asker\'s own Helper did not make; a cycle of makers ends', async () => {
+    const h = await start({ robinAdmin: true });
+    // Robin (an admin of a month, made by nobody here) makes Quinn; Alex makes Helper. Quinn is not Alex's.
+    const quinn = await made(h, h.fresh('p_robin'), 'Quinn', 'cred-q');
+    const helper = await made(h, h.fresh('p_alex'), 'Helper', 'cred-h');
+    // Rows that close cycles (Quinn → Alex, Helper → Helper) must not hang the walk, nor make Quinn Alex's.
+    h.db.insert(t.audit).values({ id: 'a_cycle', at: NOW, actorId: quinn.id, action: 'role_changed', subjectId: 'p_alex' }).run();
+    h.db.insert(t.audit).values({ id: 'a_cycle2', at: NOW, actorId: helper.id, action: 'invite_created', subjectId: helper.id }).run();
+    await reset(h, 'p_alex', 'p_sam');
+    expect((await h.send('POST', '/api/people/p_sam/passkeys/reset', quinn.cookie())).json()).toMatchObject({ approvedBy: { id: quinn.id }, waitsFor: 'an_hour' });
+    // And Robin herself, for another person's reset.
+    await reset(h, 'p_alex', 'p_mia');
+    expect((await reset(h, 'p_robin', 'p_mia')).json()).toMatchObject({ approvedBy: { id: 'p_robin' } });
+    // The other way round: Robin made Quinn and Quinn's row names Alex, so Alex descends from Robin and is not her yes.
+    await reset(h, 'p_robin', 'p_leo');
+    expect((await reset(h, 'p_alex', 'p_leo')).json()).toMatchObject({ approvedBy: null, waitsFor: 'a_day' });
   });
 });

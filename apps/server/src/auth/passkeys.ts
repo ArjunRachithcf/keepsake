@@ -133,16 +133,35 @@ export function openReset(db: Db, personId: string, now = new Date()): PasskeyRe
  */
 export function secondAdmin(db: Db, adminId: string, r: Pick<PasskeyReset, 'askedBy' | 'askedAt'>): boolean {
   if (!r.askedBy || adminId === r.askedBy) return false;
-  // Decided by the person, not their keys (Gate re-attack 2, C1): never anyone the asker added, changed the role of, or
-  // ever made a sign-in link for. Rotating a key would wash `invited_by` out; the audit keeps it.
-  const made = db.select({ id: t.audit.id }).from(t.audit).where(and(eq(t.audit.actorId, r.askedBy), eq(t.audit.subjectId, adminId),
-    inArray(t.audit.action, ['person_created', 'role_changed', 'invite_created']))).get();
-  if (made) return false;
+  // Decided by the person, not their keys (Gate re-attack 2, C1), at any depth (re-attack 3, D1): never anyone the asker
+  // made, or anyone someone the asker made made, and so on. Rotating a key would wash `invited_by` out; the audit keeps it.
+  if (descendantsOf(db, r.askedBy).has(adminId)) return false;
   const a = db.select().from(t.person).where(eq(t.person.id, adminId)).get();
   const before = new Date(Date.parse(r.askedAt) - RESET_SECOND_ADMIN_DAYS * 86_400_000).toISOString();
   if (!a || a.role !== 'admin' || !a.adminSince || a.adminSince > before) return false;
   const keys = db.select({ createdAt: t.passkey.createdAt, invitedBy: t.passkey.invitedBy }).from(t.passkey).where(eq(t.passkey.personId, adminId)).all();
   return keys.some((k) => k.createdAt <= before) && !keys.some((k) => k.invitedBy === r.askedBy);
+}
+
+/**
+ * Everyone reachable from `personId` through who made whom (Gate re-attack 3, D1): the subjects of their
+ * `person_created`, `role_changed` and `invite_created` audit rows, the people whose passkeys or own-device links name
+ * them in `invited_by`, and so on from each of those, cycles visited once. The setup admin, whom every other admin
+ * descends from, therefore never has a second admin's yes: their asks take the day.
+ */
+export function descendantsOf(db: Db, personId: string): Set<string> {
+  const edges = new Map<string, string[]>();
+  const add = (from: string | null, to: string | null) => { if (from && to && from !== to) edges.set(from, [...(edges.get(from) ?? []), to]); };
+  for (const a of db.select({ from: t.audit.actorId, to: t.audit.subjectId }).from(t.audit)
+    .where(inArray(t.audit.action, ['person_created', 'role_changed', 'invite_created'])).all()) add(a.from, a.to);
+  for (const k of db.select({ from: t.passkey.invitedBy, to: t.passkey.personId }).from(t.passkey).all()) add(k.from, k.to);
+  for (const i of db.select({ from: t.invite.invitedBy, to: t.invite.personId }).from(t.invite).all()) add(i.from, i.to);
+  const seen = new Set<string>();
+  const todo = [personId];
+  while (todo.length) {
+    for (const next of edges.get(todo.pop()!) ?? []) if (!seen.has(next) && next !== personId) { seen.add(next); todo.push(next); }
+  }
+  return seen;
 }
 
 /** The first moment a reset may be carried out: a day after the ask, or an hour after a second admin's yes. */
