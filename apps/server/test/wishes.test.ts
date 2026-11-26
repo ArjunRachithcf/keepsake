@@ -259,6 +259,18 @@ describe('names and entries shown to others (Gate routes L6)', () => {
     expect((await add('Sam K.')).statusCode).toBe(201);
     expect((await add('Sàm', true)).statusCode).toBe(201);
   });
+
+  it('blanks that are not spaces are refused, and look-alikes of other scripts wait for a confirmation (Gate re-attack)', async () => {
+    const add = (name: string, confirmName?: boolean) => as('alex').send('POST', '/api/people', { name, role: 'adult', ...(confirmName ? { confirmName } : {}) });
+    for (const name of ['Sam\u2800', '\u2800', 'Sa\u17B4m', 'Sam\u2028', 'Sam\u{1D159}'])
+      expect([JSON.stringify(name), (await add(name)).json().error]).toEqual([JSON.stringify(name), 'name: 1 to 60 characters, without control characters']);
+    const like = 'someone in the household has a name like that: add something to tell them apart, or confirm';
+    // Cyrillic а, Greek Α, a capital I inside a word, Cyrillic capitals
+    for (const name of ['S\u0430m', '\u0391lex', 'AIex', 'R\u041eBIN'])
+      expect(await add(name).then((r) => [name, r.statusCode, r.json().error])).toEqual([name, 409, like]);
+    expect((await add('Ian')).statusCode).toBe(201);
+    expect((await add('S\u0430m', true)).statusCode).toBe(201);
+  });
 });
 
 describe('limits', () => {

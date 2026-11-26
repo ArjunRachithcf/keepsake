@@ -81,11 +81,22 @@ export function createShareLink(db: Db, me: Person, personId: string, label: str
   return made;
 }
 
-/** A name as compared with the household's: case, accents, spacing and characters that show nothing (review L-b) aside. */
-export const sameName = (a: string, b: string) => {
-  const n = (s: string) => s.normalize('NFKD').replace(/[\p{M}\p{Default_Ignorable_Code_Point}]/gu, '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('en');
-  return n(a) === n(b);
-};
+/**
+ * Letters of other scripts that draw like a Latin one, the way UTS #39's skeleton folds them (Gate re-attack): Cyrillic
+ * and Greek look-alikes, a few Latin ones (dotless i, script a and g), and digits that pass for letters. Capitals that
+ * lower to a letter that no longer looks Latin (Cyrillic В, Н, М, Т, К; Greek Η, Ν, Β, Μ, Ρ…) fold before lowering.
+ */
+const LOOKS_UPPER: Record<string, string> = Object.fromEntries([...'АAВBЕEЅSІIЈJКKМMНHОOРPСCТTУYХXҮYԚQԜWΑAΒBΕEΖZΗHΙIΚKΜMΝNΟOΡPΤTΥYΧX'.matchAll(/(.)(.)/gu)].map((m) => [m[1], m[2]]));
+const LOOKS_LOWER: Record<string, string> = Object.fromEntries([...'аaеeоoрpсcуyхxѕsіiјjһhӏlүyԁdԛqԝwοoιiαaνvρpυuıiɑaɡg0o1l'.matchAll(/(.)(.)/gu)].map((m) => [m[1], m[2]]));
+/** The letters a name shows: case, accents, spacing, characters that show nothing (review L-b) and look-alikes aside. */
+export function nameSkeleton(s: string): string {
+  const bare = s.normalize('NFKD').replace(/[\p{M}\p{Default_Ignorable_Code_Point}]/gu, '').replace(/\s+/g, ' ').trim();
+  // A capital I between a letter and a small one reads as an l ("AIex"); "Ian" and "ROBIN" keep their i.
+  const upper = [...bare].map((c, i, all) => (c === 'I' && /\p{L}/u.test(all[i - 1] ?? '') && /\p{Ll}/u.test(all[i + 1] ?? '') ? 'l' : LOOKS_UPPER[c] ?? c)).join('');
+  return [...upper.toLocaleLowerCase('en')].map((c) => LOOKS_LOWER[c] ?? c).join('');
+}
+/** A name as compared with the household's: the same letters as nameSkeleton shows them. */
+export const sameName = (a: string, b: string) => nameSkeleton(a) === nameSkeleton(b);
 /** A guest's name never passes for someone of the household (review M2): their claims would read as that person's. */
 function checkGuestName(db: Db, name: string): void {
   if (db.select({ name: t.person.name }).from(t.person).all().some((p) => sameName(p.name, name))) {

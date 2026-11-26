@@ -22,9 +22,11 @@ export function text(b: Body, field: string, max: number, o: { required?: boolea
 /**
  * Characters that make a name read as another: control characters, and every format character (Cf: the bidi marks,
  * overrides and isolates, zero-width spaces and joiners, the word joiner, the soft hyphen, review L-b), and the
- * Hangul fillers, letters that show nothing.
+ * Hangul fillers, letters that show nothing, and the other characters that draw as a blank without being spaces that
+ * trim takes (Gate re-attack): the Braille blank, the Khmer inherent vowels, the line and paragraph separators, the
+ * musical null notehead and the halfwidth Hangul filler.
  */
-const CONTROL = /[\p{Cc}\p{Cf}\u115F\u1160\u3164\uFFA0]/u;
+const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115F\u1160\u17B4\u17B5\u2800\u3164\uFFA0\u{1D159}]/u;
 /** A name or label shown to others (a guest's, a link's): text without control, format or invisible characters. */
 export function plainText(b: Body, field: string, max: number, o: { required?: boolean } = {}): string | undefined {
   const v = text(b, field, max, o);

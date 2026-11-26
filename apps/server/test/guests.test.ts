@@ -814,6 +814,11 @@ describe('names that show nothing, and members named like guests (review L-b)', 
     const { sameName } = await import('../src/guests/guests');
     expect(sameName('Ro\u00ADbin', 'robin')).toBe(true);
     expect(sameName('Rob\u2060in', 'ROBIN')).toBe(true);
+    // Look-alikes of other scripts (Gate re-attack): a guest named with a Cyrillic о or a Braille blank is no other Robin.
+    expect((await as(h, 'gR').send('PUT', '/api/guest/name', { name: 'R\u043Ebin' })).json().error).toBe('someone in the household has that name: add something to tell them apart');
+    expect((await as(h, 'gR').send('PUT', '/api/guest/name', { name: 'Robin\u2800' })).json().error).toBe('name: 1 to 60 characters, without control characters');
+    expect(sameName('Gr\u0430ndp\u0430', 'grandpa')).toBe(true);
+    expect(sameName('Ian', 'lan')).toBe(false);
   });
 
   it('a new member (or a new name) like a guest the admin sees is refused until confirmed; a guest on the admin\'s own wishes never shows', async () => {
