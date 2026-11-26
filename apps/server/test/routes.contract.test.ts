@@ -105,6 +105,17 @@ describe('the HomersLab manifest', () => {
   });
 });
 
+describe('the HomersLab manifest: how it must be run (Gate routes, Info)', () => {
+  it('asks for the hardening docker-compose.yml and the smoke test use: a user not root, a read-only root, no capabilities, no new privileges', () => {
+    const m = parse(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'));
+    expect(m.runtime).toEqual({ run_as_non_root: true, read_only_root: true, tmpfs: ['/tmp'], cap_drop: ['ALL'], no_new_privileges: true, pids_limit: 64 });
+    const c = parse(readFileSync(new URL('../../../docker-compose.yml', import.meta.url), 'utf8')).services.keepsake;
+    expect([c.read_only, c.tmpfs, c.cap_drop, c.security_opt, c.pids_limit]).toEqual([true, ['/tmp'], ['ALL'], ['no-new-privileges:true'], 64]);
+    // A field HomersLab's manifest does not have yet is asked for, not claimed (Homeward #86).
+    expect(m.identity.household_api).toBe('requested');
+  });
+});
+
 describe('answers', () => {
   it('a JSON body that is not JSON is a 400 in the spec\'s shape', async () => {
     const db = household();
