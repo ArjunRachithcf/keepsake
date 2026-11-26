@@ -40,6 +40,15 @@ describe('reading a page', () => {
     expect(readPage('<metadata content="x" property="og:title"><meta property="og:title" content="Yes">').name).toBe('Yes');
   });
 
+  it('JSON-LD openers whose one close is far away: the close is looked for once, not once per opener (Gate routes L4)', () => {
+    const html = '<script type="application/ld+json">'.repeat(2000) + ' '.repeat(900_000) + '</script>';
+    const indexOf = String.prototype.indexOf;
+    let looked = 0;
+    String.prototype.indexOf = function (this: string, s: string, from?: number) { if (s === '</script') looked++; return indexOf.call(this, s, from); };
+    try { readPage(html); } finally { String.prototype.indexOf = indexOf; }
+    expect(looked).toBe(1);
+  });
+
   it('a price made to be slow is not (PR #12 review, M1): a 99 KB amount of dashes in JSON-LD', () => {
     const html = `<script type="application/ld+json">{"@type":"Product","name":"x","offers":{"price":"${'-'.repeat(99_000)}1","priceCurrency":"CHF"}}</script>`;
     const t = performance.now();

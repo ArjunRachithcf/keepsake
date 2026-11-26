@@ -78,9 +78,11 @@ export function readPage(html: string): Found {
   const page = html.slice(0, 1 << 20);
   const lower = page.toLowerCase();
   const found: Found = { name: null, amount: null, currency: null };
+  // The close found last is kept: openers before it share it, so it is looked for once, not once per opener (Gate routes L4).
+  let close = -1;
   for (const { tag, end } of tagsOf(page, lower, 'script')) {
     if ((attrs(tag).type ?? '').trim().toLowerCase() !== 'application/ld+json') continue;
-    const close = lower.indexOf('</script', end);
+    if (close < end) close = lower.indexOf('</script', end);
     // No end after this one: none after the later ones either (PR #12 review, L1).
     if (close < 0) break;
     if (close - end > 100_000) continue;
