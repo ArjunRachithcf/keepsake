@@ -26,7 +26,7 @@ export function text(b: Body, field: string, max: number, o: { required?: boolea
  * trim takes (Gate re-attack): the Braille blank, the Khmer inherent vowels, the line and paragraph separators, the
  * musical null notehead and the halfwidth Hangul filler.
  */
-const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115F\u1160\u17B4\u17B5\u2800\u3164\uFFA0\u{1D159}]/u;
+const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115F\u1160\u2800\u3164\uFFA0\u{1D159}]|\u17B4|\u17B5/u;
 /** A name or label shown to others (a guest's, a link's): text without control, format or invisible characters. */
 export function plainText(b: Body, field: string, max: number, o: { required?: boolean } = {}): string | undefined {
   const v = text(b, field, max, o);
