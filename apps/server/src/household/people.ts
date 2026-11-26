@@ -81,6 +81,11 @@ export function editPerson(db: Db, id: string, patch: Partial<PersonInput>): Per
 }
 
 /** A person's new name and role, and what follows from the role (managers, a former kid's waiting wishes). */
+/** How long someone demoted from admin still counts as one for passkey resets. */
+export const ADMIN_STAYS_DAYS = 30;
+/** An admin, or one demoted within ADMIN_STAYS_DAYS: their passkeys are never reset by another admin. */
+export const wasAdmin = (p: Pick<Person, 'role' | 'adminUntil'>, now = new Date()) => p.role === 'admin' || (p.adminUntil !== null && p.adminUntil > now.toISOString());
+
 function applyPerson(db: Db, p: Person, name: string, role: Role): void {
   const id = p.id;
   db.transaction((tx) => {
@@ -93,6 +98,9 @@ function applyPerson(db: Db, p: Person, name: string, role: Role): void {
     // put a passkey on someone else's account with one.
     if (p.role === 'admin' && role !== 'admin') {
       tx.delete(t.invite).where(and(eq(t.invite.createdBy, id), eq(t.invite.kind, 'admin'), isNull(t.invite.usedAt))).run();
+      // Still an admin for passkey resets for a while (Gate routes M1): demoting someone, resetting them and promoting
+      // them again would otherwise get round "never an admin's passkeys".
+      tx.update(t.person).set({ adminUntil: new Date(Date.now() + ADMIN_STAYS_DAYS * 86_400_000).toISOString() }).where(eq(t.person.id, id)).run();
     }
   });
 }

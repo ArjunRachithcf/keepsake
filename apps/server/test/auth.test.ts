@@ -364,12 +364,19 @@ describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
     expect(admin.statusCode).toBe(409);
     expect(admin.json().error).toBe('an admin recovers with keepsake recover');
     expect((await call('POST', '/api/people/p_nobody/passkeys/reset', pkSession('p_alex', 'pk1'))).statusCode).toBe(404);
-    // the reset: passkeys and sessions gone, then the usual invite works again
-    expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'))).statusCode).toBe(204);
+    // Alex is the household's one admin: the reset is asked, and waits a day (Gate routes M1); asking again changes nothing.
+    const asked = await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'));
+    expect([asked.statusCode, asked.json()]).toEqual([200, { state: 'asked', waitsFor: 'a_day', notBefore: expect.any(String), askedBy: { id: 'p_alex', name: 'Alex' } }]);
+    expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'))).json().state).toBe('asked');
+    expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toHaveLength(1);
+    // A day later: the reset, passkeys and sessions gone, then the usual invite works again.
+    hh.update(t.passkeyReset).set({ notBefore: new Date(Date.now() - 1000).toISOString() }).run();
+    expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'))).json().state).toBe('done');
     expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toEqual([]);
     expect((await call('GET', '/api/household', sams)).statusCode).toBe(401);
-    expect(hh.select().from(t.audit).all()).toEqual([expect.objectContaining({ actorId: 'p_alex', action: 'passkeys_reset', subjectId: 'p_sam' })]);
     expect((await call('POST', '/api/people/p_sam/invites', pkSession('p_alex', 'pk1'))).statusCode).toBe(201);
+    expect(hh.select().from(t.audit).all().map((x) => [x.actorId, x.action, x.subjectId])).toEqual([
+      ['p_alex', 'reset_asked', 'p_sam'], ['p_alex', 'passkeys_reset', 'p_sam'], ['p_alex', 'invite_created', 'p_sam']]);
   });
 
   it('an admin who stops being one takes their unused invites along', async () => {

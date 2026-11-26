@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "5055e4e4-4860-4af2-ba80-e1a6f182dee2",
+  "id": "9370e588-5685-492f-8a94-75f88102c7bb",
   "prevId": "280d9e3d-8e7e-4b6c-a61d-580d22bf5f1b",
   "tables": {
     "audit": {
@@ -58,7 +58,7 @@
       "checkConstraints": {
         "audit_action": {
           "name": "audit_action",
-          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued')"
+          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued', 'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed')"
         }
       }
     },
@@ -1756,7 +1756,7 @@
       "checkConstraints": {
         "notice_kind": {
           "name": "notice_kind",
-          "value": "\"notice\".\"kind\" IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked')"
+          "value": "\"notice\".\"kind\" IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset')"
         }
       }
     },
@@ -1866,6 +1866,113 @@
           "tableTo": "person",
           "columnsFrom": [
             "invited_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "passkey_reset": {
+      "name": "passkey_reset",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "person_id": {
+          "name": "person_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "asked_by": {
+          "name": "asked_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "asked_at": {
+          "name": "asked_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "not_before": {
+          "name": "not_before",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "done_at": {
+          "name": "done_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "done_by": {
+          "name": "done_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "passkey_reset_person": {
+          "name": "passkey_reset_person",
+          "columns": [
+            "person_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "passkey_reset_person_id_person_id_fk": {
+          "name": "passkey_reset_person_id_person_id_fk",
+          "tableFrom": "passkey_reset",
+          "tableTo": "person",
+          "columnsFrom": [
+            "person_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "passkey_reset_asked_by_person_id_fk": {
+          "name": "passkey_reset_asked_by_person_id_fk",
+          "tableFrom": "passkey_reset",
+          "tableTo": "person",
+          "columnsFrom": [
+            "asked_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "passkey_reset_done_by_person_id_fk": {
+          "name": "passkey_reset_done_by_person_id_fk",
+          "tableFrom": "passkey_reset",
+          "tableTo": "person",
+          "columnsFrom": [
+            "done_by"
           ],
           "columnsTo": [
             "id"
@@ -2031,6 +2138,20 @@
         },
         "last_seen_at": {
           "name": "last_seen_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "admin_until": {
+          "name": "admin_until",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "draws_sealed_at": {
+          "name": "draws_sealed_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

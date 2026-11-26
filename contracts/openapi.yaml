@@ -223,15 +223,41 @@ paths:
       tags: [sign-in]
       operationId: resetPasskeys
       summary: >-
-        Removes the passkeys of someone who lost every device, ending their sessions and spending their open links;
-        then an admin sends the usual invite. An admin who signed in with a passkey in the last 5 minutes, for someone
-        who is not an admin (an admin recovers with `keepsake recover`). Recorded in the audit table. Standalone.
+        For someone who lost every device: the first call asks for a reset; it is carried out when another admin makes
+        the same call, or, in a household with one admin, when its asker calls again a day later (Gate routes M1).
+        Carried out, it removes their passkeys, ends their sessions and spends their open links; then an admin sends
+        the usual invite, and their draws stay sealed to them until they confirm on their new device. An admin who
+        signed in with a passkey in the last 5 minutes, for someone who is not and was not lately an admin (an admin
+        recovers with `keepsake recover`). The person and the other admins are told when it is asked, the person and
+        the people of their open draws when it is done. Audited. Standalone.
       responses:
-        '204': { description: Their passkeys and sessions are gone }
+        '200':
+          description: The reset, asked or done
+          content: { application/json: { schema: { $ref: '#/components/schemas/PasskeyReset' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [sign-in]
+      operationId: cancelPasskeyReset
+      summary: Calls off a reset that waits (the person, from a device they still have, or any admin; a sign-in of the last 10 minutes). Audited. Standalone
+      responses:
+        '204': { description: Called off }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/reset/confirm:
+    post:
+      tags: [sign-in]
+      operationId: confirmPasskeyReset
+      summary: On the new device, the person whose passkeys were reset confirms it; their draws open to them again (a sign-in of the last 10 minutes). Audited. Standalone
+      responses:
+        '204': { description: Confirmed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /household:
     get:
@@ -1818,15 +1844,26 @@ components:
       description: 'A pointer to something new (ADR 0010): question, its person''s question reached them (a kid''s: their parents); answered, the caller''s question was answered; draw, names drawn (or drawn again, or cleared); remind, a celebration coming (person: whose, for "Remind me"); reveal, a draw''s pairs show; say_thanks, gifts reached the caller; thanked, someone thanked the caller (person: whose gift)'
       type: object
       additionalProperties: false
-      required: [id, kind, on, read, celebration, person, question]
+      required: [id, kind, on, read, celebration, person, question, by]
       properties:
         id: { type: string }
-        kind: { type: string, enum: [question, answered, draw, remind, reveal, say_thanks, thanked] }
+        kind: { type: string, enum: [question, answered, draw, remind, reveal, say_thanks, thanked, reset_asked, signin_reset], description: 'reset_asked: someone asked to reset the sign-in of `person` (to them and the other admins); signin_reset: it was reset (to them and the people of their open draws); `by`: who asked' }
         on: { $ref: '#/components/schemas/Day' }
         read: { type: boolean }
         celebration: { anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
         person: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
         question: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+        by: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+
+    PasskeyReset:
+      type: object
+      additionalProperties: false
+      required: [state, waitsFor, notBefore, askedBy]
+      properties:
+        state: { type: string, enum: [asked, done] }
+        waitsFor: { type: [string, 'null'], enum: [another_admin, a_day, null], description: 'Asked: another admin''s yes, or (one admin) a day' }
+        notBefore: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }], description: 'One admin: when its asker may carry it out' }
+        askedBy: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
 
     Notices:
       type: object
@@ -2344,13 +2381,14 @@ components:
           anyOf:
             - type: object
               additionalProperties: false
-              required: [opened, canOpen, receiver, receiverGuest, unreadable]
+              required: [opened, canOpen, receiver, receiverGuest, unreadable, sealed]
               properties:
                 opened: { type: boolean }
                 canOpen: { type: boolean }
                 receiver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
                 receiverGuest: { type: boolean, description: 'Their person is a guest (no list in Keepsake)' }
                 unreadable: { type: boolean, description: 'Their row does not open with the keys on the server (a lost key): the host draws again' }
+                sealed: { type: boolean, description: 'Their passkeys were reset: the draw stays sealed to them until they confirm the reset on their new device (Gate routes M1)' }
             - { type: 'null' }
         pairs:
           description: 'Every giver and their person: only after the reveal date, only for the participants and the host'

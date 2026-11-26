@@ -14,6 +14,7 @@ export type OneTimeLink = S['OneTimeLink'];
 export type Household = S['Household'];
 export type Passkey = S['Passkey'];
 export type Passkeys = S['Passkeys'];
+export type PasskeyReset = S['PasskeyReset'];
 export type Size = S['Size'];
 export type Profile = S['Profile'];
 export type ProfileInput = S['ProfileInput'];

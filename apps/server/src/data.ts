@@ -11,12 +11,13 @@ import type { Config } from './config';
 import type { Db } from './db/open';
 import { callerOf } from './auth/hook';
 import { createInvite, findInvite } from './auth/invites';
-import { credentialsOf, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, RESET_FRESH_MINUTES, usedPasskey } from './auth/passkeys';
+import { cancelReset, confirmReset, credentialsOf, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, RESET_FRESH_MINUTES, usedPasskey } from './auth/passkeys';
 import { createSession, endAllSessions, endSession, isFresh, SESSION_COOKIE } from './auth/sessions';
 import type { NewCredential } from './auth/webauthn';
 import { addCelebration, canChange, editCelebration, getCelebration, mustGetCelebration, removeCelebration, settlePastCelebrations, type CelebrationInput } from './celebrations/celebrations';
 import { today } from './celebrations/dates';
 import { Refused } from './errors';
+import { ulid } from 'ulid';
 import {
   addPerson, currency, editPerson, hasPasskey, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
   type Person, type PersonInput,
@@ -39,7 +40,7 @@ import {
   checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endDeviceSessions, forgetLink, getLink, GUEST_COOKIE, GUEST_DAYS, reissueLink, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
   startGuestSession, type GuestLink,
 } from './guests/guests';
-import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
+import { addGuest, guestLeaves, openDrawAsGuest, openDrawPeopleOf } from './draws/draws';
 import { claimFor, setClaimStateFor, unclaimFor } from './gifts/gifts';
 import { applyImport, dryRun, type ImportInput } from './import/import';
 import { createEgress, type Egress } from './net/egress';
@@ -176,7 +177,12 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
         const p = kind === 'admin' ? admin(r) : me(r);
         if (kind === 'self' && personId !== p.id) throw new Refused(403, 'not allowed');
         fresh(r);
-        return linkAnswer(fastifyRequestOf(r), createInvite(db, cfg, { kind, personId: mustGetPerson(db, personId).id, createdBy: p.id }));
+        // Audited (Gate routes M1): whoever holds an invite link can put a passkey on that account.
+        return atomically(() => {
+          const made = createInvite(db, cfg, { kind, personId: mustGetPerson(db, personId).id, createdBy: p.id });
+          db.insert(t.audit).values({ id: ulid(), at: new Date().toISOString(), actorId: p.id, action: 'invite_created', subjectId: personId }).run();
+          return linkAnswer(fastifyRequestOf(r), made);
+        });
       },
       credentialsOf: (personId: string) => credentialsOf(db, personId),
       enrol: (o: { inviteId: string; name?: string; newPersonId?: string }, cred: NewCredential, label: string) => enrol(db, cfg, o, cred, label),
@@ -200,11 +206,22 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
         endAllSessions(db, p.id);
       },
       /** An admin with a passkey sign-in of the last RESET_FRESH_MINUTES resets someone's passkeys. */
+      /** Asks, or (a second admin's yes, or the asker a day later with one admin) carries out a reset (Gate routes M1). */
       resetPasskeys: (r: Req, personId: string) => {
         const by = admin(r);
         fresh(r, RESET_FRESH_MINUTES);
-        resetPasskeys(db, by.id, personId);
+        resetPasskeys(db, by.id, personId, (kind, id, people) => tellLater(kind, id, { people }), (id) => openDrawPeopleOf(db, id, day()));
+        return viewOf(r).passkeyReset(personId);
       },
+      /** The person themselves (a device they still have) or any admin calls off a reset that waits. */
+      cancelReset: (r: Req, personId: string) => {
+        const by = me(r);
+        if (by.id !== personId && by.role !== 'admin') throw new Refused(403, 'admins only');
+        fresh(r);
+        cancelReset(db, by.id, mustGetPerson(db, personId).id);
+      },
+      /** On their new device, the person confirms the reset: their draws open to them again. */
+      confirmReset: (r: Req) => { fresh(r); confirmReset(db, me(r).id); },
     },
     people: {
       /** A name like a guest's the admin sees is refused until confirmed (review L-b). */
@@ -216,7 +233,12 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       edit: (r: Req, id: string, patch: Partial<PersonInput>, confirmed: boolean) => {
         const by = admin(r);
         if (patch.name !== undefined && !confirmed && !sameName(mustGetPerson(db, id).name, patch.name)) checkMemberName(db, by, patch.name, id);
-        editPerson(db, id, patch);
+        atomically(() => {
+          const was = mustGetPerson(db, id).role;
+          editPerson(db, id, patch);
+          // Audited (Gate routes M1): a demotion before a reset was how "never an admin's passkeys" was got round.
+          if (patch.role && patch.role !== was) db.insert(t.audit).values({ id: ulid(), at: new Date().toISOString(), actorId: by.id, action: 'role_changed', subjectId: id }).run();
+        });
       },
       /** Someone in a drawn draw leaves it first, under the re-draw rules (draws/draws.ts), in the same transaction. */
       remove: (r: Req, id: string) => drawsTold(r, () => {

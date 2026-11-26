@@ -16,6 +16,10 @@ export const person = sqliteTable('person', {
    * leaves, so nobody it has not shown for 30 days is pushed (Gate surprise L5). Standalone: null.
    */
   lastSeenAt: text('last_seen_at'),
+  /** Demoted from admin: still counts as one for passkey resets until then (Gate routes M1: no demote, reset, promote). */
+  adminUntil: text('admin_until'),
+  /** Their passkeys were reset: their draws stay sealed to them until they confirm the reset on their new device. */
+  drawsSealedAt: text('draws_sealed_at'),
 }, (t) => [
   uniqueIndex('person_external_id').on(t.externalId),
   check('person_role', sql`${t.role} IN ('admin', 'adult', 'kid')`),
@@ -34,6 +38,22 @@ export const setting = sqliteTable('setting', {
 });
 
 // Standalone sign-in (Philobiblos ADR 0010): passkeys, sessions and one-time links. Tokens are stored as SHA-256.
+/**
+ * An admin's reset of someone's passkeys (Gate routes M1, decided by Arjun): it happens once a second admin says yes
+ * or, in a household with one admin, a day after it was asked (`notBefore`). The person and the other admins are told
+ * when it is asked; the person and the people of their open draws when it is done.
+ */
+export const passkeyReset = sqliteTable('passkey_reset', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  askedBy: text('asked_by').references(() => person.id, { onDelete: 'set null' }),
+  askedAt: text('asked_at').notNull(),
+  /** null: waits for another admin's yes; else the moment the asker may carry it out alone. */
+  notBefore: text('not_before'),
+  doneAt: text('done_at'),
+  doneBy: text('done_by').references(() => person.id, { onDelete: 'set null' }),
+}, (t) => [index('passkey_reset_person').on(t.personId)]);
+
 export const passkey = sqliteTable('passkey', {
   id: text('id').primaryKey(),
   personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
@@ -148,6 +168,8 @@ export const AUDIT_ACTIONS = [
   // M4: an admin removed a question (never who asked it); guest links made, opened (on their one device) and revoked;
   // a sheet imported; an admin released an imported reservation.
   'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued',
+  // The Gate (routes M1): every step of taking over a sign-in is audited, and a reset needs a second admin or a day.
+  'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed',
 ] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
@@ -442,7 +464,7 @@ export const idea = sqliteTable('idea', {
 export const notice = sqliteTable('notice', {
   id: text('id').primaryKey(),
   personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
-  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked'] }).notNull(),
+  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset'] }).notNull(),
   subjectId: text('subject_id').notNull(),
   /** remind: whose celebration ("Remind me" about someone); null for one's own celebrations. */
   aboutId: text('about_id').references(() => person.id, { onDelete: 'cascade' }),
@@ -450,7 +472,7 @@ export const notice = sqliteTable('notice', {
   readAt: text('read_at'),
 }, (t) => [
   index('notice_person').on(t.personId, t.day),
-  check('notice_kind', sql`${t.kind} IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked')`),
+  check('notice_kind', sql`${t.kind} IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset')`),
 ]);
 
 /**
@@ -504,7 +526,7 @@ export const thankYou = sqliteTable('thank_you', {
  */
 export const pendingNotice = sqliteTable('pending_notice', {
   id: text('id').primaryKey(),
-  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked'] }).notNull(),
+  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset'] }).notNull(),
   subjectId: text('subject_id').notNull(),
   day: text('day').notNull(),
   again: integer('again').notNull().default(0),

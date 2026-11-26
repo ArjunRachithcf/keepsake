@@ -39,7 +39,7 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
 
   // In spec order, as the household's admin (public operations without credentials). Under HomersLab, people and
   // passkeys are HomersLab's: those answer 409 or 404, which the spec declares.
-  const elsewhere = new Set(['addPerson', 'editPerson', 'removePerson', 'invitePerson', 'inviteSelf', 'listPasskeys', 'removePasskey', 'signOutEverywhere', 'endSessions', 'resetPasskeys']);
+  const elsewhere = new Set(['addPerson', 'editPerson', 'removePerson', 'invitePerson', 'inviteSelf', 'listPasskeys', 'removePasskey', 'signOutEverywhere', 'endSessions', 'resetPasskeys', 'cancelPasskeyReset', 'confirmPasskeyReset']);
   it.each(ops.map((o) => [`${o.method} ${o.path} (${o.op.operationId})`, o] as const))('%s', async (_name, o) => {
     const req = request(o);
     // Signing out everywhere would end the admin's sessions for the operations after it: someone else signs out.
@@ -50,6 +50,8 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
       if (mode === 'homerslab' && elsewhere.has(o.op.operationId)) expect([404, 409], res.body).toContain(res.statusCode);
       // A share-link guest has no draw to open: the spec's 404.
       else if (o.op.operationId === 'openGuestDraw') expect(res.statusCode, res.body).toBe(404);
+      // Nobody reset Alex: nothing to confirm (Gate routes M1), the spec's 404.
+      else if (o.op.operationId === 'confirmPasskeyReset') expect(res.statusCode, res.body).toBe(404);
       // Guest links wait for HomersLab's edge (Homeward #317): refused there.
       else if (mode === 'homerslab' && ['shareLink', 'inviteGuest', 'reissueLink'].includes(o.op.operationId)) expect(res.statusCode, res.body).toBe(409);
       else expect(res.statusCode, res.body).toBeLessThan(300);

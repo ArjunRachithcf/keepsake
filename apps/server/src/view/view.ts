@@ -34,7 +34,7 @@ import { getIdea, ideasFor, seesIdeas } from '../ideas/ideas';
 import { getLink, lastDayOf, linksFor, managesLink, reachOf, reaches, type GuestLink } from '../guests/guests';
 import { guestPlace } from '../draws/draws';
 import type { Plan } from '../import/import';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { noticesOf, type Notice } from '../notices/notices';
 import { usableVapid } from '../push/keys';
 import { getThankYou, thankedBy, thankYouFor } from '../thanks/thanks';
@@ -345,7 +345,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
    * gone, a thank-you for a gift no longer theirs: dropped).
    */
   const noticeOf = (n: Notice): api.Notice[] => {
-    const base = { id: n.id, kind: n.kind, on: n.day, read: n.readAt !== null, celebration: null, person: null, question: null };
+    const base = { id: n.id, kind: n.kind, on: n.day, read: n.readAt !== null, celebration: null, person: null, question: null, by: null };
     switch (n.kind) {
       case 'question': {
         const q = getQuestion(db, n.subjectId);
@@ -367,6 +367,12 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         return c ? [{ ...base, celebration: c, person: n.aboutId ? ref(n.aboutId) : null }] : [];
       }
       case 'say_thanks': return [{ ...base, celebration: n.subjectId === 'any' ? null : celebrationRef(n.subjectId) }];
+      // Whose sign-in, and who asked to reset it (Gate routes M1): to the person, the other admins, the people of their draws.
+      case 'reset_asked': case 'signin_reset': {
+        const x = db.select().from(t.passkeyReset).where(eq(t.passkeyReset.id, n.subjectId)).get();
+        const p = x ? ref(x.personId) : null;
+        return x && p ? [{ ...base, person: p, by: x.askedBy ? ref(x.askedBy) : null }] : [];
+      }
       case 'thanked': {
         const ty = getThankYou(db, n.subjectId);
         const mine = ty ? thankedList().find((x) => x.id === ty.id) : undefined;
@@ -385,6 +391,15 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
      */
     orderable: (personId: string): string[] => present(seen(wishesOf(db, [personId])))
       .filter(({ w }) => w.state === 'listed' || w.state === 'awaiting_parent').map(({ w }) => w.id),
+    /** A passkey reset of this person as an admin sees it (Gate routes M1): asked (waiting for what) or done. */
+    passkeyReset: (personId: string): Viewed<api.PasskeyReset> => {
+      const x = db.select().from(t.passkeyReset).where(eq(t.passkeyReset.personId, personId)).orderBy(desc(t.passkeyReset.askedAt)).limit(1).get();
+      if (!x) throw new Refused(404, 'no reset is waiting');
+      return answer({
+        state: x.doneAt ? 'done' : 'asked', waitsFor: x.doneAt ? null : x.notBefore ? 'a_day' : 'another_admin',
+        notBefore: x.doneAt ? null : x.notBefore, askedBy: x.askedBy ? ref(x.askedBy) : null,
+      });
+    },
     signedIn: (): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),
     household: (): Viewed<api.Household> => answer({
       mode: cfg.mode, me: person(viewer), people: [...people().values()].map(person), currency: currency(db),
@@ -468,9 +483,11 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       const mine = ps.find(isMine);
       const revealed = revealedNow(db, c, d, now);
       // A row that does not open with the keys here (a lost or rotated key) is only its own giver's problem.
-      const own = mine?.openedAt && d.drawnAt ? openOwn(db, ring(), d, mine) : null;
+      // Reset and not confirmed yet on the new device (Gate routes M1): the draw stays sealed to them, pairs included.
+      const sealed = viewer.drawsSealedAt !== null;
+      const own = !sealed && mine?.openedAt && d.drawnAt ? openOwn(db, ring(), d, mine) : null;
       const receiver = own === 'unreadable' ? null : own;
-      const pairs = revealed && d.drawnAt && (mine || manages)
+      const pairs = !sealed && revealed && d.drawnAt && (mine || manages)
         ? [...openAll(db, ring(), d)].map(([g, r]) => ({ giver: pref(g), receiver: r ? pref(r) : null })).sort((a, b) => byName(a.giver, b.giver))
         : null;
       return answer({
@@ -489,7 +506,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         canManage: manages,
         canRedraw: manages && canRedraw(db, viewer, c, d, now),
         mine: mine ? {
-          opened: mine.openedAt !== null, canOpen: mine.openedAt === null && opensNow(d, instant), receiver: receiver ? pref(receiver) : null,
+          opened: mine.openedAt !== null, canOpen: !sealed && mine.openedAt === null && opensNow(d, instant), receiver: receiver ? pref(receiver) : null, sealed,
           receiverGuest: receiver ? byId.get(receiver)?.kind === 'guest' : false,
           unreadable: own === 'unreadable',
         } : null,

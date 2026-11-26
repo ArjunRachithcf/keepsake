@@ -88,6 +88,35 @@ describe('migrations', () => {
     }
   });
 
+  it('0005 (the Gate) keeps an M5 database\'s notices and audit rows (both tables are rebuilt for their new kinds)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'keepsake-mig-'));
+    try {
+      mkdirSync(join(dir, 'meta'));
+      const journal = JSON.parse(readFileSync(join(drizzleDir, 'meta/_journal.json'), 'utf8')) as { entries: { idx: number; tag: string }[] };
+      const m5 = journal.entries.filter((e) => e.idx <= 4);
+      writeFileSync(join(dir, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: m5 }));
+      for (const e of m5) copyFileSync(join(drizzleDir, `${e.tag}.sql`), join(dir, `${e.tag}.sql`));
+      const file = join(dir, 'k.sqlite');
+      process.env.KEEPSAKE_MIGRATIONS_DIR = dir;
+      const c = openDb(file).$client;
+      const at = '2026-11-01T10:00:00.000Z';
+      c.prepare("insert into person (id, name, role, created_at) values ('p1','A','admin',?),('p2','B','adult',?)").run(at, at);
+      c.prepare("insert into notice (id, person_id, kind, subject_id, about_id, day, read_at) values ('n1','p1','remind','c1','p2','2026-12-17',null),('n2','p2','thanked','ty1',null,'2026-12-26',?)").run(at);
+      c.prepare("insert into audit (id, at, actor_id, action, subject_id) values ('a1',?,'p1','passkeys_reset','p2'),('a2',?,'p1','link_reissued','l1')").run(at, at);
+      c.close();
+      delete process.env.KEEPSAKE_MIGRATIONS_DIR;
+      const now = openDb(file).$client;
+      expect(now.prepare('select id, person_id, kind, about_id, read_at from notice order by id').all()).toEqual([
+        { id: 'n1', person_id: 'p1', kind: 'remind', about_id: 'p2', read_at: null }, { id: 'n2', person_id: 'p2', kind: 'thanked', about_id: null, read_at: at }]);
+      expect(now.prepare('select id, action from audit order by id').all()).toEqual([{ id: 'a1', action: 'passkeys_reset' }, { id: 'a2', action: 'link_reissued' }]);
+      expect(now.prepare('select last_seen_at, admin_until, draws_sealed_at from person where id = ?').get('p1')).toEqual({ last_seen_at: null, admin_until: null, draws_sealed_at: null });
+      now.close();
+    } finally {
+      delete process.env.KEEPSAKE_MIGRATIONS_DIR;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('the latest snapshot is in sync with the schema', async () => {
     const journal = JSON.parse(readFileSync(join(drizzleDir, 'meta/_journal.json'), 'utf8')) as { entries: { idx: number }[] };
     const snapshot = JSON.parse(readFileSync(join(drizzleDir, 'meta', `${String(journal.entries.at(-1)!.idx).padStart(4, '0')}_snapshot.json`), 'utf8'));

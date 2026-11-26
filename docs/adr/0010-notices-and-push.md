@@ -16,7 +16,8 @@ something is new.
 - **Only what the person may know makes a notice**: a question that reached them (a kid's: their parents), the answer
   to their own question, names drawn, drawn again or cleared in a draw they are in, a celebration a week away (its
   people), "Remind me", a draw's reveal date (its people and host), gifts that reached them (after the occasion, as
-  `thanks` shows them), a thank-you for a gift they gave. Never a claim, a share, an idea, a question on its way or its
+  `thanks` shows them), a thank-you for a gift they gave, a reset of a sign-in (Gate routes M1: asked, to its person
+  and the other admins; done, to its person and the people of their open draws, with who asked, `by`). Never a claim, a share, an idea, a question on its way or its
   asker, someone else's reminder, or a pair. The twin-household matrices of M2–M4 read `/api/notices` after running
   the batch, and count the pushes each person was sent, so a notice or a push that followed a hidden thing fails them.
 - **A push is one fixed message**: `{"v":1}`, encrypted (RFC 8291, aes128gcm, padded) for every device, so the push

@@ -73,7 +73,7 @@ describe('setting up a draw', () => {
     expect((await as('mia').send('POST', '/api/celebrations/c_cousins/draw', body)).statusCode).toBe(403);
     const ok = await as('alex').send('POST', '/api/celebrations/c_cousins/draw', body);
     expect(ok.statusCode, ok.body).toBe(201);
-    expect(ok.json()).toMatchObject({ drawn: false, opened: 0, total: 3, canManage: true, revealOn: null, exclusions: [], mine: { opened: false, canOpen: false, receiver: null, unreadable: false } });
+    expect(ok.json()).toMatchObject({ drawn: false, opened: 0, total: 3, canManage: true, revealOn: null, exclusions: [], mine: { opened: false, canOpen: false, receiver: null, unreadable: false, sealed: false } });
     expect((await as('alex').send('POST', '/api/celebrations/c_cousins/draw', body)).json()).toEqual({ error: 'this celebration has a draw already' });
     // a celebration whose host left: the admins run it
     db.update(t.celebration).set({ hostId: null }).where(eq(t.celebration.id, 'c_cousins')).run();
@@ -150,7 +150,7 @@ describe('drawing the names', () => {
     expect((await as('sam').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'the names are not drawn yet' });
     const r = await as('alex').send('POST', `${DRAW}/run`);
     expect(r.statusCode, r.body).toBe(200);
-    expect(r.json()).toMatchObject({ drawn: true, opened: 0, total: 5, mine: { opened: false, canOpen: true, receiver: null, unreadable: false }, pairs: null });
+    expect(r.json()).toMatchObject({ drawn: true, opened: 0, total: 5, mine: { opened: false, canOpen: true, receiver: null, unreadable: false, sealed: false }, pairs: null });
     expect((await as('leo').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'you are not in this draw' });
     const received = new Set<string>();
     for (const who of ['sam', 'robin', 'quinn', 'mia', 'alex'] as const) {
@@ -174,7 +174,7 @@ describe('drawing the names', () => {
     const as = await start(db);
     await as('alex').send('PATCH', DRAW, { drawTogetherAt: new Date(Date.now() + 3_600_000).toISOString() });
     await as('alex').send('POST', `${DRAW}/run`);
-    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: false, canOpen: false, receiver: null, receiverGuest: false, unreadable: false });
+    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: false, canOpen: false, receiver: null, receiverGuest: false, unreadable: false, sealed: false });
     expect((await as('sam').get('/api/home')).json().celebrations.find((c: { id: string }) => c.id === 'c_xmas').draw.mine).toBe('waiting');
     expect((await as('sam').send('POST', `${DRAW}/open`)).json()).toEqual({ error: 'not yet: everyone opens together at the set time' });
     await as('alex').send('PATCH', DRAW, { drawTogetherAt: new Date(Date.now() - 1000).toISOString() });
@@ -223,7 +223,7 @@ describe('re-drawing', () => {
     const third = await as('alex').send('POST', `${DRAW}/run`);
     expect(third.statusCode).toBe(200);
     expect(third.json().redrawnAt).not.toBeNull();
-    expect((await as('sam').get(DRAW)).json()).toMatchObject({ opened: 0, mine: { opened: false, canOpen: true, receiver: null, unreadable: false } });
+    expect((await as('sam').get(DRAW)).json()).toMatchObject({ opened: 0, mine: { opened: false, canOpen: true, receiver: null, unreadable: false, sealed: false } });
     expect(audit(db).map((a) => a.action)).toEqual(['drawn', 'redrawn', 'redrawn']);
   });
 
@@ -574,7 +574,7 @@ describe('the database alone says nothing about who drew whom', () => {
     db.update(t.drawParticipant).set({ openedAt: NOW }).where(eq(t.drawParticipant.id, 'dp_sam')).run();
     const as = await start(db);
     // only Sam's own answer says so; the draw still answers, for Sam and for everyone else
-    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: true, canOpen: false, receiver: null, receiverGuest: false, unreadable: true });
+    expect((await as('sam').get(DRAW)).json().mine).toEqual({ opened: true, canOpen: false, receiver: null, receiverGuest: false, unreadable: true, sealed: false });
     expect((await as('robin').get(DRAW)).statusCode).toBe(200);
     // a row cut short (a tag under 16 bytes) does not open either
     expect(() => openReceiver(KEY, 'd_xmas', 'dp_robin', Buffer.concat([robin.sealed.subarray(0, 24), robin.sealed.subarray(28)]))).toThrow();
@@ -723,7 +723,7 @@ describe('someone in a draw leaving the household (review M2)', () => {
     const as = await start(db);
     expect((await as('alex').send('DELETE', '/api/people/p_quinn')).statusCode).toBe(204);
     // IN: alex → sam → robin → quinn → mia → alex: Robin drew Quinn
-    expect((await as('robin').get(DRAW)).json().mine).toMatchObject({ opened: true, receiver: null, receiverGuest: false, unreadable: false });
+    expect((await as('robin').get(DRAW)).json().mine).toMatchObject({ opened: true, receiver: null, receiverGuest: false, unreadable: false, sealed: false });
     expect((await as('sam').get(DRAW)).json().mine.receiver).toEqual({ id: 'p_robin', name: 'Robin' });
   });
 });

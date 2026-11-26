@@ -223,8 +223,26 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Removes the passkeys of someone who lost every device, ending their sessions and spending their open links; then an admin sends the usual invite. An admin who signed in with a passkey in the last 5 minutes, for someone who is not an admin (an admin recovers with `keepsake recover`). Recorded in the audit table. Standalone. */
+        /** For someone who lost every device: the first call asks for a reset; it is carried out when another admin makes the same call, or, in a household with one admin, when its asker calls again a day later (Gate routes M1). Carried out, it removes their passkeys, ends their sessions and spends their open links; then an admin sends the usual invite, and their draws stay sealed to them until they confirm on their new device. An admin who signed in with a passkey in the last 5 minutes, for someone who is not and was not lately an admin (an admin recovers with `keepsake recover`). The person and the other admins are told when it is asked, the person and the people of their open draws when it is done. Audited. Standalone. */
         post: operations["resetPasskeys"];
+        /** Calls off a reset that waits (the person, from a device they still have, or any admin; a sign-in of the last 10 minutes). Audited. Standalone */
+        delete: operations["cancelPasskeyReset"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/reset/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** On the new device, the person whose passkeys were reset confirms it; their draws open to them again (a sign-in of the last 10 minutes). Audited. Standalone */
+        post: operations["confirmPasskeyReset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1436,13 +1454,29 @@ export interface components {
         /** @description A pointer to something new (ADR 0010): question, its person's question reached them (a kid's: their parents); answered, the caller's question was answered; draw, names drawn (or drawn again, or cleared); remind, a celebration coming (person: whose, for "Remind me"); reveal, a draw's pairs show; say_thanks, gifts reached the caller; thanked, someone thanked the caller (person: whose gift) */
         Notice: {
             id: string;
-            /** @enum {string} */
-            kind: "question" | "answered" | "draw" | "remind" | "reveal" | "say_thanks" | "thanked";
+            /**
+             * @description reset_asked: someone asked to reset the sign-in of `person` (to them and the other admins); signin_reset: it was reset (to them and the people of their open draws); `by`: who asked
+             * @enum {string}
+             */
+            kind: "question" | "answered" | "draw" | "remind" | "reveal" | "say_thanks" | "thanked" | "reset_asked" | "signin_reset";
             on: components["schemas"]["Day"];
             read: boolean;
             celebration: components["schemas"]["CelebrationRef"] | null;
             person: components["schemas"]["PersonRef"] | null;
             question: components["schemas"]["Id"] | null;
+            by: components["schemas"]["PersonRef"] | null;
+        };
+        PasskeyReset: {
+            /** @enum {string} */
+            state: "asked" | "done";
+            /**
+             * @description Asked: another admin's yes, or (one admin) a day
+             * @enum {string|null}
+             */
+            waitsFor: "another_admin" | "a_day" | null;
+            /** @description One admin: when its asker may carry it out */
+            notBefore: components["schemas"]["DateTime"] | null;
+            askedBy: components["schemas"]["PersonRef"] | null;
         };
         Notices: {
             notices: components["schemas"]["Notice"][];
@@ -1815,6 +1849,8 @@ export interface components {
                 receiverGuest: boolean;
                 /** @description Their row does not open with the keys on the server (a lost key): the host draws again */
                 unreadable: boolean;
+                /** @description Their passkeys were reset: the draw stays sealed to them until they confirm the reset on their new device (Gate routes M1) */
+                sealed: boolean;
             } | null;
             /** @description Every giver and their person: only after the reveal date, only for the participants and the host */
             pairs: {
@@ -2336,7 +2372,33 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Their passkeys and sessions are gone */
+            /** @description The reset, asked or done */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyReset"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    cancelPasskeyReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Called off */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2346,7 +2408,27 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+        };
+    };
+    confirmPasskeyReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Confirmed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getHousehold: {

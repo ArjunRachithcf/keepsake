@@ -116,13 +116,25 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
     data.auth.endSessionsOf(r, r.params.personId);
   });
 
-  // Every device lost: an admin who signed in with a passkey in the last 5 minutes removes someone's passkeys (their
-  // sessions end with them), then sends the usual invite. Not an admin's: an admin recovers with `keepsake recover`.
-  // Recorded in the audit table.
+  // Every device lost: an admin who signed in with a passkey in the last 5 minutes asks to reset someone's passkeys;
+  // a second admin's yes, or with one admin a day, carries it out (Gate routes M1); then the usual invite. Never an
+  // admin's (or a lately demoted one's): an admin recovers with `keepsake recover`. Audited.
   api.post('/people/:personId/passkeys/reset', (r) => {
     standaloneOnly();
     if (data.me(r).role !== 'admin') throw new Refused(403, 'admins only');
     data.fresh(r, RESET_FRESH_MINUTES);
-    data.auth.resetPasskeys(r, r.params.personId);
+    return data.auth.resetPasskeys(r, r.params.personId);
+  });
+
+  // Called off: by the person, from a device they still have, or any admin.
+  api.delete('/people/:personId/passkeys/reset', (r) => {
+    standaloneOnly();
+    data.auth.cancelReset(r, r.params.personId);
+  });
+
+  // On the new device: "yes, that was me". Until then their draws stay sealed to them.
+  api.post('/me/reset/confirm', (r) => {
+    standaloneOnly();
+    data.auth.confirmReset(r);
   });
 }

@@ -282,7 +282,7 @@ describe('the morning batch', () => {
     await morning(h, new Date(BATCH.getTime() - 1));
     for (const who of PEOPLE) expect(await kinds(h, who), who).toEqual([]);
     await morning(h, BATCH);
-    expect((await notices(h, 'robin')).notices).toEqual([{ id: noticeId('p_robin', 'question', qr, '2026-12-02'), kind: 'question', on: '2026-12-02', read: false, celebration: null, person: { id: 'p_robin', name: 'Robin' }, question: qr }]);
+    expect((await notices(h, 'robin')).notices).toEqual([{ id: noticeId('p_robin', 'question', qr, '2026-12-02'), kind: 'question', on: '2026-12-02', read: false, celebration: null, person: { id: 'p_robin', name: 'Robin' }, question: qr, by: null }]);
     expect((await notices(h, 'sam')).notices.map((n) => n.question)).toEqual([qm]);
     expect((await notices(h, 'alex')).notices.map((n) => n.question)).toEqual([ql]);
     for (const who of ['mia', 'leo', 'quinn', 'uma'] as const) expect(await kinds(h, who), who).toEqual([]);

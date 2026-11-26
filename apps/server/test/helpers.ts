@@ -80,7 +80,7 @@ const PARAMS: Record<string, Record<string, string>> = {
   setWishOrder: { personId: 'p_alex' },
   editWish: { wishId: 'w_alex_tent' }, removeWish: { wishId: 'w_alex_old' },
   approveWish: { wishId: 'w_leo_kite' }, declineWish: { wishId: 'w_sug_for_alex' },
-  removePasskey: { passkeyId: 'pk2' }, endSessions: { personId: 'p_mia' }, resetPasskeys: { personId: 'p_leo' },
+  removePasskey: { passkeyId: 'pk2' }, endSessions: { personId: 'p_mia' }, resetPasskeys: { personId: 'p_leo' }, cancelPasskeyReset: { personId: 'p_leo' },
   claimWish: { wishId: 'w_sam_book' }, editClaim: { wishId: 'w_sam_book' }, unclaimWish: { wishId: 'w_sam_book' },
   nameOnGift: { wishId: 'w_robin_scarf' },
   startGroupGift: { wishId: 'w_mia_bike' }, editGroupGift: { wishId: 'w_mia_bike' }, endGroupGift: { wishId: 'w_mia_bike' },

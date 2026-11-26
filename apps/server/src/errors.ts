@@ -45,7 +45,7 @@ export const MESSAGES = [
   'a draw needs at least 4 people', 'a draw holds at most 100 people',
   'with not last year\'s person on, everyone needs more people they may draw: loosen who shouldn\'t draw whom',
   'these rules let someone work out another\'s person: add people or loosen who shouldn\'t draw whom',
-  'drawn with never: the pairs stay sealed for good', 'the names are drawn: the reveal date only moves later', 'it is revealed: it stays revealed', 'the names are drawn: its celebration can only move later',
+  'confirm the reset of your sign-in first', 'no reset is waiting', 'drawn with never: the pairs stay sealed for good', 'the names are drawn: the reveal date only moves later', 'it is revealed: it stays revealed', 'the names are drawn: its celebration can only move later',
   'they are in a draw that can no longer change: remove them after its celebration',
   'who shouldn\'t draw whom leaves someone nobody to draw: loosen it',
   'the rules leave too few ways to draw in time: loosen who shouldn\'t draw whom',
