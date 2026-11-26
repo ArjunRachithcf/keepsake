@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "9370e588-5685-492f-8a94-75f88102c7bb",
+  "id": "88db7e1e-68ef-41b5-b4cb-28d79d34855d",
   "prevId": "280d9e3d-8e7e-4b6c-a61d-580d22bf5f1b",
   "tables": {
     "audit": {
@@ -58,7 +58,7 @@
       "checkConstraints": {
         "audit_action": {
           "name": "audit_action",
-          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued', 'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed')"
+          "value": "action IN ('passkeys_reset', 'draw_created', 'draw_changed', 'drawn', 'redrawn', 'draw_refused', 'reveal_set', 'draw_removed', 'draw_moved', 'draw_cleared', 'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued', 'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed', 'reset_approved', 'person_created')"
         }
       }
     },
@@ -1916,6 +1916,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "approved_by": {
+          "name": "approved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "done_at": {
           "name": "done_at",
           "type": "text",
@@ -1960,6 +1974,19 @@
           "tableTo": "person",
           "columnsFrom": [
             "asked_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "passkey_reset_approved_by_person_id_fk": {
+          "name": "passkey_reset_approved_by_person_id_fk",
+          "tableFrom": "passkey_reset",
+          "tableTo": "person",
+          "columnsFrom": [
+            "approved_by"
           ],
           "columnsTo": [
             "id"
@@ -2152,6 +2179,13 @@
         },
         "draws_sealed_at": {
           "name": "draws_sealed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "admin_since": {
+          "name": "admin_since",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -2823,6 +2857,79 @@
           "value": "\"share\".\"named\" IN (0, 1)"
         }
       }
+    },
+    "share_change": {
+      "name": "share_change",
+      "columns": {
+        "wish_id": {
+          "name": "wish_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "giver_id": {
+          "name": "giver_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "day": {
+          "name": "day",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "changes": {
+          "name": "changes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "share_change_wish_id_wish_id_fk": {
+          "name": "share_change_wish_id_wish_id_fk",
+          "tableFrom": "share_change",
+          "tableTo": "wish",
+          "columnsFrom": [
+            "wish_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "share_change_giver_id_person_id_fk": {
+          "name": "share_change_giver_id_person_id_fk",
+          "tableFrom": "share_change",
+          "tableTo": "person",
+          "columnsFrom": [
+            "giver_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "share_change_wish_id_giver_id_pk": {
+          "columns": [
+            "wish_id",
+            "giver_id"
+          ],
+          "name": "share_change_wish_id_giver_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "thank_you": {
       "name": "thank_you",

@@ -20,6 +20,11 @@ export const person = sqliteTable('person', {
   adminUntil: text('admin_until'),
   /** Their passkeys were reset: their draws stay sealed to them until they confirm the reset on their new device. */
   drawsSealedAt: text('draws_sealed_at'),
+  /**
+   * An admin: since when, null otherwise (Gate re-attack B1). A second admin's yes to a passkey reset counts only from
+   * someone who was an admin a week before it was asked: one made for the occasion is nobody's second.
+   */
+  adminSince: text('admin_since'),
 }, (t) => [
   uniqueIndex('person_external_id').on(t.externalId),
   check('person_role', sql`${t.role} IN ('admin', 'adult', 'kid')`),
@@ -48,8 +53,11 @@ export const passkeyReset = sqliteTable('passkey_reset', {
   personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
   askedBy: text('asked_by').references(() => person.id, { onDelete: 'set null' }),
   askedAt: text('asked_at').notNull(),
-  /** null: waits for another admin's yes; else the moment the asker may carry it out alone. */
+  /** The moment its asker may carry it out alone: a day after the ask (RESET_WAIT_HOURS). */
   notBefore: text('not_before'),
+  /** A long-standing second admin's yes (Gate re-attack B1): carried out no earlier than an hour after it. */
+  approvedBy: text('approved_by').references(() => person.id, { onDelete: 'set null' }),
+  approvedAt: text('approved_at'),
   doneAt: text('done_at'),
   doneBy: text('done_by').references(() => person.id, { onDelete: 'set null' }),
 }, (t) => [index('passkey_reset_person').on(t.personId)]);
@@ -170,6 +178,8 @@ export const AUDIT_ACTIONS = [
   'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued',
   // The Gate (routes M1): every step of taking over a sign-in is audited, and a reset needs a second admin or a day.
   'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed',
+  // The Gate's re-attack (B1): the second admin's yes, and every person added (an admin made for the occasion shows).
+  'reset_approved', 'person_created',
 ] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
@@ -256,6 +266,17 @@ export const share = sqliteTable('share', {
   check('share_amount', sql`${t.amountMinor} BETWEEN 1 AND 100000000`),
   check('share_named', sql`${t.named} IN (0, 1)`),
 ]);
+
+/**
+ * How often a giver changed their own share of a group gift on a day (Gate re-attack R1): at most SHARE_CHANGES_A_DAY,
+ * so "enough" can only be searched slowly. Kept when the share is taken back; one row per gift and giver, the day's.
+ */
+export const shareChange = sqliteTable('share_change', {
+  wishId: text('wish_id').notNull().references(() => wish.id, { onDelete: 'cascade' }),
+  giverId: text('giver_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  day: text('day').notNull(),
+  changes: integer('changes').notNull(),
+}, (t) => [primaryKey({ columns: [t.wishId, t.giverId] })]);
 
 // Draws (spec §3, ADR 0004): one per celebration and year. Who draws whom is only ever in draw_assignment, sealed per
 // giver with AES-256-GCM under a key that is not in the database (draws/sealed.ts); nothing else here depends on it.

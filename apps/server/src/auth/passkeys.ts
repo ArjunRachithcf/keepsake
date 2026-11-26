@@ -138,7 +138,7 @@ export function resetPasskeys(db: Db, actorId: string, personId: string, tellOf:
     if (!open) {
       const admins = tx.select({ id: t.person.id }).from(t.person).where(eq(t.person.role, 'admin')).all().map((a) => a.id)
         .filter((id) => id !== actorId && id !== p.id && Boolean(tx.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.personId, id)).get()));
-      const r = { id: ulid(), personId: p.id, askedBy: actorId, askedAt: at, notBefore: admins.length ? null : new Date(now.getTime() + RESET_WAIT_HOURS * 3_600_000).toISOString(), doneAt: null, doneBy: null };
+      const r = { id: ulid(), personId: p.id, askedBy: actorId, askedAt: at, notBefore: admins.length ? null : new Date(now.getTime() + RESET_WAIT_HOURS * 3_600_000).toISOString(), approvedBy: null, approvedAt: null, doneAt: null, doneBy: null };
       tx.insert(t.passkeyReset).values(r).run();
       tx.insert(t.audit).values({ id: ulid(), at, actorId, action: 'reset_asked', subjectId: p.id }).run();
       tellOf('reset_asked', r.id, [p.id, ...admins]);

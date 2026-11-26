@@ -88,7 +88,7 @@ describe('migrations', () => {
     }
   });
 
-  it('0005 (the Gate) keeps an M5 database\'s notices and audit rows (both tables are rebuilt for their new kinds)', () => {
+  it('0005 (the Gate) keeps an M5 database\'s notices and audit rows (both tables are rebuilt for their new kinds), and dates its admins', () => {
     const dir = mkdtempSync(join(tmpdir(), 'keepsake-mig-'));
     try {
       mkdirSync(join(dir, 'meta'));
@@ -110,6 +110,8 @@ describe('migrations', () => {
         { id: 'n1', person_id: 'p1', kind: 'remind', about_id: 'p2', read_at: null }, { id: 'n2', person_id: 'p2', kind: 'thanked', about_id: null, read_at: at }]);
       expect(now.prepare('select id, action from audit order by id').all()).toEqual([{ id: 'a1', action: 'passkeys_reset' }, { id: 'a2', action: 'link_reissued' }]);
       expect(now.prepare('select last_seen_at, admin_until, draws_sealed_at from person where id = ?').get('p1')).toEqual({ last_seen_at: null, admin_until: null, draws_sealed_at: null });
+      // Its admins have been admins since they were added; nobody else is one (Gate re-attack B1).
+      expect(now.prepare('select id, admin_since from person order by id').all()).toEqual([{ id: 'p1', admin_since: at }, { id: 'p2', admin_since: null }]);
       now.close();
     } finally {
       delete process.env.KEEPSAKE_MIGRATIONS_DIR;
