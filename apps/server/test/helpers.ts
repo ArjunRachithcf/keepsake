@@ -106,7 +106,7 @@ const BODIES: Record<string, unknown> = {
   setManagers: { managerIds: ['p_sam'] },
   addWish: { personId: 'p_alex', name: 'A rain jacket', celebrationId: 'c_xmas' },
   editWish: { note: 'Size M' },
-  setWishOrder: { wishIds: ['w_alex_old', 'w_alex_tent', 'w_alex_mug'] },
+  setWishOrder: { wishIds: ['w_alex_old', 'w_alex_tent'] }, // not the received mug: gone from Alex's list (Gate surprise L2)
   addCelebration: { name: 'Summer party', date: '2027-07-01', poster: 'gold', recurrence: 'none', people: ['p_alex'] },
   editCelebration: { place: 'The garden' },
   setProfile: { likes: ['Hiking'] },
