@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
-import { parseCsv } from '../src/import/import';
+import { fingerprints, parseCsv } from '../src/import/import';
 import { ORIGIN, household, sessionCookie, standalone } from './helpers';
 
 const SAMPLE = readFileSync(new URL('../../../seed-sample/gift-list.csv', import.meta.url), 'utf8');
@@ -25,6 +25,19 @@ async function start() {
 }
 const everything = (db: Db) => JSON.stringify(['wish', 'claim', 'group_gift', 'share', 'question', 'idea', 'guest_link', 'celebration', 'person', 'setting']
   .map((n) => db.$client.prepare(`select * from ${n}`).all()));
+
+describe('the import\'s fingerprint', () => {
+  it('is keyed by the sealing key (the current and a previous one), with the plain hash last', () => {
+    const a = Buffer.alloc(32, 1), b = Buffer.alloc(32, 2);
+    const [ka, plain] = fingerprints(SAMPLE, [a]);
+    expect(ka).toMatch(/^import\.hmac:[0-9a-f]{64}$/);
+    expect(plain).toMatch(/^import\.sha256:[0-9a-f]{64}$/);
+    expect(fingerprints(SAMPLE, [b])[0]).not.toBe(ka);
+    expect(fingerprints(SAMPLE, [b, a])).toEqual([fingerprints(SAMPLE, [b])[0], ka, plain]);
+    // the cells, not the bytes
+    expect(fingerprints(SAMPLE.replace(/^\uFEFF/, ''), [a])[0]).toBe(ka);
+  });
+});
 
 describe('the sheet import', () => {
   it('imports a file once: the same file again is refused (a double click, a second tab), even with other choices', async () => {
@@ -44,7 +57,17 @@ describe('the sheet import', () => {
     // what stays of the file is its fingerprint only: no cell of it
     const kept = db.select().from(t.setting).all().filter((x) => x.key.startsWith('import.'));
     expect(kept).toHaveLength(1);
-    expect(kept[0]!.key).toMatch(/^import\.sha256:[0-9a-f]{64}$/);
+    // keyed: a backup of the database alone cannot be checked against a guessed sheet
+    expect(kept[0]!.key).toMatch(/^import\.hmac:[0-9a-f]{64}$/);
+    expect(kept[0]!.key).not.toContain(fingerprints(SAMPLE, []).at(-1)!.split(':')[1]);
+    // a wrong mapping of a file imported before gets the mapping's answer, never "already imported": the answer
+    // must not tell whether some file was imported before without importing it (review of #16)
+    const bogus = await post('/api/import', { ...body, people: { 'Grandpa Joe': 'p_nobody' } });
+    expect(bogus.statusCode).toBe(400);
+    expect(bogus.json().error).not.toBe('already imported');
+    const unmapped = await post('/api/import', { csv: SAMPLE });
+    expect([unmapped.statusCode, unmapped.json().error]).toEqual([409, 'map or skip every name in the file first']);
+    expect(everything(db)).toBe(after);
     // a different file still imports
     const other = SAMPLE.replace('A two-person tent', 'A three-person tent');
     expect((await post('/api/import', { ...body, csv: other })).statusCode).toBe(200);

@@ -68,6 +68,13 @@ export function keyFileWarning(cfg: Pick<Config, 'sealingKey' | 'sealingKeyPrevi
  * The keys that open rows: the current one (which also seals) and a previous one (KEEPSAKE_SEALING_KEY_PREVIOUS), each
  * picked by the row's key id. A key that cannot be read is no key.
  */
+/** The current and the previous sealing key, those that can be read (for keyed fingerprints, like the import's). */
+export function sealingKeys(cfg: Pick<Config, 'sealingKey' | 'sealingKeyPrevious'>): Buffer[] {
+  let previous: Buffer | null;
+  try { previous = loadKey(cfg.sealingKeyPrevious); } catch { previous = null; }
+  return [usableKey(cfg), previous].filter((k): k is Buffer => k !== null);
+}
+
 export interface Keyring { current: Buffer | null; byId(id: string): Buffer | null }
 export function keyring(cfg: Pick<Config, 'sealingKey' | 'sealingKeyPrevious'>): Keyring {
   const current = usableKey(cfg);

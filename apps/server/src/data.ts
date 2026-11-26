@@ -28,7 +28,7 @@ import {
   auditMoves, beforePersonRemoved, veilCelebration, checkCelebrationMove, checkCelebrationRemoval, checkPeopleChange, createDraw, dropLeavers, editDraw, openDraw,
   removeDraw, runDraw, type DrawInput,
 } from './draws/draws';
-import { keyring } from './draws/sealed';
+import { keyring, sealingKeys } from './draws/sealed';
 import { asDb } from './db/open';
 import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
@@ -376,7 +376,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     /** The sheet import (import/import.ts): admins only, checked there too. */
     imports: {
       dryRun: (r: Req, i: ImportInput) => viewOf(r).importPlan(dryRun(db, admin(r), i)),
-      apply: (r: Req, i: ImportInput) => viewOf(r).importDone(changed(applyImport(db, admin(r), i, cfg.timezone))),
+      apply: (r: Req, i: ImportInput) => viewOf(r).importDone(changed(applyImport(db, admin(r), i, cfg.timezone, sealingKeys(cfg)))),
     },
     /** What a guest does (ADR 0009), as the request's guest: only on what their link reaches. */
     guest: {

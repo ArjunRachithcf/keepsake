@@ -927,7 +927,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made and its SHA-256, so the same file is imported once (409 already imported, also for a second request while the first runs) */
+        /** Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made and a keyed fingerprint of its cells, so the same file is imported once (409 already imported, checked only once the plan is complete and valid; also for a second request while the first runs) */
         post: operations["importSheet"];
         delete?: never;
         options?: never;
