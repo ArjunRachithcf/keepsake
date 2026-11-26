@@ -378,6 +378,12 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
 
   // Every helper builds its own answer from ids, for this viewer: none takes a person, a row or a ready object.
   return {
+    /**
+     * The ids of a person's wishes the viewer orders: their list as this viewer sees it (Gate surprise L2: a received
+     * wish is gone from its person's list, so it is not theirs to order). Never sent: wishes.ts checks an order with it.
+     */
+    orderable: (personId: string): string[] => present(seen(wishesOf(db, [personId])))
+      .filter(({ w }) => w.state === 'listed' || w.state === 'awaiting_parent').map(({ w }) => w.id),
     signedIn: (): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),
     household: (): Viewed<api.Household> => answer({
       mode: cfg.mode, me: person(viewer), people: [...people().values()].map(person), currency: currency(db),

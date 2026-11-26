@@ -241,7 +241,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       remove: (r: Req, id: string) => changed(removeWish(db, me(r), id)),
       approve: (r: Req, id: string) => { approveWish(db, me(r), id); changed(0); },
       decline: (r: Req, id: string) => changed(declineWish(db, me(r), id)),
-      order: (r: Req, personId: string, ids: string[]) => orderWishes(db, me(r), personId, ids),
+      order: (r: Req, personId: string, ids: string[]) => orderWishes(db, me(r), personId, ids, (id) => viewOf(r).orderable(id)),
     },
     /** What givers do (gifts/gifts.ts), as the request's person: each returns the wish's id for the view layer. */
     gifts: {
