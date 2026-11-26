@@ -1,6 +1,8 @@
 {
+  "id": "/",
   "name": "Keepsake",
   "short_name": "Keepsake",
+  "description": "Wishes, celebrations and draws for a family, the surprise kept",
   "start_url": "/",
   "scope": "/",
   "icons": [

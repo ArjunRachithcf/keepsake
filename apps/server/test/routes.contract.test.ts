@@ -5,6 +5,7 @@ import { parse } from 'yaml';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import { EDGE_IDENTITY } from '../src/config';
+import { PUSH_HOSTS } from '../src/net/egress';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { startGuestSession } from '../src/guests/guests';
@@ -21,7 +22,12 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
     db = withM4(withDraws(household()));
     auth = mode === 'standalone' ? { cookie: sessionCookie(db, 'p_alex') } : hl('hl-alex', 'Alex', 'admin');
     guest = { cookie: `__Host-keepsake_guest=${startGuestSession(db, GUEST_TOKEN, today('UTC')).device}`, 'x-keepsake-link': 'l_sam' };
-    built = await buildApp(mode === 'standalone' ? standalone() : homerslab(), db, { webauthn: fakeWebAuthn() });
+    // Egress on, with stand-ins: a shop that answers a page, and push services that accept every push (nothing leaves).
+    const on = { KEEPSAKE_EGRESS: 'on', KEEPSAKE_SHOP_HOSTS: 'shop.example' };
+    built = await buildApp(mode === 'standalone' ? standalone(on) : homerslab('127.0.0.1', on), db, {
+      webauthn: fakeWebAuthn(), pushTransport: async () => 201,
+      egress: { request: async (url) => ({ status: 200, type: 'text/html', body: Buffer.from('<title>A kite</title>'), url }) },
+    });
     await built.app.ready();
   });
   afterAll(() => built.app.close());
@@ -86,6 +92,16 @@ describe('the HomersLab manifest', () => {
     expect(m.identity.edge).toBe(EDGE_IDENTITY);
     for (const k of ['KEEPSAKE_EDGE_IDENTITY', 'KEEPSAKE_TRUSTED_PROXY', 'KEEPSAKE_ORIGIN']) expect(Object.keys(m.env ?? {}), k).not.toContain(k);
     expect(m.audience).toBe('household');
+  });
+
+  it('names its egress: the push services the client allows, and the shops from KEEPSAKE_SHOP_HOSTS; the VAPID key as a secret file', () => {
+    const m = parse(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'));
+    // Philobiblos' convention (PR #12 review, N2): config as '${VAR}' in egress, the push services as push_egress.
+    expect(m.network.egress).toEqual(['${KEEPSAKE_SHOP_HOSTS}']);
+    expect(m.network.push_egress).toEqual(PUSH_HOSTS.map((h) => (typeof h === 'string' ? h : '*.notify.windows.com')));
+    expect(Object.keys(m.network).sort()).toEqual(['egress', 'push_egress']);
+    expect(m.secrets.map((x: { key: string; file: boolean }) => [x.key, x.file])).toEqual([['KEEPSAKE_SEALING_KEY', true], ['KEEPSAKE_VAPID_KEY', true]]);
+    expect(Object.keys(m.env)).not.toContain('KEEPSAKE_VAPID_KEY');
   });
 });
 

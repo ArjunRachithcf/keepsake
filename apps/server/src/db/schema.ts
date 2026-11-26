@@ -425,3 +425,99 @@ export const idea = sqliteTable('idea', {
   text: text('text').notNull(),
   createdAt: text('created_at').notNull(),
 }, (t) => [index('idea_person').on(t.personId)]);
+
+// --- M5: notices, Web Push, reminders, thank-yous (ADR 0010) -----------------------------------------------------
+
+/**
+ * What is new for one person (ADR 0010): a pointer (kind, the celebration, question or thank-you it is about), never
+ * its content; the view layer builds each from what the person may see when they read it. The id is a hash of
+ * (person, kind, subject, day), so the same notice is made once however often the morning batch runs. Only things the
+ * person may know make one: never a gift, an idea, a hidden question or its asker, or another's reminder.
+ */
+export const notice = sqliteTable('notice', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked'] }).notNull(),
+  subjectId: text('subject_id').notNull(),
+  /** remind: whose celebration ("Remind me" about someone); null for one's own celebrations. */
+  aboutId: text('about_id').references(() => person.id, { onDelete: 'cascade' }),
+  day: text('day').notNull(),
+  readAt: text('read_at'),
+}, (t) => [
+  index('notice_person').on(t.personId, t.day),
+  check('notice_kind', sql`${t.kind} IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked')`),
+]);
+
+/**
+ * A device's Web Push subscription (ADR 0010). The id is a hash of the endpoint. The endpoint is on one of the known
+ * push services (net/egress.ts PUSH_HOSTS). A standalone subscription belongs to the session that made it and ends
+ * with it, so a family computer someone signed out of gets nothing more for them; the app sends it again at every
+ * start, which moves it to the new session and confirms it.
+ */
+export const pushSubscription = sqliteTable('push_subscription', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  sessionId: text('session_id').references(() => session.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: text('created_at').notNull(),
+  /** When its device last sent it (every start of the app): one not confirmed for 30 days goes. */
+  confirmedAt: text('confirmed_at').notNull(),
+  /** Since when its push service has refused it (a 4xx but 404, 410, 429): after 3 days it goes. */
+  failingSince: text('failing_since'),
+}, (t) => [index('push_subscription_person').on(t.personId)]);
+
+/** "Remind me": one person asks to be reminded `days` before each celebration of another (ADR 0010). Only theirs to see. */
+export const reminder = sqliteTable('reminder', {
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  aboutId: text('about_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  days: integer('days').notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.personId, t.aboutId] }),
+  check('reminder_days', sql`${t.days} BETWEEN 1 AND 60`),
+  check('reminder_not_self', sql`${t.personId} <> ${t.aboutId}`),
+]);
+
+/**
+ * A thank-you for a gift its person has (ADR 0010): one per wish, written by the person or a kid's parent, read by
+ * the household's givers of that gift (named or not). Who they are is never sent to the writer.
+ */
+export const thankYou = sqliteTable('thank_you', {
+  id: text('id').primaryKey(),
+  wishId: text('wish_id').notNull().references(() => wish.id, { onDelete: 'cascade' }),
+  writtenBy: text('written_by').references(() => person.id, { onDelete: 'set null' }),
+  text: text('text').notNull(),
+  day: text('day').notNull(),
+}, (t) => [uniqueIndex('thank_you_wish').on(t.wishId)]);
+
+/** The days a job ran (the morning batch, ADR 0010), so a restart after 08:00 runs it once and only once. */
+/**
+ * A change that tells someone, kept until the push queue's tick has made its notices (ADR 0010; PR #12 review, N-M1):
+ * a stop or a crash before the tick loses nothing. One row per change, whoever and however many are told; who is told
+ * is found at the tick (`people` only where the change itself names them: a draw's own people).
+ */
+export const pendingNotice = sqliteTable('pending_notice', {
+  id: text('id').primaryKey(),
+  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked'] }).notNull(),
+  subjectId: text('subject_id').notNull(),
+  day: text('day').notNull(),
+  again: integer('again').notNull().default(0),
+  people: text('people'),
+  createdAt: text('created_at').notNull(),
+  /** Failed tries (PR #12 third review, L2): one that fails is tried again later, and set aside after MAX_ATTEMPTS. */
+  attempts: integer('attempts').notNull().default(0),
+  nextAt: text('next_at'),
+});
+
+/** Someone with news whose push has not gone yet (the morning batch, the queue, a stop): pushed at the next tick (L4). */
+export const pendingPush = sqliteTable('pending_push', {
+  personId: text('person_id').primaryKey().references(() => person.id, { onDelete: 'cascade' }),
+  since: text('since').notNull(),
+});
+
+export const jobRun = sqliteTable('job_run', {
+  name: text('name').notNull(),
+  day: text('day').notNull(),
+  at: text('at').notNull(),
+}, (t) => [primaryKey({ columns: [t.name, t.day] })]);

@@ -380,7 +380,7 @@ describe('the reveal', () => {
 
 // --- The surprise on the raw responses ------------------------------------------------------------------------------
 
-const READS = ['/api/home', '/api/home?for=c_xmas', '/api/celebrations', '/api/celebrations/c_xmas', '/api/celebrations/c_cousins',
+const READS = ['/api/notices', '/api/home', '/api/home?for=c_xmas', '/api/celebrations', '/api/celebrations/c_xmas', '/api/celebrations/c_cousins',
   DRAW, '/api/household', '/api/auth/session', '/api/me/passkeys',
   ...['alex', 'sam', 'robin', 'mia', 'leo', 'quinn'].flatMap((p) => [`/api/people/p_${p}`, `/api/people/p_${p}?for=c_xmas`])];
 
@@ -484,6 +484,8 @@ async function answers(viewer: Who, assignment: Map<string, string>, s: State): 
     const r = await as('alex').send('DELETE', s.then === 'remove the draw' ? DRAW : '/api/celebrations/c_xmas');
     expect(r.statusCode, r.body).toBe(204);
   }
+  // The morning batch for this moment (ADR 0010): a reveal's notice must not depend on the pairs either.
+  built!.morning(new Date());
   const gone = s.then === 'remove the celebration' ? [DRAW, '/api/celebrations/c_xmas', '/api/home?for=c_xmas'] : s.then ? [DRAW] : [];
   const out: Record<string, string> = {};
   for (const u of READS) {

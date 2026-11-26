@@ -12,6 +12,7 @@ import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { refreshRevealed } from '../src/gifts/gifts';
 import { ORIGIN, household, sessionCookie, standalone } from './helpers';
+import { countingTransport, withDevices } from './m4';
 
 const PEOPLE = ['alex', 'sam', 'robin', 'mia', 'leo', 'quinn', 'uma'] as const;
 type Who = (typeof PEOPLE)[number];
@@ -29,6 +30,7 @@ afterAll(() => { vi.useRealTimers(); });
 let built: BuiltApp | undefined;
 let db: Db;
 let cookies: Record<string, string>;
+let pushes: Map<string, number>;
 
 /** household() plus two givers in no celebration, with no wishes (so their names appear only through gifts). */
 async function fresh() {
@@ -40,7 +42,8 @@ async function fresh() {
   ]).run();
   db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
   cookies = Object.fromEntries(PEOPLE.map((p) => [p, sessionCookie(db, `p_${p}`)]));
-  built = await buildApp(standalone(), db);
+  pushes = withDevices(db);
+  built = await buildApp(standalone(), db, { pushTransport: countingTransport(pushes) });
 }
 afterAll(() => built?.app.close());
 /** A change made straight in the database (a test's time travel): what is received is rebuilt as after any change. */
@@ -59,13 +62,16 @@ const ok = async (p: Promise<{ statusCode: number; body: string }>) => {
 
 // Every reading route. /household names Quinn and Uma by design, and /auth/session names the caller: the "never
 // anywhere" checks leave those two out, the byte-for-byte comparison does not.
-const READS = ['/api/home', '/api/home?for=c_xmas', '/api/home?for=c_mia', '/api/home?for=any', '/api/celebrations',
+const READS = ['/api/notices', '/api/home', '/api/home?for=c_xmas', '/api/home?for=c_mia', '/api/home?for=any', '/api/celebrations',
   '/api/celebrations/c_xmas', '/api/celebrations/c_mia', '/api/auth/session', '/api/household', '/api/me/passkeys',
   ...['alex', 'sam', 'robin', 'mia', 'leo'].flatMap((p) => [`/api/people/p_${p}`, `/api/people/p_${p}?for=c_xmas`, `/api/people/p_${p}?for=any`])];
 type Snap = { body: Record<string, string>; head: Record<string, string> };
 /** Every reading answer, its headers without the one that changes by the second (`date`). */
 async function reads(who: Who): Promise<Snap> {
-  const out: Snap = { body: {}, head: {} };
+  // The morning batch for this moment first (ADR 0010): notices, and the pushes they send, are read too.
+  built!.morning(new Date());
+  await built!.pusher.idle();
+  const out: Snap = { body: { pushes: String(pushes.get(`p_${who}`) ?? 0) }, head: {} };
   for (const u of READS) {
     const r = await as(who).get(u);
     // A celebration removed in this state answers 404 for its page and 400 as a `for`, the same in both households.

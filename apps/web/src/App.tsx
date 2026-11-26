@@ -11,6 +11,7 @@ import { Enrol, SignIn, takeToken } from './pages/SignIn';
 import { Guest } from './pages/Guest';
 import { Nav, useRouter } from './router';
 import { Link, Loading, Notice, PageHead } from './ui';
+import { unsubscribeThisDevice, useKeepSubscription } from './notify';
 
 const TABS = [
   { to: '/', tab: 'wishes', label: 'My wishes' },
@@ -28,9 +29,12 @@ export function App() {
   const reload = useCallback(async () => setHousehold(await api<Household>('/household')), []);
   useEffect(() => { if (route.tab !== 'guest') api<AuthSession>('/auth/session').then(setSession, (e) => setError(message(e))); }, [route.tab]);
   useEffect(() => { if (session?.signedIn) reload().catch((e) => setError(message(e))); }, [session, reload]);
+  useKeepSubscription(session?.signedIn && route.tab !== 'guest' ? household?.me.id ?? null : null);
 
   const signedIn = (s: AuthSession) => { setSession(s); go('/'); };
   const signOut = async () => {
+    // This device gets nothing more for this person (the server ends it with the session too).
+    await unsubscribeThisDevice();
     await api('/auth/sign-out', { method: 'POST' }).catch(() => undefined);
     setHousehold(null);
     setSession(await api<AuthSession>('/auth/session'));

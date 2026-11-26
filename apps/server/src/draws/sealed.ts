@@ -57,8 +57,8 @@ export function usableKey(cfg: Pick<Config, 'sealingKey'>): Buffer | null {
 }
 
 /** A problem with a key file others could read (group or others have any permission): for a warning at start. */
-export function keyFileWarning(cfg: Pick<Config, 'sealingKey' | 'sealingKeyPrevious'>): string | null {
-  for (const src of [cfg.sealingKey, cfg.sealingKeyPrevious]) {
+export function keyFileWarning(cfg: Pick<Config, 'sealingKey' | 'sealingKeyPrevious'> & Partial<Pick<Config, 'vapidKey'>>): string | null {
+  for (const src of [cfg.sealingKey, cfg.sealingKeyPrevious, cfg.vapidKey ?? null]) {
     if (src && 'file' in src && existsSync(src.file) && (statSync(src.file).mode & 0o077)) return `${src.file} can be read by other accounts: chmod 600 it`;
   }
   return null;

@@ -78,9 +78,11 @@ out of git (`seed/` is ignored). ADR 0005.
 
 ## 6. Notifications
 
-In-app and Web Push. A push never names a gift, a giver or a drawn person ("Your draw is ready", "Leo answered your
-question"), so a lock screen gives nothing away. Questions reach their person in the next morning's batch (ADR 0008).
-"Remind me" sends one push a set time before a person's celebration.
+In-app and Web Push (ADR 0010). A push says only "Something new in Keepsake": never a gift, a wish, a giver, a person
+or even what kind of thing, so a lock screen and the push service give nothing away; the app shows what is new ("Your
+draw is ready", "Leo answered your question") once opened, as the person. Questions, reminders and reveals come in the
+08:00 batch (ADR 0008). "Remind me" sends one a set number of days before each of a person's celebrations; a
+celebration's own people hear of it a week before.
 
 ## 7. Milestones
 
@@ -91,7 +93,7 @@ question"), so a lock screen gives nothing away. Questions reach their person in
 | **M2** | Claims and group gifts, with the surprise invariant in one view layer, tested route by route (ADR 0003) |
 | **M3** | Draws: exclusions, draw together, each giver's view, reveal date, re-draw (ADR 0004) |
 | **M4** | Anonymous questions (ADR 0008); ideas; kids' wishes with a parent's approval; guest links (ADR 0009); sheet import |
-| **M5** | Polish: PWA, Web Push, reminders, thank-yous, add from a shop link through Philobiblos' hardened egress |
+| **M5** | Polish: PWA, Web Push, reminders, thank-yous, add from a shop link through a hardened egress (Philobiblos' pattern, ported: ADR 0011) |
 | **Gate** | A red-team review before the first release, as for HomersLab and Philobiblos |
 
 ## 8. Decisions
@@ -145,6 +147,15 @@ Open; a guest session ends after 30 days unused and at a household sign-in in th
 After its fourth review: only whoever may make a link now gives it a new address (a draw link: whoever runs the draw),
 and a new address shows (in the list, and on the guest's page with when the earlier one was last used); the device
 cookie is __Host- and gets a fresh value at every first exchange.
+
+2026-11-25 (M5, decided by default, open to change; ADR 0010, 0011): notices are pointers built when read, made only
+from what their person may know; every push is one fixed encrypted message, sent after the answer, to known push
+services only; the VAPID key is kept like the sealing key; a device's subscription ends with its session; the morning
+batch at 08:00 also brings reminders (a week before for a celebration's people, "Remind me" for anyone, 1 to 60 days),
+reveal dates and "say thank you"; a thank-you is written once per gift by its person (a kid's parent with the kid) and
+goes to every household giver, named or not, its writer never told who; guests get no notices; "Add from a link" reads
+only the shops listed in `KEEPSAKE_SHOP_HOSTS` (none by default), as text, through one egress client, storing nothing;
+the PWA's service worker keeps the offline shell and never touches `/api`.
 
 Decided by default (open to change): a giver chooses, per gift, whether the person learns their name after the
 celebration (for thank-yous); exclusions are seen by the host only; the reveal date is the host's choice, "never" by

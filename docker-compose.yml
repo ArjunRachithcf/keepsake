@@ -2,7 +2,8 @@
 # admin's passkey (published on this machine only; nobody becomes admin by arriving first).
 # Keepsake keeps data/ and its files for its own user only (0700, 0600). Back up data/ as you like. keys/ holds the key
 # that seals the draws (keys/sealing.key, made at the first start, ADR 0004): keep its copy apart (a password manager,
-# say), never in the same backup as data/, or a copy of both opens every draw.
+# say), never in the same backup as data/, or a copy of both opens every draw. keys/vapid.key (Web Push, ADR 0010) is
+# made there too.
 services:
   keepsake:
     image: ${KEEPSAKE_IMAGE:-keepsake:0.1.0}
@@ -16,6 +17,10 @@ services:
       KEEPSAKE_KEYS_DIR: /keys
       # The key is a file in keys/ (made at the first start), never a value here: a value would show in `docker inspect`.
       KEEPSAKE_TZ: ${KEEPSAKE_TZ:-UTC}
+      # "Add from a link" (ADR 0011): the shops whose pages Keepsake may read, e.g. www.galaxus.ch,www.digitec.ch.
+      # Empty: off. KEEPSAKE_EGRESS=off: nothing leaves Keepsake (no push either).
+      KEEPSAKE_SHOP_HOSTS: ${KEEPSAKE_SHOP_HOSTS:-}
+      KEEPSAKE_EGRESS: ${KEEPSAKE_EGRESS:-on}
     volumes: [ "./data:/data:Z", "./keys:/keys:Z" ]
     ports: [ "127.0.0.1:${KEEPSAKE_PORT:-8080}:8080" ]
     read_only: true

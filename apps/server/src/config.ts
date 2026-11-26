@@ -38,6 +38,24 @@ export interface Config {
    * new draw seals with the new key and `keepsake rotate-key` reseals the old rows.
    */
   sealingKeyPrevious: SealingKeySource | null;
+  /**
+   * Web Push's VAPID key (ADR 0010; never the database, kept as the sealing key is): KEEPSAKE_VAPID_KEY (base64url, the
+   * 32-byte P-256 private scalar) or KEEPSAKE_VAPID_KEY_FILE; standalone makes KEEPSAKE_KEYS_DIR/vapid.key once. null:
+   * no push (homerslab mode without the secret). Hidden from logs like the sealing key.
+   */
+  vapidKey: SealingKeySource | null;
+  /**
+   * Who runs this Keepsake, for the push services (VAPID `sub`): KEEPSAKE_VAPID_SUBJECT (mailto: or https:), else a
+   * neutral `mailto:` that names no household (PR #12 review, L2): the origin would go to every push service with every push.
+   */
+  vapidSubject: string;
+  /** false: nothing leaves Keepsake (KEEPSAKE_EGRESS=off): no push, no page read from a shop link (ADR 0011). */
+  egress: boolean;
+  /**
+   * The shops whose pages "Add from a link" may read (ADR 0011): exact host names from KEEPSAKE_SHOP_HOSTS (comma
+   * separated), https only. Empty (the default): the feature is off and no shop page is ever fetched.
+   */
+  shopHosts: readonly string[];
 }
 
 export type SealingKeySource = { value: string } | { file: string; create: boolean };
@@ -48,6 +66,9 @@ export type SealingKeySource = { value: string } | { file: string; create: boole
  * KEEPSAKE_EDGE_IDENTITY to this value once its edge does that; until then homerslab mode does not start.
  */
 export const EDGE_IDENTITY = 'homerslab-v1';
+
+/** The VAPID subject when none is set: a reserved domain (RFC 2606), so it names no household (ADR 0010). */
+export const DEFAULT_VAPID_SUBJECT = 'mailto:keepsake@example.org';
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const mode = env.KEEPSAKE_MODE ?? 'standalone';
@@ -71,6 +92,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const origin = parseOrigin(env.KEEPSAKE_ORIGIN ?? `http://localhost:${port}`);
   const sealingKey = keySource(env, mode, dataDir);
   const sealingKeyPrevious = previousKeySource(env, dataDir);
+  const vapidKey = keySource(env, mode, dataDir, VAPID);
+  const egress = (env.KEEPSAKE_EGRESS ?? 'on') !== 'off';
+  if (env.KEEPSAKE_EGRESS && env.KEEPSAKE_EGRESS !== 'on' && env.KEEPSAKE_EGRESS !== 'off') throw new Error(`KEEPSAKE_EGRESS must be on or off, not ${env.KEEPSAKE_EGRESS}`);
+  // Only a subject someone set is checked: the default is fixed and fits every origin (http on loopback included).
+  const vapidSubject = env.KEEPSAKE_VAPID_SUBJECT ?? DEFAULT_VAPID_SUBJECT;
+  if (env.KEEPSAKE_VAPID_SUBJECT !== undefined && !/^(?:mailto:[^\s@/]+@[^\s@/]+\.[^\s@/]+|https:\/\/[^\s/]+(?:\/\S*)?)$/.test(vapidSubject)) {
+    throw new Error(`KEEPSAKE_VAPID_SUBJECT must be mailto:… or https://…, not ${vapidSubject}`);
+  }
   return {
     mode,
     dataDir,
@@ -87,7 +116,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     rpId: origin.hostname,
     sealingKey,
     sealingKeyPrevious,
+    vapidKey,
+    vapidSubject,
+    egress,
+    shopHosts: Object.freeze(shopHostsOf(env.KEEPSAKE_SHOP_HOSTS)),
   };
+}
+
+/** A host name as a shop's address names it: lower case letters, digits, dots and hyphens, two labels at least; no IP, no port. */
+const HOST = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/;
+function shopHostsOf(v: string | undefined): string[] {
+  if (!v || !v.trim()) return [];
+  const hosts = v.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+  for (const h of hosts) if (!HOST.test(h) || isIP(h)) throw new Error(`KEEPSAKE_SHOP_HOSTS: host names only (no scheme, port, path or IP address), not ${h}`);
+  if (hosts.length > 100) throw new Error('KEEPSAKE_SHOP_HOSTS: at most 100 shops');
+  return [...new Set(hosts)];
 }
 
 /** A path with every existing part resolved through symlinks (what is missing kept as written). */
@@ -114,6 +157,14 @@ export function isInside(dir: string, file: string): boolean {
 const hidden = <T extends object>(o: T): T => Object.defineProperty(o, 'toJSON', { value: () => ({ value: '[hidden]' }), enumerable: false });
 const NOT_IN_DATA = 'the sealing key must not be in KEEPSAKE_DATA_DIR (a backup of the data would carry it): set KEEPSAKE_KEYS_DIR or KEEPSAKE_SEALING_KEY_FILE elsewhere';
 
+/** Which key: the draws' sealing key, or Web Push's VAPID key (the same rules, ADR 0010). */
+interface KeyNames { value: string; file: string; standalone: string; notInData: string }
+const SEALING: KeyNames = { value: 'KEEPSAKE_SEALING_KEY', file: 'KEEPSAKE_SEALING_KEY_FILE', standalone: 'sealing.key', notInData: NOT_IN_DATA };
+const VAPID: KeyNames = {
+  value: 'KEEPSAKE_VAPID_KEY', file: 'KEEPSAKE_VAPID_KEY_FILE', standalone: 'vapid.key',
+  notInData: 'the VAPID key must not be in KEEPSAKE_DATA_DIR (a backup of the data would carry it): set KEEPSAKE_KEYS_DIR or KEEPSAKE_VAPID_KEY_FILE elsewhere',
+};
+
 function previousKeySource(env: NodeJS.ProcessEnv, dataDir: string): SealingKeySource | null {
   if (env.KEEPSAKE_SEALING_KEY_PREVIOUS) return Object.freeze(hidden({ value: env.KEEPSAKE_SEALING_KEY_PREVIOUS }));
   if (!env.KEEPSAKE_SEALING_KEY_PREVIOUS_FILE) return null;
@@ -122,14 +173,15 @@ function previousKeySource(env: NodeJS.ProcessEnv, dataDir: string): SealingKeyS
   return Object.freeze({ file, create: false });
 }
 
-/** The sealing key's source; refuses a key file inside the data folder (a backup of it would carry the key). */
-function keySource(env: NodeJS.ProcessEnv, mode: Mode, dataDir: string): SealingKeySource | null {
-  if (env.KEEPSAKE_SEALING_KEY) return Object.freeze(hidden({ value: env.KEEPSAKE_SEALING_KEY }));
-  const file = env.KEEPSAKE_SEALING_KEY_FILE ? resolve(env.KEEPSAKE_SEALING_KEY_FILE)
-    : mode === 'standalone' ? join(resolve(env.KEEPSAKE_KEYS_DIR ?? './keys'), 'sealing.key') : null;
+/** A key's source; refuses a key file inside the data folder (a backup of it would carry the key). */
+function keySource(env: NodeJS.ProcessEnv, mode: Mode, dataDir: string, k: KeyNames = SEALING): SealingKeySource | null {
+  const value = env[k.value];
+  if (value) return Object.freeze(hidden({ value }));
+  const named = env[k.file];
+  const file = named ? resolve(named) : mode === 'standalone' ? join(resolve(env.KEEPSAKE_KEYS_DIR ?? './keys'), k.standalone) : null;
   if (!file) return null;
-  if (isInside(dataDir, file)) throw new Error(NOT_IN_DATA);
-  return Object.freeze({ file, create: !env.KEEPSAKE_SEALING_KEY_FILE });
+  if (isInside(dataDir, file)) throw new Error(k.notInData);
+  return Object.freeze({ file, create: !named });
 }
 
 /** One spelling per address: IPv4-mapped IPv6 as IPv4, IPv6 compressed and lower case; null if it is not an IP. */
@@ -146,12 +198,15 @@ export function canonicalIp(v: string): string | null {
   });
 }
 
+/** Loopback host names an http origin may have (a secure context in browsers). */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 function parseOrigin(v: string): URL {
   let u: URL;
   try { u = new URL(v); } catch { throw new Error(`KEEPSAKE_ORIGIN must be scheme://host[:port], not ${v}`); }
   if (u.pathname !== '/' || u.search || u.hash || u.username || u.password) throw new Error(`KEEPSAKE_ORIGIN must be scheme://host[:port], not ${v}`);
   // WebAuthn and Secure cookies need a secure context: https, or http only on localhost.
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1'))) {
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && LOOPBACK.has(u.hostname))) {
     throw new Error(`KEEPSAKE_ORIGIN must be https (or http://localhost), not ${v}`);
   }
   return u;

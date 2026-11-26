@@ -6,6 +6,7 @@ import { roleLabel, useHousehold } from '../household';
 import { Field, Group, Link, Notice, PageHead, Sheet } from '../ui';
 import { LinksList } from '../links';
 import { ImportWizard } from '../import';
+import { PushSwitch } from '../notify';
 
 export function Family({ onSignOut }: { onSignOut?: () => void }) {
   const { household, me } = useHousehold();
@@ -37,6 +38,7 @@ export function Family({ onSignOut }: { onSignOut?: () => void }) {
       <PageHead title="Family" action={me.role === 'admin' ? <button type="button" className="btn" onClick={() => setManage(true)}>Household</button> : undefined} />
       <Group title="Grown-ups">{grownUps.map(row)}</Group>
       {kids.length > 0 && <Group title="Kids" footer="A kid’s new wish waits for a parent before anyone else sees it.">{kids.map(row)}</Group>}
+      <PushSwitch />
       {onSignOut && <You onSignOut={onSignOut} />}
       <Sheet title="Household" open={manage} onClose={() => setManage(false)}>
         <ManageHousehold />

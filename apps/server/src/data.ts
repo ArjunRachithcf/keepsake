@@ -18,7 +18,7 @@ import { addCelebration, editCelebration, getCelebration, removeCelebration, set
 import { today } from './celebrations/dates';
 import { Refused } from './errors';
 import {
-  addPerson, editPerson, hasPasskey, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
+  addPerson, currency, editPerson, hasPasskey, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
   type Person, type PersonInput,
 } from './household/people';
 import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, releaseImported, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
@@ -33,7 +33,7 @@ import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
 import { isId } from './validate';
 import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from './view/view';
-import { answerQuestion, answerWithWish, ask, declineQuestion, removeQuestion } from './questions/questions';
+import { answerQuestion, answerWithWish, ask, askersOf, declineQuestion, removeQuestion } from './questions/questions';
 import { addIdea, removeIdea } from './ideas/ideas';
 import {
   checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endDeviceSessions, forgetLink, getLink, GUEST_COOKIE, GUEST_DAYS, reissueLink, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
@@ -42,6 +42,15 @@ import {
 import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
 import { claimFor, setClaimStateFor, unclaimFor } from './gifts/gifts';
 import { applyImport, dryRun, type ImportInput } from './import/import';
+import { createEgress, type Egress } from './net/egress';
+import { drawStamps, drawsChanged, markRead, type NoticeKind } from './notices/notices';
+import { morning } from './jobs/morning';
+import { Pusher, subscribe, unsubscribe, type SubscriptionInput } from './push/push';
+import { usableVapid } from './push/keys';
+import { thankRecipients, writeThanks } from './thanks/thanks';
+import { previewLink } from './wishes/preview';
+import * as t from './db/schema';
+import { and, eq } from 'drizzle-orm';
 import { addWish, approveWish, declineWish, editWish, orderWishes, removeWish, type WishInput } from './wishes/wishes';
 
 export type { CelebrationInput } from './celebrations/celebrations';
@@ -54,7 +63,16 @@ export type { ImportInput } from './import/import';
 export { MAX_CSV } from './import/import';
 export { RESET_FRESH_MINUTES } from './auth/passkeys';
 
-export function dataFor(cfg: Config, db: Db) {
+/** What the facade sends out (ADR 0010, 0011): the push queue and the one egress client. Tests pass their own. */
+export interface Outside { pusher?: Pusher; egress?: Egress }
+
+/** "Add from a link" (ADR 0011): per person, at most this many pages an hour and one at a time; four at once in all. */
+export const PREVIEWS_AN_HOUR = 30;
+const PREVIEWS_AT_ONCE = 4;
+
+export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
+  const pusher = outside.pusher ?? new Pusher(db, null);
+  const egress = outside.egress ?? createEgress({ enabled: cfg.egress });
   /** The person behind a request (the auth hook has refused requests without one, except on public routes). */
   const me = (r: Req): Person => {
     const c = fastifyRequestOf(r).caller;
@@ -91,6 +109,32 @@ export function dataFor(cfg: Config, db: Db) {
   /** Guests reach Keepsake only standalone until HomersLab's edge lets them in (Homeward #317). */
   const homersLabWaits = () => { if (cfg.mode === 'homerslab') throw new Refused(409, 'guest links work once HomersLab lets guests in'); };
   const viewOf = (r: Req) => viewFor(db, cfg, me(r), fastifyRequestOf(r));
+
+  /** Notices (ADR 0010): made in the changing request, pushed from the queue after it. */
+  // The request only hands over what to tell; who is told, and the push, are the queue's (PR #12 review, L6).
+  // One durable row per change; who is told is found at the tick (PR #12 review, N-M1).
+  const tellLater = (kind: NoticeKind, subjectId: string, o?: { again?: boolean; people?: string[] }) => pusher.tell({ kind, subjectId, day: day(), people: o?.people, again: o?.again });
+  pusher.resolve('answered', (id) => askersOf(db, id));
+  pusher.resolve('thanked', (id, on) => thankRecipients(db, id, on));
+  /** A change that may draw names, draw them again or clear them: the draw's people (but whoever did it) are told. */
+  // The change and its pending row in one transaction: kept or lost together (PR #12 third review, L3).
+  const atomically = <T>(f: () => T): T => db.transaction(() => f());
+  // A refused draw keeps what it wrote before refusing (its audit row), as it did outside a transaction; a failure
+  // writing the pending rows undoes the change.
+  const drawsTold = <T>(r: Req, f: () => T): T => {
+    let refused: { e: unknown } | undefined;
+    const v = atomically(() => {
+      const before = drawStamps(db);
+      let out: T;
+      try { out = f(); } catch (e) { refused = { e }; return undefined as T; }
+      const by = me(r).id;
+      for (const d of drawsChanged(db, before)) tellLater('draw', d.celebrationId, { again: true, people: d.people.filter((p) => p !== by) });
+      return out;
+    });
+    if (refused) throw refused.e;
+    return v;
+  };
+  const previews = { inFlight: new Set<string>(), all: 0, recent: new Map<string, number[]>() };
 
   return {
     /** The view layer for the request's person. One-off celebrations whose day has passed let go of their wishes first (ADR 0007). */
@@ -171,14 +215,14 @@ export function dataFor(cfg: Config, db: Db) {
         editPerson(db, id, patch);
       },
       /** Someone in a drawn draw leaves it first, under the re-draw rules (draws/draws.ts), in the same transaction. */
-      remove: (r: Req, id: string) => {
+      remove: (r: Req, id: string) => drawsTold(r, () => {
         const by = admin(r);
         db.transaction((tx) => {
           beforePersonRemoved(asDb(tx), by, id, day(), keyring(cfg));
           removePerson(asDb(tx), id, by.id);
         });
         settled(0);
-      },
+      }),
       setManagers: (r: Req, kidId: string, ids: string[]) => { admin(r); setManagers(db, kidId, ids); },
       setCurrency: (r: Req, code: string | null) => { admin(r); setCurrency(db, code); },
       hasPasskey: (id: string) => hasPasskey(db, mustGetPerson(db, id).id),
@@ -211,17 +255,18 @@ export function dataFor(cfg: Config, db: Db) {
     /** A celebration's draw (draws/draws.ts), as the request's person: each returns the celebration's id for the view layer. */
     draws: {
       create: (r: Req, celebrationId: string, i: DrawInput) => createDraw(db, me(r), celebrationId, i, day()),
-      edit: (r: Req, celebrationId: string, patch: Partial<DrawInput>) => settled(editDraw(db, me(r), celebrationId, patch, day(), keyring(cfg))),
+      edit: (r: Req, celebrationId: string, patch: Partial<DrawInput>) => drawsTold(r, () => settled(editDraw(db, me(r), celebrationId, patch, day(), keyring(cfg)))),
       remove: (r: Req, celebrationId: string) => settled(removeDraw(db, me(r), celebrationId, day())),
-      run: (r: Req, celebrationId: string) => settled(runDraw(db, me(r), celebrationId, day(), keyring(cfg))),
+      run: (r: Req, celebrationId: string) => drawsTold(r, () => settled(runDraw(db, me(r), celebrationId, day(), keyring(cfg)))),
       open: (r: Req, celebrationId: string) => openDraw(db, me(r), celebrationId, new Date(), keyring(cfg)),
     },
     /** Anonymous questions (questions/questions.ts): each returns an id for the view layer, never the asker. */
     questions: {
       ask: (r: Req, personId: string, text: string) => { const p = me(r); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
-      answer: (r: Req, id: string, text: string) => { answerQuestion(db, me(r), id, text); },
-      decline: (r: Req, id: string) => { declineQuestion(db, me(r), id); },
-      withWish: (r: Req, id: string, i: WishInput) => changed(answerWithWish(db, me(r), id, i)),
+      // Its asker (someone of the household) is told it was answered: questions.ts hands the id to the notice only.
+      answer: (r: Req, id: string, text: string) => atomically(() => { answerQuestion(db, me(r), id, text, new Date(), () => tellLater('answered', id)); }),
+      decline: (r: Req, id: string) => atomically(() => { declineQuestion(db, me(r), id, new Date(), () => tellLater('answered', id)); }),
+      withWish: (r: Req, id: string, i: WishInput) => changed(atomically(() => answerWithWish(db, me(r), id, i, new Date(), () => tellLater('answered', id)))),
       remove: (r: Req, id: string) => removeQuestion(db, me(r), id),
     },
     ideas: {
@@ -239,11 +284,10 @@ export function dataFor(cfg: Config, db: Db) {
       invite: (r: Req, celebrationId: string, name: string) => {
         const out: { id?: string; token?: string } = {};
         homersLabWaits();
-        addGuest(db, me(r), celebrationId, drawLinkWriter(me(r), celebrationId, name, out), day(), keyring(cfg));
-        settled(0);
+        drawsTold(r, () => { addGuest(db, me(r), celebrationId, drawLinkWriter(me(r), celebrationId, name, out), day(), keyring(cfg)); settled(0); });
         return viewOf(r).linkMade(out.id!, linkUrl(cfg, out.token!));
       },
-      revoke: (r: Req, id: string) => { revokeLink(db, me(r), id, (linkId) => guestLeaves(db, linkId)); settled(0); },
+      revoke: (r: Req, id: string) => drawsTold(r, () => { revokeLink(db, me(r), id, (linkId) => guestLeaves(db, linkId)); settled(0); }),
       /** A new address for a link (review M-b): the same guest, a new token shown once. */
       reissue: (r: Req, id: string) => {
         const made = reissueLink(db, me(r), id);
@@ -295,6 +339,56 @@ export function dataFor(cfg: Config, db: Db) {
         return ask(db, cfg.timezone, { guestId: g.id }, reach.personId, text);
       },
     },
+    /** Thank-yous (thanks/thanks.ts): the givers are told; who they are never comes back. Returns the wish's id. */
+    thanks: {
+      say: (r: Req, wishId: string, text: string) => {
+        atomically(() => tellLater('thanked', writeThanks(db, me(r), wishId, text, day())));
+        return wishId;
+      },
+    },
+    /** Notices and "Remind me" (ADR 0010): the caller's own only. */
+    notices: {
+      read: (r: Req) => markRead(db, me(r).id),
+      /** Reminded `days` before each of this person's celebrations, or not (null). Never about oneself. */
+      remind: (r: Req, personId: string, days: number | null) => {
+        const by = me(r);
+        const p = mustGetPerson(db, personId);
+        if (p.id === by.id) throw new Refused(403, 'your own celebrations remind you a week before');
+        if (days === null) db.delete(t.reminder).where(and(eq(t.reminder.personId, by.id), eq(t.reminder.aboutId, p.id))).run();
+        else db.insert(t.reminder).values({ personId: by.id, aboutId: p.id, days }).onConflictDoUpdate({ target: [t.reminder.personId, t.reminder.aboutId], set: { days } }).run();
+      },
+      /** The morning batch (jobs/morning.ts), from the scheduler: who was told is woken in the push queue. */
+      morning: (now: Date) => pusher.wake(morning(db, cfg, now)),
+    },
+    /** This device's Web Push subscription (push/push.ts): the caller's own; a standalone one ends with this session. */
+    push: {
+      subscribe: (r: Req, i: SubscriptionInput & { sync?: boolean }) => {
+        if (!cfg.egress || !usableVapid(cfg)) throw new Refused(409, 'push is off on this server');
+        const c = fastifyRequestOf(r).caller;
+        subscribe(db, me(r).id, c?.session?.id ?? null, i, new Date(), { sync: i.sync });
+      },
+      unsubscribe: (r: Req, endpoint: string) => unsubscribe(db, me(r).id, endpoint),
+    },
+    /**
+     * "Add from a link" (wishes/preview.ts, ADR 0011): a shop's page read through the egress client, for this person
+     * only, PREVIEWS_AN_HOUR an hour and one at a time (four at once in all). Nothing is stored.
+     */
+    preview: async (r: Req, link: string) => {
+      const p = me(r);
+      const now = Date.now();
+      const recent = (previews.recent.get(p.id) ?? []).filter((x) => now - x < 3_600_000);
+      if (recent.length >= PREVIEWS_AN_HOUR || previews.inFlight.has(p.id) || previews.all >= PREVIEWS_AT_ONCE) throw new Refused(409, 'too many pages read: wait a few minutes');
+      previews.recent.set(p.id, [...recent, now]);
+      previews.inFlight.add(p.id);
+      previews.all++;
+      try {
+        // KEEPSAKE_EGRESS=off turns it off here too, whatever client is in hand.
+        return viewOf(r).preview(await previewLink(egress, cfg.egress ? cfg.shopHosts : [], link, currency(db)));
+      } finally {
+        previews.inFlight.delete(p.id);
+        previews.all--;
+      }
+    },
     celebrations: {
       add: (r: Req, i: CelebrationInput) => changed(addCelebration(db, me(r), i).id),
       edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => {
@@ -302,10 +396,12 @@ export function dataFor(cfg: Config, db: Db) {
         if (patch.people) checkPeopleChange(db, id, patch.people, day());
         // A drawn draw's day only moves later (review H2); a move is audited.
         const moved = checkCelebrationMove(db, me(r), id, patch, day());
-        editCelebration(db, me(r), id, patch);
-        auditMoves(db, me(r), moved);
-        if (patch.people) dropLeavers(db, id, patch.people);
-        settled(0);
+        drawsTold(r, () => {
+          editCelebration(db, me(r), id, patch);
+          auditMoves(db, me(r), moved);
+          if (patch.people) dropLeavers(db, id, patch.people);
+          settled(0);
+        });
       },
       /** A drawn draw before its day goes only under the re-draw rules. */
       remove: (r: Req, id: string) => {

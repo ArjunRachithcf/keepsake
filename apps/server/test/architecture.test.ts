@@ -240,12 +240,22 @@ describe('the seam at run time', () => {
   });
 });
 
-describe('links are never fetched (spec §8)', () => {
-  it('nothing in the server opens a connection: no fetch, http(s), tls or dgram client, no HTTP library', () => {
+describe('one way out: the egress client (ADR 0011)', () => {
+  const EGRESS = 'apps/server/src/net/egress.ts';
+  it('only src/net/egress.ts opens a connection: no fetch, http(s), tls, dgram or DNS client anywhere else, no HTTP library', () => {
     expect(server.length).toBeGreaterThan(15);
-    const re = /\bfetch\s*\(|from\s+['"](?:node:)?(?:http|https|tls|http2|dgram)['"]|require\(\s*['"](?:node:)?(?:http|https|net|tls)['"]|from\s+['"](?:undici|axios|got|node-fetch)['"]|import\(\s*['"](?:node:)?(?:http|https|net|tls)['"]/;
-    expect(server.filter((f) => re.test(read(f))).map(rel)).toEqual([]);
-    // node:net only for isIP (config.ts)
-    for (const f of server.filter((x) => /from\s+['"](?:node:)?net['"]/.test(read(x)))) expect(read(f), rel(f)).toMatch(/import\s+\{\s*isIP\s*\}\s+from\s+['"]node:net['"]/);
+    const re = /\bfetch\s*\(|from\s+['"](?:node:)?(?:http|https|tls|http2|dgram|dns|dns\/promises)['"]|require\(\s*['"](?:node:)?(?:http|https|net|tls|dns)['"]|from\s+['"](?:undici|axios|got|node-fetch|web-push)['"]|import\(\s*['"](?:node:)?(?:http|https|net|tls|dns)['"]|\bnew\s+WebSocket\b|\bXMLHttpRequest\b/;
+    expect(server.filter((f) => re.test(read(f))).map(rel)).toEqual([EGRESS]);
+    // node:net elsewhere only for isIP (config.ts, the push and shop rules); egress.ts also takes BlockList and the lookup's type.
+    for (const f of server.filter((x) => rel(x) !== EGRESS && /from\s+['"](?:node:)?net['"]/.test(read(x)))) expect(read(f), rel(f)).toMatch(/import\s+\{\s*isIP\s*\}\s+from\s+['"]node:net['"]/);
+    expect(read(join(root, EGRESS))).toMatch(/import\s+\{\s*BlockList,\s*isIP,\s*type LookupFunction\s*\}\s+from\s+['"]node:net['"]/);
+  });
+  it('only the push queue and "Add from a link" use the egress client', () => {
+    const users = server.filter((f) => rel(f) !== EGRESS && /from\s+['"][./]+(?:net\/)?egress['"]/.test(read(f))).map(rel).sort();
+    expect(users).toEqual(['apps/server/src/app.ts', 'apps/server/src/data.ts', 'apps/server/src/push/push.ts', 'apps/server/src/wishes/preview.ts']);
+  });
+  it('a wish\'s link itself is never fetched: only POST /link-preview reads a page, and only when the person asks', () => {
+    const calls = server.filter((f) => /previewLink\(/.test(code(read(f)))).map(rel).sort();
+    expect(calls).toEqual(['apps/server/src/data.ts', 'apps/server/src/wishes/preview.ts']);
   });
 });

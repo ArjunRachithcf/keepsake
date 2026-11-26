@@ -1,6 +1,6 @@
 // A wish as a row (with a giver's actions when the server sent its gifts: gift.tsx), and the sheet to add or change one (spec §4 "New wish": name, link, price, For, most wanted, note).
 import { useId, useState } from 'react';
-import { api, message, type Celebration, type Wish, type WishInput, type WishPatch } from './api';
+import { api, message, type Celebration, type LinkPreview, type Wish, type WishInput, type WishPatch } from './api';
 import { host, money, parseMoney, toMoneyText } from './format';
 import { GiftLine, isBought } from './gift';
 import { useHousehold } from './household';
@@ -102,6 +102,19 @@ export function WishForm({ personId, wish, celebrations, initialFor, onDone, ans
       onDone();
     } catch (err) { setError(message(err)); } finally { setBusy(false); }
   };
+  /** "Add from a link" (ADR 0011): the server reads the shop's page; what it finds fills the empty fields, to check. */
+  const [found, setFound] = useState<string | null>(null);
+  const fill = async () => {
+    setBusy(true); setError(null); setFound(null);
+    try {
+      const p = await api<LinkPreview>('/link-preview', { method: 'POST', body: { url: link.trim() } });
+      if (p.name && !name.trim()) setName(p.name);
+      if (p.priceMinor !== null && currency && !price.trim()) setPrice(toMoneyText(p.priceMinor, currency));
+      setFound(p.name || p.pagePrice
+        ? `From the page: ${[p.name, p.pagePrice ? money(p.pagePrice.amountMinor, p.pagePrice.currency) : null].filter(Boolean).join(', ')}. Check it before you save.`
+        : 'The page did not say its name or price: type them in.');
+    } catch (err) { setError(message(err)); } finally { setBusy(false); }
+  };
   const remove = async () => {
     if (!wish || !confirm(`Remove “${wish.name}”? This cannot be undone.`)) return;
     setBusy(true); setError(null);
@@ -115,10 +128,14 @@ export function WishForm({ personId, wish, celebrations, initialFor, onDone, ans
       <Field label="What" id={`${id}-name`}>
         <input className="input" id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} autoComplete="off" />
       </Field>
-      <Field label="Link" id={`${id}-link`} hint="Optional. Keepsake keeps it as you type it and never opens it.">
+      <Field label="Link" id={`${id}-link`} hint={household.addFromLink ? 'Optional. Keepsake keeps it as you type it; it reads the page only when you ask it to fill in the wish, from the shops this Keepsake knows.' : 'Optional. Keepsake keeps it as you type it and never opens it.'}>
         <input className="input" id={`${id}-link`} type="url" inputMode="url" value={link} onChange={(e) => setLink(e.target.value)} maxLength={2000}
           placeholder="https://" autoComplete="off" aria-describedby={`${id}-link-hint`} />
       </Field>
+      {household.addFromLink && /^https:\/\//.test(link.trim()) && (
+        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void fill()}>Fill in from the link</button>
+      )}
+      {found && <p className="hint" role="status">{found}</p>}
       {currency ? (
         <Field label={`Price (${currency})`} id={`${id}-price`} hint="Optional.">
           <input className="input" id={`${id}-price`} inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} autoComplete="off" aria-describedby={`${id}-price-hint`} />

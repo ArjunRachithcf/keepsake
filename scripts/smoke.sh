@@ -3,7 +3,7 @@
 # HomersLab manifest (contracts/homerslab-app.yaml). Each must answer /api/health in its mode with the security headers,
 # let nobody in without a person (a forged X-HomersLab-* from anywhere but the trusted proxy included), and standalone
 # must write its one-time setup link to the data folder (0600) instead of making the first visitor admin, and make the
-# key that seals the draws in keys/ (0600), never in data/ and never in the log. homerslab mode must refuse to start
+# keys that seal the draws and sign pushes in keys/ (0600), never in data/ and never in the log. homerslab mode must refuse to start
 # without its three settings, and run without a sealing key (draws off).
 # Uses its own compose project (keepsake-m1test-*, or $KEEPSAKE_SMOKE_PROJECT) and removes everything it started.
 set -euo pipefail
@@ -78,6 +78,15 @@ dc logs keepsake 2>&1 | grep -q '/setup#' && { echo "the setup link reached the 
 [ "$(base64 -d "$work/keys/sealing.key" | wc -c)" = 32 ] || { echo "the sealing key is not 32 bytes" >&2; exit 1; }
 grep -rqF "$(cat "$work/keys/sealing.key")" "$work/data" && { echo "the sealing key is in data/" >&2; exit 1; }
 dc logs keepsake 2>&1 | grep -qF "$(cat "$work/keys/sealing.key")" && { echo "the sealing key reached the log" >&2; exit 1; }
+# Web Push's key (ADR 0010): the same rules, keys/vapid.key, 32 bytes, base64url
+[ "$(stat -c %a "$work/keys/vapid.key")" = 600 ] || { echo "no private VAPID key in keys/" >&2; exit 1; }
+[ "$(tr '_-' '/+' < "$work/keys/vapid.key" | tr -d '\n' | sed 's/$/=/' | base64 -d 2>/dev/null | wc -c)" = 32 ] || { echo "the VAPID key is not 32 bytes" >&2; exit 1; }
+grep -rqF "$(cat "$work/keys/vapid.key")" "$work/data" && { echo "the VAPID key is in data/" >&2; exit 1; }
+dc logs keepsake 2>&1 | grep -qF "$(cat "$work/keys/vapid.key")" && { echo "the VAPID key reached the log" >&2; exit 1; }
+# the PWA's files are served; the service worker with the security headers
+[ "$(status "http://127.0.0.1:$port/sw.js")" = 200 ] || { echo "no service worker" >&2; exit 1; }
+[ "$(status "http://127.0.0.1:$port/site.webmanifest")" = 200 ] || { echo "no web app manifest" >&2; exit 1; }
+[ "$(status "http://127.0.0.1:$port/api/notices")" = 401 ] || { echo "notices without a person" >&2; exit 1; }
 
 # 2. HomersLab: the manifest's image settings (port, volume, env).
 env_args=()
@@ -97,6 +106,7 @@ docker run -d --name "$hl" "${env_args[@]}" -e KEEPSAKE_EDGE_IDENTITY=homerslab-
   -v "$hl-data:/data" -p "127.0.0.1:$port2:8080" "$tag" >/dev/null
 wait_health "http://127.0.0.1:$port2/api/health" homerslab
 docker logs "$hl" 2>&1 | grep -q 'no sealing key' || { echo "homerslab mode without a sealing key did not say draws are off" >&2; exit 1; }
+docker logs "$hl" 2>&1 | grep -q 'no VAPID key' || { echo "homerslab mode without a VAPID key did not say push is off" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/household" "$FORGED")" = 401 ] || { echo "homerslab believes a header from outside the proxy" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/guest" "$FORGED")" = 401 ] || { echo "homerslab lets a guest in without a link" >&2; exit 1; }
 [ "$(status "http://127.0.0.1:$port2/api/auth/sign-in/options" null POST)" = 403 ] || { echo "a change without Origin was not refused" >&2; exit 1; }
