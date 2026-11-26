@@ -38,9 +38,9 @@ something is new.
   aside after 8 tries; it never holds up the others (third review, L1–L4). A row set aside is kept 14 days after its
   last try, long enough for whoever reads the log to look at it, then pruned with the people it names (issue #13).
 - **What a push service answers** (L4; only its status is read, the body is never parsed): 404 or 410 drops the
-  subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then; their people
-  stay in `pending_push`, so a crash meanwhile loses nothing, and their devices already reached are not pushed again
-  by that process); a 5xx, a timeout or our own failure never drops one; another 4xx drops it only after 3 days of
+  subscription; 429 backs that service off for 1, 2, 4 … minutes (at most an hour; its other pushes wait and are sent
+  then; their people stay in `pending_push`, so a crash meanwhile loses nothing, and their devices already reached are
+  not pushed again by that process), and after a day of 429s the pushes waiting for it are dropped (PR #14 review); a 5xx, a timeout or our own failure never drops one; another 4xx drops it only after 3 days of
   failing. **What can still be lost** (accepted): a push a service failed with a 5xx or a timeout, or accepted and
   never delivered, is not tried again; its notice is still in the app, read at the next open.
 - **Kept in step** (M2, L7, N4): the app sends its subscription again at every start and whenever it is shown again, so

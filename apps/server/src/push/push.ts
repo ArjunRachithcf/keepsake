@@ -132,6 +132,12 @@ export const MAX_ATTEMPTS = 8;
  * pruned with the people it names (issue #13, 3; ADR 0010).
  */
 export const SET_ASIDE_DAYS = 14;
+/**
+ * A push service that answers 429 is not called again for 1, 2, 4 … minutes (at most an hour), and once it has done so
+ * for this long since its first 429, the pushes waiting for it are dropped: their notices are still in the app (PR #14
+ * review, 2).
+ */
+export const THROTTLE_DROP_MS = DAY;
 /** stop() waits at most this long for pushes being sent (a hung push service must not hold up a shutdown, L1). */
 export const STOP_WAIT_MS = 2_000;
 
@@ -150,6 +156,8 @@ export class Pusher {
   private woken = new Set<string>();
   /** People whose push a 429 held back at the last tick: pending, but sent only at a real next tick (idle()). */
   private heldBack = new Set<string>();
+  /** Push services that answered 429: since when, how many times in a row, and not before when they are called again. */
+  private throttle = new Map<string, { first: number; n: number; until: number }>();
   private running: Promise<void> | null = null;
   private timer: NodeJS.Timeout | undefined;
   private stopped = false;
@@ -275,16 +283,19 @@ export class Pusher {
       if (!this.woken.has(personId)) this.db.delete(t.pendingPush).where(eq(t.pendingPush.personId, personId)).run();
     };
     for (const [p, n] of left) if (n === 0) done(p);
-    const throttled = new Set<string>();
     for (const s of subs) {
       // Stopping: whoever is not done keeps their push pending, for the next start (L4; issue #13, 1).
       if (this.stopped) return;
       const reached = this.reached.get(s.personId) ?? new Set<string>();
       this.reached.set(s.personId, reached);
       const service = new URL(s.endpoint).hostname;
+      const backoff = this.throttle.get(service);
       if (reached.has(s.id)) {
         // Reached at an earlier tick, before a 429 held back another of this person's devices.
-      } else if (throttled.has(service)) {
+      } else if (backoff && now - backoff.first > THROTTLE_DROP_MS) {
+        // A day of 429s: this push is dropped (counted as tried); the service is tried again with the next news.
+        reached.add(s.id);
+      } else if (backoff && now < backoff.until) {
         waiting.add(s.personId);
       } else {
         let status: number;
@@ -292,12 +303,14 @@ export class Pusher {
         // The stop's wait ran out while this push was on its way: the database may be closed already.
         if (this.stopped) return;
         const at = new Date().toISOString();
+        if (status !== 429) this.throttle.delete(service);
         if (status >= 200 && status < 300) {
           if (s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: null }).where(eq(t.pushSubscription.id, s.id)).run();
         } else if (status === 404 || status === 410) {
           this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
         } else if (status === 429) {
-          throttled.add(service);
+          const n = (backoff?.n ?? 0) + 1;
+          this.throttle.set(service, { first: backoff?.first ?? now, n, until: Date.now() + Math.min(2 ** (n - 1), 60) * 60_000 });
           waiting.add(s.personId);
         } else if (status >= 400 && status < 500) {
           if (!s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: at }).where(eq(t.pushSubscription.id, s.id)).run();

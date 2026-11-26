@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
 import * as t from '../src/db/schema';
-import { MAX_ATTEMPTS, Pusher, SET_ASIDE_DAYS, STOP_WAIT_MS, type Subscription } from '../src/push/push';
+import { MAX_ATTEMPTS, Pusher, SET_ASIDE_DAYS, STOP_WAIT_MS, THROTTLE_DROP_MS, type Subscription } from '../src/push/push';
 import { standalone } from './helpers';
 import { as, makeHome, ok, pin, type Home } from './m4';
 
@@ -176,5 +176,61 @@ describe('the push queue', () => {
     expect(pendingPushes(h)).toEqual(['p_alex']);
     await p.idle();
     expect([calls, pendingPushes(h)]).toEqual([['p_alex', 'p_robin', 'p_sam', 'p_alex'], []]);
+  });
+
+  /** Robin's devices: one on Mozilla's push service, one on Google's. */
+  function robinTwoServices(h: Home) {
+    h.db.delete(t.pushSubscription).run();
+    for (const [id, host] of [['moz', 'updates.push.services.mozilla.com'], ['fcm', 'fcm.googleapis.com']]) {
+      h.db.insert(t.pushSubscription).values({ id, personId: 'p_robin', endpoint: `https://${host}/wpush/v2/${id}`, p256dh: 'x', auth: 'x', createdAt: T0.toISOString(), confirmedAt: T0.toISOString() }).run();
+    }
+  }
+
+  it('news for someone while their own push is on its way gets a push of its own (PR #14 review, probe W)', async () => {
+    const h = await home(ON);
+    const { release, calls, transport } = threeDevices(h);
+    const p = new Pusher(h.db, transport);
+    p.wake(['p_robin']);
+    const first = p.tick();
+    await vi.waitFor(() => expect(calls).toEqual(['p_robin']), { timeout: 2000, interval: 5 });
+    p.wake(['p_robin']);
+    release();
+    await first;
+    expect(pendingPushes(h)).toEqual(['p_robin']);
+    await p.idle();
+    expect([calls, pendingPushes(h)]).toEqual([['p_robin', 'p_robin'], []]);
+  });
+
+  it('a device reached before a 429 on another of its person\'s devices is not pushed again (PR #14 review, probe R)', async () => {
+    const h = await home(ON);
+    robinTwoServices(h);
+    const sent: string[] = [];
+    let fcm = 429;
+    const p = new Pusher(h.db, async (s) => { sent.push(s.id); return s.id === 'fcm' ? fcm : 201; });
+    p.wake(['p_robin']);
+    await p.tick();
+    fcm = 201;
+    vi.setSystemTime(new Date(T0.getTime() + 60_000));
+    await p.tick();
+    expect([sent, pendingPushes(h)]).toEqual([['moz', 'fcm', 'fcm'], []]);
+  });
+
+  it('a push service answering 429 is backed off 1, 2, 4 … minutes, and after a day its pushes are dropped (PR #14 review, 2)', async () => {
+    const h = await home(ON);
+    robinTwoServices(h);
+    const sent: string[] = [];
+    const p = new Pusher(h.db, async (s) => { sent.push(s.id); return s.id === 'fcm' ? 429 : 201; });
+    const at = async (ms: number) => { vi.setSystemTime(new Date(T0.getTime() + ms)); sent.length = 0; await p.tick(); return [...sent]; };
+    p.wake(['p_robin']);
+    expect(await at(0)).toEqual(['moz', 'fcm']);
+    // Within its minute of backoff it is not called at all; after it, once; then two minutes.
+    expect(await at(30_000)).toEqual([]);
+    expect(await at(61_000)).toEqual(['fcm']);
+    expect(await at(61_000 + 90_000)).toEqual([]);
+    expect(await at(61_000 + 121_000)).toEqual(['fcm']);
+    expect(pendingPushes(h)).toEqual(['p_robin']);
+    // A day after its first 429 the pushes waiting for it are dropped (the notices stay in the app).
+    expect(await at(THROTTLE_DROP_MS + 1)).toEqual([]);
+    expect(pendingPushes(h)).toEqual([]);
   });
 });

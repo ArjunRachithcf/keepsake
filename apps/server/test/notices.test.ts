@@ -123,12 +123,16 @@ describe('a push says nothing', () => {
     await ok(as(h, 'robin').send('PUT', '/api/push/subscription', SUB('r1')));
     for (const s of [500, 503, 0, 429]) { status = s; for (let i = 0; i < 10; i++) await push(); }
     expect(subs()).toHaveLength(1);
-    // A 429: the service's other pushes in that tick wait for the next one, and are sent then.
+    // A 429: the service's other pushes in that tick wait, and are sent once its backoff (at most an hour) is over.
+    setNow(new Date(T0.getTime() + 2 * 3_600_000));
     await ok(as(h, 'robin').send('PUT', '/api/push/subscription', SUB('r2')));
     sent.length = 0;
     await push();
     expect(sent).toHaveLength(1);
     status = 201;
+    await h.built.pusher.tick();
+    expect(sent).toHaveLength(1);
+    setNow(new Date(T0.getTime() + 4 * 3_600_000));
     await h.built.pusher.tick();
     expect(sent).toHaveLength(3);
     status = 403;
@@ -137,7 +141,7 @@ describe('a push says nothing', () => {
     setNow(new Date(T0.getTime() + 2 * 86_400_000));
     await push();
     expect(subs()).toHaveLength(2);
-    setNow(new Date(T0.getTime() + 3 * 86_400_000 + 60_000));
+    setNow(new Date(T0.getTime() + 4 * 3_600_000 + 3 * 86_400_000 + 60_000));
     await push();
     expect(subs()).toEqual([]);
   });
