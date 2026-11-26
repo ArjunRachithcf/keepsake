@@ -117,11 +117,21 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
   pusher.resolve('answered', (id) => askersOf(db, id));
   pusher.resolve('thanked', (id, on) => thankRecipients(db, id, on));
   /** A change that may draw names, draw them again or clear them: the draw's people (but whoever did it) are told. */
+  // The change and its pending row in one transaction: kept or lost together (PR #12 third review, L3).
+  const atomically = <T>(f: () => T): T => db.transaction(() => f());
+  // A refused draw keeps what it wrote before refusing (its audit row), as it did outside a transaction; a failure
+  // writing the pending rows undoes the change.
   const drawsTold = <T>(r: Req, f: () => T): T => {
-    const before = drawStamps(db);
-    const v = f();
-    const by = me(r).id;
-    for (const d of drawsChanged(db, before)) tellLater('draw', d.celebrationId, { again: true, people: d.people.filter((p) => p !== by) });
+    let refused: { e: unknown } | undefined;
+    const v = atomically(() => {
+      const before = drawStamps(db);
+      let out: T;
+      try { out = f(); } catch (e) { refused = { e }; return undefined as T; }
+      const by = me(r).id;
+      for (const d of drawsChanged(db, before)) tellLater('draw', d.celebrationId, { again: true, people: d.people.filter((p) => p !== by) });
+      return out;
+    });
+    if (refused) throw refused.e;
     return v;
   };
   const previews = { inFlight: new Set<string>(), all: 0, recent: new Map<string, number[]>() };
@@ -254,9 +264,9 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     questions: {
       ask: (r: Req, personId: string, text: string) => { const p = me(r); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
       // Its asker (someone of the household) is told it was answered: questions.ts hands the id to the notice only.
-      answer: (r: Req, id: string, text: string) => { answerQuestion(db, me(r), id, text, new Date(), () => tellLater('answered', id)); },
-      decline: (r: Req, id: string) => { declineQuestion(db, me(r), id, new Date(), () => tellLater('answered', id)); },
-      withWish: (r: Req, id: string, i: WishInput) => changed(answerWithWish(db, me(r), id, i, new Date(), () => tellLater('answered', id))),
+      answer: (r: Req, id: string, text: string) => atomically(() => { answerQuestion(db, me(r), id, text, new Date(), () => tellLater('answered', id)); }),
+      decline: (r: Req, id: string) => atomically(() => { declineQuestion(db, me(r), id, new Date(), () => tellLater('answered', id)); }),
+      withWish: (r: Req, id: string, i: WishInput) => changed(atomically(() => answerWithWish(db, me(r), id, i, new Date(), () => tellLater('answered', id)))),
       remove: (r: Req, id: string) => removeQuestion(db, me(r), id),
     },
     ideas: {
@@ -332,8 +342,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     /** Thank-yous (thanks/thanks.ts): the givers are told; who they are never comes back. Returns the wish's id. */
     thanks: {
       say: (r: Req, wishId: string, text: string) => {
-        const id = writeThanks(db, me(r), wishId, text, day());
-        tellLater('thanked', id);
+        atomically(() => tellLater('thanked', writeThanks(db, me(r), wishId, text, day())));
         return wishId;
       },
     },
