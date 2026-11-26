@@ -33,7 +33,8 @@ something is new.
   into its notices before it ends; whoever has a push not yet sent keeps it in `pending_push`, sent at the next start.
   After a crash, both are still there. The pending row is written in the transaction of the change it belongs to. A
   row that fails is logged by its id and kind only, tried again after 1, 2, 4 … minutes (at most an hour) and set
-  aside after 8 tries; it never holds up the others (third review, L1–L4).
+  aside after 8 tries; it never holds up the others (third review, L1–L4). A row set aside is kept 14 days after its
+  last try, long enough for whoever reads the log to look at it, then pruned with the people it names (issue #13).
 - **What a push service answers** (L4; only its status is read, the body is never parsed): 404 or 410 drops the
   subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then); a 5xx, a
   timeout or our own failure never drops one; another 4xx drops it only after 3 days of failing.

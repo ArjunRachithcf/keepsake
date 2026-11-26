@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
 import * as t from '../src/db/schema';
-import { MAX_ATTEMPTS, Pusher, STOP_WAIT_MS, type Subscription } from '../src/push/push';
+import { MAX_ATTEMPTS, Pusher, SET_ASIDE_DAYS, STOP_WAIT_MS, type Subscription } from '../src/push/push';
 import { standalone } from './helpers';
 import { as, makeHome, ok, pin, type Home } from './m4';
 
@@ -88,5 +88,27 @@ describe('the push queue', () => {
       await next.pusher.tick();
       expect([sent.map((s) => s.personId), h.db.select().from(t.pendingPush).all()]).toEqual([['p_quinn'], []]);
     } finally { await next.app.close(); }
+  });
+
+  it('a row set aside is pruned SET_ASIDE_DAYS after its last try, with the people it names; one still tried is not (issue #13, 3)', async () => {
+    const h = await home(ON);
+    const p = new Pusher(h.db, async () => 201);
+    p.resolve('answered', () => { throw new Error('broken'); });
+    p.tell({ kind: 'answered', subjectId: 'q_aside', day: '2026-12-01' });
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      h.db.update(t.pendingNotice).set({ nextAt: null }).run();
+      await p.idle();
+    }
+    p.tell({ kind: 'answered', subjectId: 'q_waiting', day: '2026-12-01' });
+    await p.idle();
+    const rows = () => h.db.select().from(t.pendingNotice).all().map((r) => [r.subjectId, r.attempts]);
+    expect(rows()).toEqual([['q_aside', MAX_ATTEMPTS], ['q_waiting', 1]]);
+    // Its last try's retry time is an hour after T0 at most: just before the retention, it stays.
+    vi.setSystemTime(new Date(T0.getTime() + SET_ASIDE_DAYS * 86_400_000));
+    await p.tick();
+    expect(rows().map((r) => r[0])).toEqual(['q_aside', 'q_waiting']);
+    vi.setSystemTime(new Date(T0.getTime() + (SET_ASIDE_DAYS + 1) * 86_400_000));
+    await p.tick();
+    expect(rows()).toEqual([['q_waiting', 3]]);
   });
 });

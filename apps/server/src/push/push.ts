@@ -10,7 +10,7 @@
 // - The key (VAPID) is kept like the sealing key (push/keys.ts): outside the database and its backup.
 // - A standalone subscription is the session's: it ends when that session ends (sign-out, a lost device).
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, eq, inArray, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
 import { tell, type NoticeKind } from '../notices/notices';
 import { asDb, type Db } from '../db/open';
 import * as t from '../db/schema';
@@ -125,6 +125,11 @@ const DAY = 86_400_000;
  */
 /** A pending row that fails is tried again after 1, 2, 4 … minutes (at most an hour), and set aside after this many tries. */
 export const MAX_ATTEMPTS = 8;
+/**
+ * A row set aside is kept this long after its last try (its retry time), for whoever reads the log to look at it, then
+ * pruned with the people it names (issue #13, 3; ADR 0010).
+ */
+export const SET_ASIDE_DAYS = 14;
 /** stop() waits at most this long for pushes being sent (a hung push service must not hold up a shutdown, L1). */
 export const STOP_WAIT_MS = 2_000;
 
@@ -237,6 +242,7 @@ export class Pusher {
   private async run(): Promise<void> {
     const now = Date.now();
     this.makeNotices();
+    this.db.delete(t.pendingNotice).where(and(gte(t.pendingNotice.attempts, MAX_ATTEMPTS), lt(t.pendingNotice.nextAt, new Date(now - SET_ASIDE_DAYS * DAY).toISOString()))).run();
     if (!this.transport) { this.db.delete(t.pendingPush).run(); return; }
     // A session that has ended takes its device's subscription with it (the foreign key); unconfirmed ones go.
     pruneSessions(this.db);
