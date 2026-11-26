@@ -232,6 +232,48 @@ describe('the household', () => {
   });
 });
 
+describe('names and entries shown to others (Gate routes L6)', () => {
+  beforeEach(fresh);
+  it('format and control characters are refused in member, wish and celebration names, places and profile entries', async () => {
+    const zwsp = 'Sam\u200b', rlo = 'A \u202egnp.exe kite';
+    const codes = [
+      (await as('alex').send('POST', '/api/people', { name: zwsp, role: 'adult' })).statusCode,
+      (await as('alex').send('PATCH', '/api/people/p_robin', { name: zwsp })).statusCode,
+      (await as('alex').send('POST', '/api/wishes', { personId: 'p_alex', name: rlo, quantity: 1, mostWanted: false, celebrationId: null, link: null, priceMinor: null, note: null })).statusCode,
+      (await as('alex').send('PATCH', '/api/wishes/w_alex_tent', { name: rlo })).statusCode,
+      (await as('alex').send('POST', '/api/celebrations', { name: rlo, date: '2026-12-31', recurrence: 'none', poster: 'pine', people: ['p_alex'] })).statusCode,
+      (await as('alex').send('PATCH', '/api/celebrations/c_xmas', { place: rlo })).statusCode,
+      (await as('robin').send('PUT', '/api/people/p_robin/profile', { likes: [rlo] })).statusCode,
+      (await as('robin').send('PUT', '/api/people/p_robin/profile', { sizes: [{ label: 'Shoes\u200b', value: '42' }] })).statusCode,
+    ];
+    expect(codes).toEqual([400, 400, 400, 400, 400, 400, 400, 400]);
+    // The same without them goes through.
+    expect((await as('alex').send('PATCH', '/api/wishes/w_alex_tent', { name: 'A kite' })).statusCode).toBe(200);
+  });
+
+  it('a new member named like another (case, accents and characters that show nothing aside) waits for a confirmation', async () => {
+    const add = (name: string, confirmName?: boolean) => as('alex').send('POST', '/api/people', { name, role: 'adult', ...(confirmName ? { confirmName } : {}) });
+    const r = await add('SÀM');
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'someone in the household has a name like that: add something to tell them apart, or confirm' }]);
+    expect((await as('alex').send('PATCH', '/api/people/p_robin', { name: 'sam' })).statusCode).toBe(409);
+    expect((await add('Sam K.')).statusCode).toBe(201);
+    expect((await add('Sàm', true)).statusCode).toBe(201);
+  });
+
+  it('blanks that are not spaces are refused, and look-alikes of other scripts wait for a confirmation (Gate re-attack)', async () => {
+    const add = (name: string, confirmName?: boolean) => as('alex').send('POST', '/api/people', { name, role: 'adult', ...(confirmName ? { confirmName } : {}) });
+    for (const name of ['Sam\u2800', '\u2800', 'Sa\u17B4m', 'Sam\u2028', 'Sam\u{1D159}'])
+      expect([JSON.stringify(name), (await add(name)).json().error]).toEqual([JSON.stringify(name), 'name: 1 to 60 characters, without control characters']);
+    const like = 'someone in the household has a name like that: add something to tell them apart, or confirm';
+    // Cyrillic а, Greek Α, a capital I inside a word, Cyrillic capitals
+    // ... and the second re-attack's: a name in Cyrillic throughout (Ѕам), Armenian օ, Cherokee Ꭺ.
+    for (const name of ['S\u0430m', '\u0391lex', 'AIex', 'R\u041eBIN', '\u0405\u0430\u043c', 'R\u0585bin', '\u13AAlex'])
+      expect(await add(name).then((r) => [name, r.statusCode, r.json().error])).toEqual([name, 409, like]);
+    expect((await add('Ian')).statusCode).toBe(201);
+    expect((await add('S\u0430m', true)).statusCode).toBe(201);
+  });
+});
+
 describe('limits', () => {
   beforeEach(fresh);
   it('a list holds at most 300 wishes; one person keeps at most 30 suggestions waiting for another', async () => {

@@ -27,11 +27,22 @@ export function openDb(file: string): Db {
   const client = new Database(file);
   client.pragma('journal_mode = WAL');
   client.pragma('foreign_keys = ON');
+  // What is deleted is overwritten with zeros, not left in free pages (Gate surprise L4: a question taken back, its
+  // asker). The WAL keeps older copies of a page until a checkpoint: `checkpoint` below, at every tick of the queue.
+  client.pragma('secure_delete = ON');
   const db = drizzle(client, { schema });
   migrate(db, { migrationsFolder: migrationsDir() });
   // The household's data is for Keepsake's user only, whatever the umask was (main.ts sets 077 too).
   if (file !== ':memory:') for (const f of [file, `${file}-wal`, `${file}-shm`]) if (existsSync(f)) chmodSync(f, 0o600);
   return db as Db;
+}
+
+/**
+ * Moves the WAL into the database and empties it, so a deleted row's older copies leave the WAL too (Gate surprise L4).
+ * Cheap for a household's database; skipped (nothing happens) while another connection holds a read open.
+ */
+export function checkpoint(db: Db): void {
+  db.$client.pragma('wal_checkpoint(TRUNCATE)');
 }
 
 /** A transaction handle used where a Db is expected (same API for what we use). */

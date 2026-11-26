@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
 import * as t from '../src/db/schema';
-import { MAX_ATTEMPTS, Pusher, SET_ASIDE_DAYS, STOP_WAIT_MS, type Subscription } from '../src/push/push';
+import { MAX_ATTEMPTS, Pusher, SET_ASIDE_DAYS, STOP_WAIT_MS, THROTTLE_DROP_MS, type Subscription } from '../src/push/push';
 import { standalone } from './helpers';
 import { as, makeHome, ok, pin, type Home } from './m4';
 
@@ -54,6 +54,8 @@ describe('the push queue', () => {
     p.resolve('answered', () => { throw new Error('q_secret is broken'); });
     p.tell({ kind: 'answered', subjectId: 'q_secret', day: '2026-12-01' });
     p.tell({ kind: 'draw', subjectId: 'c_one', day: '2026-12-01', people: ['p_robin'] });
+    // An answer is made at the batch (Gate surprise H1), a draw at the tick.
+    p.batch();
     await p.idle();
     const notices = h.db.select().from(t.notice).where(eq(t.notice.subjectId, 'c_one')).all().map((n) => n.personId);
     const bad = () => h.db.select().from(t.pendingNotice).all();
@@ -62,6 +64,7 @@ describe('the push queue', () => {
     // Tried again once due, until set aside; idle() never spins on it.
     for (let i = 0; i < MAX_ATTEMPTS + 2; i++) {
       h.db.update(t.pendingNotice).set({ nextAt: null }).run();
+      p.batch();
       await p.idle();
     }
     expect(bad().map((r) => r.attempts)).toEqual([MAX_ATTEMPTS]);
@@ -78,8 +81,9 @@ describe('the push queue', () => {
 
   it('the notices a stop makes keep their push pending in the database; the next start sends it (L4)', async () => {
     const h = await makeHome(ON);
-    const q = await asked(h);
-    await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'M' }));
+    await asked(h);
+    // A change told at the tick (a draw's): the stop makes its notice.
+    h.built.pusher.tell({ kind: 'draw', subjectId: 'c_xmas', day: '2026-12-02', people: ['p_quinn'] });
     await h.built.app.close();
     expect(h.db.select().from(t.pendingPush).all().map((r) => r.personId)).toEqual(['p_quinn']);
     const sent: Subscription[] = [];
@@ -97,17 +101,19 @@ describe('the push queue', () => {
     p.tell({ kind: 'answered', subjectId: 'q_aside', day: '2026-12-01' });
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       h.db.update(t.pendingNotice).set({ nextAt: null }).run();
-      await p.idle();
+      p.batch();
     }
     p.tell({ kind: 'answered', subjectId: 'q_waiting', day: '2026-12-01' });
-    await p.idle();
+    p.batch();
     const rows = () => h.db.select().from(t.pendingNotice).all().map((r) => [r.subjectId, r.attempts]);
     expect(rows()).toEqual([['q_aside', MAX_ATTEMPTS], ['q_waiting', 1]]);
     // Its last try's retry time is an hour after T0 at most: just before the retention, it stays.
     vi.setSystemTime(new Date(T0.getTime() + SET_ASIDE_DAYS * 86_400_000));
+    p.batch();
     await p.tick();
     expect(rows().map((r) => r[0])).toEqual(['q_aside', 'q_waiting']);
     vi.setSystemTime(new Date(T0.getTime() + (SET_ASIDE_DAYS + 1) * 86_400_000));
+    p.batch();
     await p.tick();
     expect(rows()).toEqual([['q_waiting', 3]]);
   });
@@ -176,5 +182,61 @@ describe('the push queue', () => {
     expect(pendingPushes(h)).toEqual(['p_alex']);
     await p.idle();
     expect([calls, pendingPushes(h)]).toEqual([['p_alex', 'p_robin', 'p_sam', 'p_alex'], []]);
+  });
+
+  /** Robin's devices: one on Mozilla's push service, one on Google's. */
+  function robinTwoServices(h: Home) {
+    h.db.delete(t.pushSubscription).run();
+    for (const [id, host] of [['moz', 'updates.push.services.mozilla.com'], ['fcm', 'fcm.googleapis.com']] as const) {
+      h.db.insert(t.pushSubscription).values({ id, personId: 'p_robin', endpoint: `https://${host}/wpush/v2/${id}`, p256dh: 'x', auth: 'x', createdAt: T0.toISOString(), confirmedAt: T0.toISOString() }).run();
+    }
+  }
+
+  it('news for someone while their own push is on its way gets a push of its own (PR #14 review, probe W)', async () => {
+    const h = await home(ON);
+    const { release, calls, transport } = threeDevices(h);
+    const p = new Pusher(h.db, transport);
+    p.wake(['p_robin']);
+    const first = p.tick();
+    await vi.waitFor(() => expect(calls).toEqual(['p_robin']), { timeout: 2000, interval: 5 });
+    p.wake(['p_robin']);
+    release();
+    await first;
+    expect(pendingPushes(h)).toEqual(['p_robin']);
+    await p.idle();
+    expect([calls, pendingPushes(h)]).toEqual([['p_robin', 'p_robin'], []]);
+  });
+
+  it('a device reached before a 429 on another of its person\'s devices is not pushed again (PR #14 review, probe R)', async () => {
+    const h = await home(ON);
+    robinTwoServices(h);
+    const sent: string[] = [];
+    let fcm = 429;
+    const p = new Pusher(h.db, async (s) => { sent.push(s.id); return s.id === 'fcm' ? fcm : 201; });
+    p.wake(['p_robin']);
+    await p.tick();
+    fcm = 201;
+    vi.setSystemTime(new Date(T0.getTime() + 60_000));
+    await p.tick();
+    expect([sent, pendingPushes(h)]).toEqual([['moz', 'fcm', 'fcm'], []]);
+  });
+
+  it('a push service answering 429 is backed off 1, 2, 4 … minutes, and after a day its pushes are dropped (PR #14 review, 2)', async () => {
+    const h = await home(ON);
+    robinTwoServices(h);
+    const sent: string[] = [];
+    const p = new Pusher(h.db, async (s) => { sent.push(s.id); return s.id === 'fcm' ? 429 : 201; });
+    const at = async (ms: number) => { vi.setSystemTime(new Date(T0.getTime() + ms)); sent.length = 0; await p.tick(); return [...sent]; };
+    p.wake(['p_robin']);
+    expect(await at(0)).toEqual(['moz', 'fcm']);
+    // Within its minute of backoff it is not called at all; after it, once; then two minutes.
+    expect(await at(30_000)).toEqual([]);
+    expect(await at(61_000)).toEqual(['fcm']);
+    expect(await at(61_000 + 90_000)).toEqual([]);
+    expect(await at(61_000 + 121_000)).toEqual(['fcm']);
+    expect(pendingPushes(h)).toEqual(['p_robin']);
+    // A day after its first 429 the pushes waiting for it are dropped (the notices stay in the app).
+    expect(await at(THROTTLE_DROP_MS + 1)).toEqual([]);
+    expect(pendingPushes(h)).toEqual([]);
   });
 });

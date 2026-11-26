@@ -1,11 +1,11 @@
 // One-time links to enrol a passkey (Philobiblos ADR 0010): the first admin's setup link, an admin's invite, your own
 // link for another device, and `keepsake recover`'s. The token travels in the link's #fragment (never in a request
 // line or a log) and the database keeps only its hash.
-import { closeSync, constants, fchmodSync, openSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, mkdirSync, openSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { ulid } from 'ulid';
-import type { Config } from '../config';
+import { isInside, type Config } from '../config';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { setupNeeded } from '../household/people';
@@ -17,13 +17,13 @@ const HOUR = 3_600_000;
 export const SETUP_FILE = 'setup-link.txt';
 const HOURS: Record<InviteKind, number> = { setup: 24, admin: 7 * 24, self: 24, recovery: 24 };
 
-export function createInvite(db: Db, cfg: Pick<Config, 'origin'>, o: { kind: InviteKind; personId?: string; createdBy?: string; now?: Date }) {
+export function createInvite(db: Db, cfg: Pick<Config, 'origin'>, o: { kind: InviteKind; personId?: string; createdBy?: string; invitedBy?: string | null; now?: Date }) {
   const now = o.now ?? new Date();
   const token = newToken();
   const expiresAt = new Date(now.getTime() + HOURS[o.kind] * HOUR);
   db.insert(t.invite).values({
     id: ulid(), kind: o.kind, personId: o.personId ?? null, tokenHash: hashToken(token),
-    createdBy: o.createdBy ?? null, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
+    createdBy: o.createdBy ?? null, invitedBy: o.invitedBy ?? null, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString(),
   }).run();
   return { url: `${cfg.origin}/${o.kind === 'setup' ? 'setup' : 'enrol'}#${token}`, token, expiresAt };
 }
@@ -52,10 +52,11 @@ export function openRecovery(db: Db, now = new Date()): boolean {
 
 /**
  * Standalone start-up: while no admin can sign in, a fresh setup link (older ones stop working) is written to
- * KEEPSAKE_DATA_DIR/setup-link.txt, readable by Keepsake's user only. Never the first visitor: whoever can read the
+ * KEEPSAKE_KEYS_DIR/setup-link.txt, readable by Keepsake's user only, never into the data folder: a backup of it must
+ * not carry a live admin link (Gate routes L2). Never the first visitor: whoever can read the
  * data folder becomes the first admin. The log says where the file is, never the link.
  */
-export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir'>): string | null {
+export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir' | 'keysDir'>): string | null {
   if (cfg.mode !== 'standalone' || !setupNeeded(db)) {
     if (!openRecovery(db)) removeSetupLink(cfg);
     return null;
@@ -66,7 +67,7 @@ export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'd
 }
 
 /** `keepsake recover <admin id>`: a one-time link (24 hours) for an admin who lost every passkey, into the same file. */
-export function createRecoveryLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir'>, personId: string): string {
+export function createRecoveryLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir' | 'keysDir'>, personId: string): string {
   if (cfg.mode !== 'standalone') throw new Error('under HomersLab, HomersLab signs people in');
   const p = db.select().from(t.person).where(eq(t.person.id, personId)).get();
   if (!p || p.role !== 'admin') throw new Error(`no admin with the id ${personId}`);
@@ -75,9 +76,11 @@ export function createRecoveryLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' |
 }
 
 /** Never follows a link someone put at the path: the old name is removed, then the file is created anew, 0600. */
-function writeLinkFile(cfg: Pick<Config, 'dataDir'>, url: string): string {
-  const file = join(cfg.dataDir, SETUP_FILE);
-  rmSync(file, { force: true });
+function writeLinkFile(cfg: Pick<Config, 'dataDir' | 'keysDir'>, url: string): string {
+  if (isInside(cfg.dataDir, cfg.keysDir)) throw new Error('KEEPSAKE_KEYS_DIR must not be in KEEPSAKE_DATA_DIR (a backup of the data would carry the link)');
+  mkdirSync(cfg.keysDir, { recursive: true, mode: 0o700 });
+  removeSetupLink(cfg);
+  const file = join(cfg.keysDir, SETUP_FILE);
   const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try {
     fchmodSync(fd, 0o600);
@@ -88,6 +91,8 @@ function writeLinkFile(cfg: Pick<Config, 'dataDir'>, url: string): string {
   return file;
 }
 
-export function removeSetupLink(cfg: Pick<Config, 'dataDir'>): void {
+/** Removes the link file, and one an earlier version left in the data folder. */
+export function removeSetupLink(cfg: Pick<Config, 'dataDir' | 'keysDir'>): void {
+  rmSync(join(cfg.keysDir, SETUP_FILE), { force: true });
   rmSync(join(cfg.dataDir, SETUP_FILE), { force: true });
 }

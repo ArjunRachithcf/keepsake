@@ -18,12 +18,25 @@ function noticeText(n: NoticeT, you: (id: string | undefined) => string): { text
     case 'reveal': return { text: c ? `${c.name}: everyone’s draw is shown now` : 'A draw is shown now', to: c ? `/celebrations/${c.id}` : null };
     case 'say_thanks': return { text: c ? `Your ${c.name} gifts are here: say thank you` : 'Gifts are here: say thank you', to: null };
     case 'thanked': return { text: `${n.person?.name ?? 'Someone'} thanked you`, to: null };
+    // Gate routes M1: a reset of someone's sign-in, asked or done, and by whom.
+    case 'reset_asked': return n.person && you(n.person.id) === 'You'
+      ? { text: `${n.by?.name ?? 'An admin'} asked to reset your sign-in: if you did not lose your devices, call it off`, to: null }
+      : { text: `${n.by?.name ?? 'An admin'} asked to reset ${n.person?.name ?? 'someone'}’s sign-in`, to: '/family' };
+    case 'signin_reset': return n.person && you(n.person.id) === 'You'
+      ? { text: `Your sign-in was reset by ${n.by?.name ?? 'an admin'}: confirm it was you to open your draws`, to: null }
+      : { text: `${n.person?.name ?? 'Someone'}’s sign-in was reset by ${n.by?.name ?? 'an admin'}`, to: null };
+    // Gate re-attack 2: a new admin (C1), being signed out by someone else (C2), a group gift's target raised (Q3).
+    case 'new_admin': return { text: `${n.person?.name ?? 'Someone'} is an admin now`, to: '/family' };
+    case 'sessions_ended': return n.person && you(n.person.id) === 'You'
+      ? { text: `${n.by?.name ?? 'An admin'} signed you out everywhere`, to: null }
+      : { text: `${n.by?.name ?? 'Someone'} signed ${n.person?.name ?? 'someone'} out everywhere`, to: null };
+    case 'target_raised': return { text: `The target of a group gift for ${n.person?.name ?? 'someone'} went up`, to: n.person ? `/family/${n.person.id}` : null };
   }
 }
 
 /** The notices at the top of My wishes, while any is unread; "Seen" marks them read. */
 export function NoticesGroup({ refresh }: { refresh: number }) {
-  const { name } = useHousehold();
+  const { name, me } = useHousehold();
   const [data, setData] = useState<Notices | null>(null);
   const [all, setAll] = useState(false);
   const load = useCallback(async () => { try { setData(await api<Notices>('/notices')); } catch { setData(null); } }, []);
@@ -35,8 +48,18 @@ export function NoticesGroup({ refresh }: { refresh: number }) {
     <Group title={all ? 'News' : `New (${data.unread})`} footer={data.unread ? <button type="button" className="btn-text" onClick={seen}>Seen</button> : undefined}>
       {shown.map((n) => {
         const t = noticeText(n, (id) => (id ? name(id) : ''));
+        // Your own sign-in's reset: call it off while it waits, or confirm it on your new device (Gate routes M1).
+        const mine = n.person?.id === me.id && (n.kind === 'reset_asked' || n.kind === 'signin_reset');
+        const act = mine ? (
+          <button type="button" className="btn btn-sm" onClick={() => void (n.kind === 'reset_asked'
+            ? api(`/people/${me.id}/passkeys/reset`, { method: 'DELETE' })
+            : api('/me/reset/confirm', { method: 'POST' })).catch(() => undefined).then(load)}>
+            {n.kind === 'reset_asked' ? 'Call it off' : 'That was me'}
+          </button>
+        ) : null;
         return (
           <li key={n.id} className="row">
+            {act}
             {t.to ? <Link to={t.to} className="row-link"><span className="row-text"><span className="row-title">{t.text}</span><span className="row-sub">{day(n.on)}</span></span><span className="chevron" aria-hidden="true">›</span></Link>
               : <span className="row-text"><span className="row-title">{t.text}</span><span className="row-sub">{day(n.on)}</span></span>}
           </li>

@@ -1,7 +1,7 @@
 // Family (spec §4): the grown-ups and the kids (with how many wishes wait for you); for admins, the household:
 // people, roles, kids' managers, one-time links, the currency, every guest link, and the sheet's one-time import.
 import { useEffect, useId, useState } from 'react';
-import { api, ApiError, message, type Celebration, type Home, type OneTimeLink, type Passkeys, type Person } from '../api';
+import { api, ApiError, message, type Celebration, type Home, type OneTimeLink, type PasskeyReset, type Passkeys, type Person } from '../api';
 import { roleLabel, useHousehold } from '../household';
 import { Field, Group, Link, Notice, PageHead, Sheet } from '../ui';
 import { LinksList } from '../links';
@@ -64,6 +64,7 @@ function ManageHousehold() {
   const id = useId();
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<{ name: string; link: OneTimeLink } | null>(null);
+  const [asked, setAsked] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [role, setRole] = useState<Person['role']>('adult');
   const [currency, setCurrency] = useState(household.currency ?? '');
@@ -78,6 +79,7 @@ function ManageHousehold() {
   return (
     <div className="stack">
       {error && <Notice kind="error">{error}</Notice>}
+      {asked && <Notice>{asked}</Notice>}
       <form className="stack" onSubmit={(e) => { e.preventDefault(); void run(() => api('/household', { method: 'PATCH', body: { currency: currency.trim().toUpperCase() || null } })); }}>
         <Field label="Currency" id={`${id}-cur`} hint="Three letters (ISO 4217), like CHF, EUR or USD. Every price is in it.">
           <input className="input input-short" id={`${id}-cur`} value={currency} maxLength={3} autoCapitalize="characters" onChange={(e) => setCurrency(e.target.value)} aria-describedby={`${id}-cur-hint`} />
@@ -128,10 +130,17 @@ function ManageHousehold() {
             )}
             {standalone && p.signsIn && p.role !== 'admin' && (
               <button type="button" className="btn btn-sm" onClick={() => {
-                if (!confirm(`Lost every device? This removes ${p.name}’s passkeys and signs them out everywhere; then you send them a new sign-in link.`)) return;
+                if (!confirm(`Lost every device? ${p.name} is told at once and can call it off. Their passkeys are removed and they are signed out everywhere an hour after another admin says yes too (or a day from now); then you send them a new sign-in link.`)) return;
                 void run(async () => {
-                  await api(`/people/${p.id}/passkeys/reset`, { method: 'POST' });
-                  setLink({ name: p.name, link: await api<OneTimeLink>(`/people/${p.id}/invites`, { method: 'POST' }) });
+                  setAsked(null);
+                  const r = await api<PasskeyReset>(`/people/${p.id}/passkeys/reset`, { method: 'POST' });
+                  if (r.state === 'done') setLink({ name: p.name, link: await api<OneTimeLink>(`/people/${p.id}/invites`, { method: 'POST' }) });
+                  else {
+                    const from = r.notBefore ? new Date(r.notBefore).toLocaleString() : 'tomorrow';
+                    setAsked(r.waitsFor === 'an_hour'
+                      ? `${r.approvedBy?.name ?? 'Another admin'} said yes: press Reset passkeys again from ${from} to reset them. ${p.name} is told, and can call it off until then.`
+                      : `Asked: press Reset passkeys again from ${from} to reset them, or sooner, an hour after another admin presses it too. ${p.name}, the other admins and the people of their draws are told; ${p.name} can call it off.`);
+                  }
                 });
               }}>
                 Reset passkeys<span className="sr-only"> ({p.name})</span>

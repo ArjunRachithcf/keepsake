@@ -4,7 +4,10 @@ Status: **Proposed** · 2026-11-24 · revised 2026-11-25 (draws belong to celebr
 
 **Decision**: A draw belongs to one celebration and is made by the server with a cryptographic random source. Until
 the celebration's reveal date each giver can learn only their own receiver; nobody, the host and admins included, can
-list the whole draw through the app. The host chooses a reveal date or never ("never" by default).
+list the whole draw through the app. The host chooses a reveal date or never ("never" by default) before drawing;
+once the names are drawn, "never" is never (no reveal date can be set any more) and a reveal date only moves later or
+to never (Gate surprise L1: otherwise a host who drew with never could set today's date after the day and read every
+pair, and the veils would lift).
 
 - **Rules**: nobody draws themselves; excluded pairs never draw each other (both ways); optionally nobody draws last
   year's person. Exclusions are seen by the host only. An impossible set of rules is refused before drawing, with which
@@ -94,7 +97,7 @@ list the whole draw through the app. The host chooses a reveal date or never ("n
   - Changing who draws or the rules once drawn is a re-draw.
   - "Everyone told" is in the app (`redrawnAt`: everyone opens theirs again) and, since M5, as a notice to each person
     in the draw but whoever drew, with its push that names nobody (ADR 0010).
-  - Once the day has come, only the reveal date changes.
+  - Once the day has come, only the reveal date changes (later, or to never; never once drawn with never).
 - **Someone in a drawn draw leaves the household**:
   - Before its day, under the re-draw rules: they are taken out and the others are drawn again, everyone told if
     anyone had opened theirs. If the others can no longer be drawn (too few, say), the draw goes back to not drawn,
@@ -114,3 +117,23 @@ list the whole draw through the app. The host chooses a reveal date or never ("n
   because it shows. Her session ends at once, the new address's page tells her when the earlier one was last used, and
   the host's list counts the new addresses. Only whoever runs the draw can (its host, an admin only when it has none):
   an admin in the draw who is not its host cannot, so the pairs stay secret from everyone else in it.
+- **An admin does not become someone to open their draw** (Gate routes M1, decided by Arjun 2026-11-26; re-attack B1,
+  the same day). A passkey reset followed by an invite let an admin enrol as anyone and open their draw (demoting an
+  admin first got round "never an admin's"); then a lone admin made a "second admin", enrolled them from their own
+  invite and had the yes at once. Now a reset needs a second admin's yes or a day; the yes counts only from someone who
+  was an admin, with a passkey of their own, a week before the ask, whom the asker never added, changed the role of or
+  made a sign-in link for, nor anyone those people made, at any depth (decided by the person in the audit, not by their
+  keys: a second re-attack rotated the key away, a third went one hop further, Alex → Helper → Helper Two; a key made
+  from one's own link inherits the lineage of the one that made it). Accepted: every admin descends from the setup
+  admin, so the setup admin's own asks always take the day, and it is carried out an hour
+  after the yes at the earliest. Everyone is told, at the morning batch, when someone becomes an admin. Ending the
+  person's sessions keeps their devices subscribed and tells them, and is refused while a reset waits (C2). An ask whose asker has gone is nobody's. At the ask,
+  before anything is reset, the person is warned (a notice and a push to their devices, their sessions kept, so they
+  can call it off), and the other admins, the people of their open draws and a kid's parents are told; done, all of
+  them again ("X's sign-in was reset by Y"). The reset person's draws stay sealed to them (no receiver, no pairs, no
+  opening, and nothing of their own for the people of those draws is marked theirs: claims, shares, ideas, questions,
+  gifts given and their thank-yous, Gate re-attack R2; and their writes on those people's wishes, ideas, questions
+  and reminders answer the same 404 and change nothing, Gate re-attack 2, Q2) until they confirm on their new device; someone demoted from
+  admin in the last 30 days is still an admin for resets; new people, role changes, invites and every step of a reset
+  are audited. Accepted: two genuine, long-standing admins acting together, or one admin when the person ignores a day
+  of warnings, can still do it, loudly (docs/security.md).

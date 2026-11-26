@@ -32,12 +32,11 @@ export const MESSAGES = [
   'your own wishes are for others to give', 'grown-ups claim gifts and chip in', 'only a wish on the list can be given',
   'it is not a group gift', 'it is a group gift: chip in instead', 'you have given it already',
   'someone is getting it already', 'not that many are left to claim', 'you have not claimed it',
-  'it was given, and its celebration is over', 'it is given: mark it not given first',
+  'it was given, and its celebration is over', 'it is given: mark it not given first', 'it was given: the reservation stays', 'a reset of their sign-in waits: it is carried out or called off first',
   'only for a gift you gave, once its celebration is over', 'it is a group gift already',
   'whoever started the group gift changes it', 'it is bought: the target stays',
   'others have chipped in: they take their share back first', 'it is bought: shares stay as they are',
-  'you have not chipped in', 'targetMinor or state: one of them', 'that would go over the target',
-  'the target cannot go below what is chipped in',
+  'you have not chipped in', 'someone has chipped in: only whoever started it raises the target', 'you changed your share 3 times today: again tomorrow', 'the target went up today already: again tomorrow', 'targetMinor or state: one of them', 'that would go over the target',
   // draws (M3): a refusal names a rule, never who drew whom (ADR 0004)
   'this celebration has no draw', 'only the celebration\'s host runs its draw', 'people: someone is not in the celebration',
   'people: a kid draws only when kids draw too', 'exclusions: two different people of the draw each',
@@ -46,7 +45,7 @@ export const MESSAGES = [
   'a draw needs at least 4 people', 'a draw holds at most 100 people',
   'with not last year\'s person on, everyone needs more people they may draw: loosen who shouldn\'t draw whom',
   'these rules let someone work out another\'s person: add people or loosen who shouldn\'t draw whom',
-  'it is revealed: it stays revealed', 'the names are drawn: its celebration can only move later',
+  'confirm the reset of your sign-in first', 'no reset is waiting', 'drawn with never: the pairs stay sealed for good', 'the names are drawn: the reveal date only moves later', 'it is revealed: it stays revealed', 'the names are drawn: its celebration can only move later',
   'they are in a draw that can no longer change: remove them after its celebration',
   'who shouldn\'t draw whom leaves someone nobody to draw: loosen it',
   'the rules leave too few ways to draw in time: loosen who shouldn\'t draw whom',
@@ -64,11 +63,12 @@ export const MESSAGES = [
   'only whoever wrote it removes an idea',
   // guest links (M4, ADR 0009)
   'a kid\'s parent shares their wishes', 'another grown-up shares someone\'s wishes, never they themselves',
-  'at most 20 links for one person', 'no such link', 'a draw holds at most 50 guests', 'tell us your name first',
+  'at most 20 links for one person', 'at most 100 celebrations for one host', 'no such link', 'a draw holds at most 50 guests', 'tell us your name first',
   'someone in the household has that name: add something to tell them apart', 'guest links work once HomersLab lets guests in',
   'admins release an imported reservation', 'no such reservation',
   'this link was opened on another device: ask whoever sent it for a new address',
   'a guest by link has that name: add something to tell them apart, or confirm',
+  'someone in the household has a name like that: add something to tell them apart, or confirm',
   // the sheet import (M4, ADR 0005)
   'the file is not a CSV the importer reads', 'the file has more than 2000 rows', 'the file needs the columns Person and Item',
   'map or skip every name in the file first', 'people and occasions: names of up to 200 characters, each to an id or null',
@@ -99,6 +99,7 @@ export const TEMPLATES = [
   'a whole number from # to #', 'true or false', 'an id', 'an id, or null', '# to # ids', 'up to # texts of 1 to # characters',
   'a web address (http or https) of up to # characters', 'a web address (http or https)',
   'a web address (http or https) without a user name or password', 'one of @', '1 to # characters, without control characters',
+  'up to # characters without control characters, or null', 'up to # texts of 1 to # characters, without control characters',
   'up to # pairs of two ids', 'a date and time (ISO 8601 with a time zone), or null', 'a day (YYYY-MM-DD), or null',
 ] as const;
 export type Template = (typeof TEMPLATES)[number];

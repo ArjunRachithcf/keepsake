@@ -80,7 +80,7 @@ const PARAMS: Record<string, Record<string, string>> = {
   setWishOrder: { personId: 'p_alex' },
   editWish: { wishId: 'w_alex_tent' }, removeWish: { wishId: 'w_alex_old' },
   approveWish: { wishId: 'w_leo_kite' }, declineWish: { wishId: 'w_sug_for_alex' },
-  removePasskey: { passkeyId: 'pk2' }, endSessions: { personId: 'p_mia' }, resetPasskeys: { personId: 'p_leo' },
+  removePasskey: { passkeyId: 'pk2' }, endSessions: { personId: 'p_mia' }, resetPasskeys: { personId: 'p_leo' }, cancelPasskeyReset: { personId: 'p_leo' },
   claimWish: { wishId: 'w_sam_book' }, editClaim: { wishId: 'w_sam_book' }, unclaimWish: { wishId: 'w_sam_book' },
   nameOnGift: { wishId: 'w_robin_scarf' },
   startGroupGift: { wishId: 'w_mia_bike' }, editGroupGift: { wishId: 'w_mia_bike' }, endGroupGift: { wishId: 'w_mia_bike' },
@@ -106,7 +106,7 @@ const BODIES: Record<string, unknown> = {
   setManagers: { managerIds: ['p_sam'] },
   addWish: { personId: 'p_alex', name: 'A rain jacket', celebrationId: 'c_xmas' },
   editWish: { note: 'Size M' },
-  setWishOrder: { wishIds: ['w_alex_old', 'w_alex_tent', 'w_alex_mug'] },
+  setWishOrder: { wishIds: ['w_alex_old', 'w_alex_tent'] }, // not the received mug: gone from Alex's list (Gate surprise L2)
   addCelebration: { name: 'Summer party', date: '2027-07-01', poster: 'gold', recurrence: 'none', people: ['p_alex'] },
   editCelebration: { place: 'The garden' },
   setProfile: { likes: ['Hiking'] },
@@ -181,7 +181,7 @@ const NOW = '2026-11-01T10:00:00.000Z';
 export function household(): Db {
   const db = openDb(':memory:');
   db.insert(t.person).values([
-    { id: 'p_alex', externalId: 'hl-alex', name: 'Alex', role: 'admin', createdAt: NOW },
+    { id: 'p_alex', externalId: 'hl-alex', name: 'Alex', role: 'admin', createdAt: NOW, adminSince: NOW },
     { id: 'p_sam', externalId: 'hl-sam', name: 'Sam', role: 'adult', createdAt: NOW },
     { id: 'p_robin', externalId: 'hl-robin', name: 'Robin', role: 'adult', createdAt: NOW },
     { id: 'p_mia', externalId: 'hl-mia', name: 'Mia', role: 'kid', createdAt: NOW },
@@ -254,7 +254,7 @@ export function withM4(db: Db): Db {
 }
 
 export function sessionCookie(db: Db, personId: string): string {
-  return `keepsake_session=${createSession(db, personId).token}`;
+  return `__Host-keepsake_session=${createSession(db, personId).token}`;
 }
 
 /** The X-HomersLab-* headers the edge would send for someone of household(). */

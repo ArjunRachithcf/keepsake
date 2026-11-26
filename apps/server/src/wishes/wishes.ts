@@ -6,7 +6,7 @@
 // - Anyone else adds one for someone: a suggestion, which the person (or a kid's manager) approves or declines.
 //   A kid's approval of a suggestion still waits for a manager.
 // - A kid's change to a listed wish of theirs sends it back to their manager.
-import { and, count, eq, inArray, max } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, max } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Db } from '../db/open';
 import * as t from '../db/schema';
@@ -159,13 +159,22 @@ export function declineWish(db: Db, me: Person, id: string): void {
 }
 
 /** A person's own order: exactly their listed and waiting wishes (suggestions are not on the list yet). */
-export function orderWishes(db: Db, me: Person, personId: string, ids: string[]): void {
+/**
+ * Orders the wishes the caller sees on that list (`visible`, the view's `orderable`); the others (received ones, gone
+ * from the list) keep their places: the new order fills the places the seen ones had (Gate surprise L2).
+ */
+export function orderWishes(db: Db, me: Person, personId: string, ids: string[], visible: (personId: string) => string[]): void {
   const owner = mustGetPerson(db, personId);
   if (!keeps(db, me, owner)) throw new Refused(403, 'only the person (or a kid\'s manager) orders their wishes');
-  const mine = db.select({ id: t.wish.id }).from(t.wish)
-    .where(and(eq(t.wish.personId, owner.id), inArray(t.wish.state, ['listed', 'awaiting_parent']))).all().map((r) => r.id);
+  const all = db.select({ id: t.wish.id }).from(t.wish)
+    .where(and(eq(t.wish.personId, owner.id), inArray(t.wish.state, ['listed', 'awaiting_parent'])))
+    .orderBy(asc(t.wish.position), asc(t.wish.createdAt)).all().map((r) => r.id);
+  const seen = new Set(visible(owner.id));
+  const mine = all.filter((x) => seen.has(x));
   if (ids.length !== mine.length || new Set(ids).size !== ids.length || !ids.every((x) => mine.includes(x))) {
     throw new Refused(400, 'wishIds: each of the person\'s wishes once');
   }
-  db.transaction((tx) => ids.forEach((wid, i) => tx.update(t.wish).set({ position: i }).where(eq(t.wish.id, wid)).run()));
+  const next = [...ids];
+  const order = all.map((x) => (seen.has(x) ? next.shift()! : x));
+  db.transaction((tx) => order.forEach((wid, i) => tx.update(t.wish).set({ position: i }).where(eq(t.wish.id, wid)).run()));
 }

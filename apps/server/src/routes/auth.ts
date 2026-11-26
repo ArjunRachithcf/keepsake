@@ -8,7 +8,7 @@ import type { Config } from '../config';
 import { RESET_FRESH_MINUTES, type Data } from '../data';
 import { Refused } from '../errors';
 import type { Req, Res, Router } from '../router';
-import { object, text } from '../validate';
+import { object, plainText } from '../validate';
 
 export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAuthn, challenges: Challenges) {
   const standaloneOnly = () => {
@@ -29,7 +29,7 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
     const invite = data.auth.findInvite(b.token);
     if (!invite) throw new Refused(401, 'this link is unknown, used or expired');
     if (invite.kind === 'setup') {
-      const name = text(b, 'name', 60, { required: true })!.trim();
+      const name = plainText(b, 'name', 60, { required: true })!.trim();
       // The first admin's id is chosen now, so the authenticator's user handle is the person's id.
       const newPersonId = ulid();
       const { challenge, options } = await webauthn.registrationOptions({ userId: newPersonId, userName: name, exclude: [] });
@@ -116,13 +116,25 @@ export function authRoutes(api: Router, cfg: Config, data: Data, webauthn: WebAu
     data.auth.endSessionsOf(r, r.params.personId);
   });
 
-  // Every device lost: an admin who signed in with a passkey in the last 5 minutes removes someone's passkeys (their
-  // sessions end with them), then sends the usual invite. Not an admin's: an admin recovers with `keepsake recover`.
-  // Recorded in the audit table.
+  // Every device lost: an admin who signed in with a passkey in the last 5 minutes asks to reset someone's passkeys;
+  // a second admin's yes, or with one admin a day, carries it out (Gate routes M1); then the usual invite. Never an
+  // admin's (or a lately demoted one's): an admin recovers with `keepsake recover`. Audited.
   api.post('/people/:personId/passkeys/reset', (r) => {
     standaloneOnly();
     if (data.me(r).role !== 'admin') throw new Refused(403, 'admins only');
     data.fresh(r, RESET_FRESH_MINUTES);
-    data.auth.resetPasskeys(r, r.params.personId);
+    return data.auth.resetPasskeys(r, r.params.personId);
+  });
+
+  // Called off: by the person, from a device they still have, or any admin.
+  api.delete('/people/:personId/passkeys/reset', (r) => {
+    standaloneOnly();
+    data.auth.cancelReset(r, r.params.personId);
+  });
+
+  // On the new device: "yes, that was me". Until then their draws stay sealed to them.
+  api.post('/me/reset/confirm', (r) => {
+    standaloneOnly();
+    data.auth.confirmReset(r);
   });
 }

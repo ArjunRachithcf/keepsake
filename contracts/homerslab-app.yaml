@@ -21,7 +21,9 @@ identity:
   forwarded_header: X-HomersLab-Person     # stable person id
   forwarded_name_header: X-HomersLab-Name
   forwarded_role_header: X-HomersLab-Role  # admin | adult | kid
-  household_api: true                      # later: who manages which kid (until then Keepsake's admins set kids' parents)
+  # Asked of Homeward, not there yet (Homeward #86: a person's removal, and who manages which kid): until then Keepsake
+  # learns of a member only from their requests (ADR 0010 "Under HomersLab"), and its admins set kids' parents.
+  household_api: requested
 audience: household                        # adults and kids (kids' wishes wait for a parent, spec §2)
 # Guests by link (ADR 0009) have no HomersLab account: the edge lets these through without a sign-in (and still strips
 # every X-HomersLab-* header). /api/guest/* takes only Keepsake's own guest session; everything else stays behind sign-in.
@@ -42,5 +44,14 @@ network:
   egress: ['${KEEPSAKE_SHOP_HOSTS}']
   # Web Push (ADR 0010): the browsers' push services, https on 443; only the encrypted, fixed {"v":1}.
   push_egress: [fcm.googleapis.com, updates.push.services.mozilla.com, web.push.apple.com, '*.notify.windows.com']
+# How the runner must start it (Gate routes, Info): as docker-compose.yml and scripts/smoke.sh do. The image runs as
+# `node`; nothing needs root, a writable root or a capability.
+runtime:
+  run_as_non_root: true
+  read_only_root: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  no_new_privileges: true
+  pids_limit: 64
 health: /api/health
 resources: { memory: 256Mi, cpu: 0.25 }

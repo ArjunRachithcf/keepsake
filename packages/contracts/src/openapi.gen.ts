@@ -204,7 +204,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ends someone's sessions after a lost device (a kid's parent, or an admin; standalone) */
+        /** Ends someone's sessions after a lost device (a kid's parent, or an admin; standalone). Their devices stay subscribed to push, and they are told who did it (audited `sessions_ended`); refused while a reset of their sign-in waits (Gate re-attack 2, C2) */
         post: operations["endSessions"];
         delete?: never;
         options?: never;
@@ -223,8 +223,26 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Removes the passkeys of someone who lost every device, ending their sessions and spending their open links; then an admin sends the usual invite. An admin who signed in with a passkey in the last 5 minutes, for someone who is not an admin (an admin recovers with `keepsake recover`). Recorded in the audit table. Standalone. */
+        /** For someone who lost every device: the first call asks for a reset, and nothing is reset yet (Gate routes M1, re-attack B1). A second admin's call is their yes, if they were an admin with a passkey of their own a week before the ask and no passkey of theirs came from the asker's invite; an hour after that yes the asker or they carry it out with the same call. Otherwise its asker alone, a day after the ask. Carried out, it removes their passkeys, ends their sessions and spends their open links; then an admin sends the usual invite, and their draws stay sealed to them until they confirm on their new device. An admin who signed in with a passkey in the last 5 minutes, for someone who is not and was not lately an admin (an admin recovers with `keepsake recover`). When it is asked and when it is done, the person (pushed at once), the other admins, the people of their open draws and a kid's parents are told. Audited. Standalone. */
         post: operations["resetPasskeys"];
+        /** Calls off a reset that waits (the person, from a device they still have, or any admin; a sign-in of the last 10 minutes). Audited. Standalone */
+        delete: operations["cancelPasskeyReset"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/reset/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** On the new device, the person whose passkeys were reset confirms it; their draws open to them again (a sign-in of the last 10 minutes). Audited. Standalone */
+        post: operations["confirmPasskeyReset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -491,7 +509,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** An admin releases the wish's imported reservation (refused first, like any giving, to its person and kids) */
+        /** An admin releases the wish's imported reservation (refused first, like any giving, to its person and kids); a given one stays */
         delete: operations["releaseImportedClaim"];
         options?: never;
         head?: never;
@@ -534,7 +552,7 @@ export interface paths {
         delete: operations["endGroupGift"];
         options?: never;
         head?: never;
-        /** The target (while open, never below what is chipped in) or the state, by whoever started it */
+        /** The target (while open; once anyone has chipped in, only up and only by whoever started it) or the state, by whoever started it */
         patch: operations["editGroupGift"];
         trace?: never;
     };
@@ -548,7 +566,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Chips in, or changes your share, while the group gift is open (all shares together at most the target) */
+        /** Chips in, or changes your share, while the group gift is open (a share alone at most the target; chipping in, changing and taking back at most 3 times a day per gift) */
         put: operations["chipIn"];
         post?: never;
         /** Takes your share back while the group gift is open */
@@ -568,7 +586,7 @@ export interface paths {
         /** Coming up (by next date) and past ones */
         get: operations["listCelebrations"];
         put?: never;
-        /** A new celebration, hosted by the caller (grown-ups) */
+        /** A new celebration, hosted by the caller (grown-ups; at most 100 each) */
         post: operations["addCelebration"];
         delete?: never;
         options?: never;
@@ -837,7 +855,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited */
+        /** A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited. Refused under HomersLab until its edge lets guests in (Homeward #317) */
         post: operations["reissueLink"];
         delete?: never;
         options?: never;
@@ -1379,7 +1397,8 @@ export interface components {
         GroupGift: {
             organizer: components["schemas"]["PersonRef"] | null;
             targetMinor: number;
-            totalMinor: number;
+            /** @description Whether the shares together reach the target. Never the total: with two sharers it would give the other's amount (ADR 0003) */
+            enough: boolean;
             state: components["schemas"]["GroupState"];
             /** @description Who chipped in (names only) */
             givers: {
@@ -1435,13 +1454,31 @@ export interface components {
         /** @description A pointer to something new (ADR 0010): question, its person's question reached them (a kid's: their parents); answered, the caller's question was answered; draw, names drawn (or drawn again, or cleared); remind, a celebration coming (person: whose, for "Remind me"); reveal, a draw's pairs show; say_thanks, gifts reached the caller; thanked, someone thanked the caller (person: whose gift) */
         Notice: {
             id: string;
-            /** @enum {string} */
-            kind: "question" | "answered" | "draw" | "remind" | "reveal" | "say_thanks" | "thanked";
+            /**
+             * @description reset_asked: someone asked to reset the sign-in of `person` (to them, the other admins, the people of their open draws, a kid's parents); signin_reset: it was reset (to the same); `by`: who asked. new_admin: `person` became an admin (to everyone, at the morning batch); sessions_ended: `by` signed the caller out everywhere (`person`: the caller, or a kid of theirs); target_raised: the target of a group gift the caller chipped in to went up (`person`: whose wish; at the morning batch)
+             * @enum {string}
+             */
+            kind: "question" | "answered" | "draw" | "remind" | "reveal" | "say_thanks" | "thanked" | "reset_asked" | "signin_reset" | "new_admin" | "sessions_ended" | "target_raised";
             on: components["schemas"]["Day"];
             read: boolean;
             celebration: components["schemas"]["CelebrationRef"] | null;
             person: components["schemas"]["PersonRef"] | null;
             question: components["schemas"]["Id"] | null;
+            by: components["schemas"]["PersonRef"] | null;
+        };
+        PasskeyReset: {
+            /** @enum {string} */
+            state: "asked" | "done";
+            /**
+             * @description Asked: a day after the ask (its asker alone), or an hour after a long-standing second admin's yes
+             * @enum {string|null}
+             */
+            waitsFor: "a_day" | "an_hour" | null;
+            /** @description Asked: when it may be carried out (by its asker, or by the admin who said yes) */
+            notBefore: components["schemas"]["DateTime"] | null;
+            askedBy: components["schemas"]["PersonRef"] | null;
+            /** @description The second admin whose yes counts: an admin, with a passkey, a week before the ask, not enrolled by its asker */
+            approvedBy: components["schemas"]["PersonRef"] | null;
         };
         Notices: {
             notices: components["schemas"]["Notice"][];
@@ -1814,6 +1851,8 @@ export interface components {
                 receiverGuest: boolean;
                 /** @description Their row does not open with the keys on the server (a lost key): the host draws again */
                 unreadable: boolean;
+                /** @description Their passkeys were reset: the draw stays sealed to them until they confirm the reset on their new device (Gate routes M1) */
+                sealed: boolean;
             } | null;
             /** @description Every giver and their person: only after the reveal date, only for the participants and the host */
             pairs: {
@@ -2124,7 +2163,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Signed in (Set-Cookie keepsake_session) */
+            /** @description Signed in (Set-Cookie __Host-keepsake_session) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2176,7 +2215,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Signed in (Set-Cookie keepsake_session) */
+            /** @description Signed in (Set-Cookie __Host-keepsake_session) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2322,6 +2361,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     resetPasskeys: {
@@ -2335,7 +2375,33 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Their passkeys and sessions are gone */
+            /** @description The reset, asked or done */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyReset"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    cancelPasskeyReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                personId: components["parameters"]["personId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Called off */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2345,7 +2411,27 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+        };
+    };
+    confirmPasskeyReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Confirmed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getHousehold: {
@@ -2873,6 +2959,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     nameOnGift: {
@@ -3062,6 +3149,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
     getCelebration: {
@@ -3519,6 +3607,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     shareLink: {

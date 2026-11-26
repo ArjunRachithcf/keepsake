@@ -272,7 +272,8 @@ describe.each(Object.keys(TARGETS) as Target[])('the surprise for %s (raw respon
         expect(all.includes('Quinn'), `${who} sees Quinn`).toBe(!S.quinnGone);
         expect(all.includes('Uma'), `${who} sees Uma`).toBe(Boolean(S.uma));
         if (S.group) {
-          expect(all.includes(AMOUNTS.total) && all.includes(AMOUNTS.target), `${who} sees the total and target`).toBe(true);
+          // The target, never the total (Gate surprise L3): with two sharers it would give the other's amount.
+          expect([all.includes(AMOUNTS.target), all.includes(AMOUNTS.total)], `${who} sees the target and no total`).toEqual([true, false]);
           // Others' shares are names, not amounts: each giver sees their own only.
           expect(all.includes(AMOUNTS.quinn), `${who} sees Quinn's share`).toBe(who === 'quinn');
           expect(all.includes(AMOUNTS.uma), `${who} sees Uma's share`).toBe(who === 'uma');
@@ -510,21 +511,25 @@ describe('thank-yous for a kid\'s gifts', () => {
 describe('group gifts', () => {
   beforeEach(fresh);
   const url = '/api/wishes/w_sam_book/group';
-  it('start, chip in, see the total and who; the organizer runs it', async () => {
-    expect((await as('quinn').send('POST', url, { targetMinor: 6000 })).json().gift.group).toMatchObject({ organizer: { name: 'Quinn' }, targetMinor: 6000, totalMinor: 0, state: 'open', canManage: true });
+  it('start, chip in, see whether it is enough and who; the organizer runs it', async () => {
+    expect((await as('quinn').send('POST', url, { targetMinor: 6000 })).json().gift.group).toMatchObject({ organizer: { name: 'Quinn' }, targetMinor: 6000, enough: false, state: 'open', canManage: true });
     expect((await as('quinn').send('POST', url, { targetMinor: 6000 })).statusCode).toBe(409);
     expect((await as('uma').send('PUT', '/api/wishes/w_sam_book/claim', { quantity: 1 })).statusCode).toBe(409);
     await ok(as('uma').send('PUT', `${url}/share`, { amountMinor: 2000 }));
     const g = (await as('robin').send('PUT', `${url}/share`, { amountMinor: 1500 })).json().gift.group;
-    expect(g).toMatchObject({ totalMinor: 3500, myShareMinor: 1500, canManage: false });
+    expect(g).toMatchObject({ enough: false, myShareMinor: 1500, canManage: false });
+    expect(g).not.toHaveProperty('totalMinor');
     expect(g.givers).toEqual(expect.arrayContaining([{ giver: { id: 'p_uma', name: 'Uma' }, mine: false }, { giver: { id: 'p_robin', name: 'Robin' }, mine: true }]));
     expect(JSON.stringify(g)).not.toContain('2000');
     expect((await as('robin').send('PATCH', url, { state: 'bought' })).statusCode).toBe(403);
     expect((await as('quinn').send('DELETE', url)).statusCode).toBe(409); // others chipped in
-    // All together up to the target: a share past it is refused, and so is a target below what is in.
-    expect((await as('alex').send('PUT', `${url}/share`, { amountMinor: 2501 })).statusCode).toBe(409);
-    expect((await as('quinn').send('PATCH', url, { targetMinor: 3499 })).statusCode).toBe(409);
-    expect((await as('quinn').send('PATCH', url, { targetMinor: 4000 })).json().gift.group.targetMinor).toBe(4000);
+    // A share past the target alone is refused; the shares together may pass it (Gate surprise L3: no probing the total).
+    expect((await as('alex').send('PUT', `${url}/share`, { amountMinor: 6001 })).statusCode).toBe(409);
+    expect((await as('alex').send('PUT', `${url}/share`, { amountMinor: 2501 })).json().gift.group.enough).toBe(true);
+    await ok(as('alex').send('DELETE', `${url}/share`));
+    // Once someone has chipped in, the target only goes up, and only by whoever started it (Gate re-attack R1).
+    expect((await as('quinn').send('PATCH', url, { targetMinor: 3499 })).json()).toEqual({ error: 'someone has chipped in: only whoever started it raises the target' });
+    expect((await as('quinn').send('PATCH', url, { targetMinor: 6500 })).json().gift.group).toMatchObject({ targetMinor: 6500, enough: false });
     await ok(as('quinn').send('PATCH', url, { state: 'bought' }));
     expect((await as('robin').send('DELETE', `${url}/share`)).statusCode).toBe(409);
     expect((await as('quinn').send('PATCH', url, { targetMinor: 5000 })).statusCode).toBe(409);

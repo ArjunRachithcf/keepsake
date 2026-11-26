@@ -90,7 +90,7 @@ paths:
             schema: { $ref: '#/components/schemas/CredentialInput' }
       responses:
         '200':
-          description: Signed in (Set-Cookie keepsake_session)
+          description: Signed in (Set-Cookie __Host-keepsake_session)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthSession' }
@@ -129,7 +129,7 @@ paths:
             schema: { $ref: '#/components/schemas/CredentialInput' }
       responses:
         '200':
-          description: Signed in (Set-Cookie keepsake_session)
+          description: Signed in (Set-Cookie __Host-keepsake_session)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthSession' }
@@ -209,12 +209,13 @@ paths:
     post:
       tags: [sign-in]
       operationId: endSessions
-      summary: Ends someone's sessions after a lost device (a kid's parent, or an admin; standalone)
+      summary: 'Ends someone''s sessions after a lost device (a kid''s parent, or an admin; standalone). Their devices stay subscribed to push, and they are told who did it (audited `sessions_ended`); refused while a reset of their sign-in waits (Gate re-attack 2, C2)'
       responses:
         '204': { description: Signed out everywhere }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /people/{personId}/passkeys/reset:
     parameters:
@@ -223,15 +224,43 @@ paths:
       tags: [sign-in]
       operationId: resetPasskeys
       summary: >-
-        Removes the passkeys of someone who lost every device, ending their sessions and spending their open links;
-        then an admin sends the usual invite. An admin who signed in with a passkey in the last 5 minutes, for someone
-        who is not an admin (an admin recovers with `keepsake recover`). Recorded in the audit table. Standalone.
+        For someone who lost every device: the first call asks for a reset, and nothing is reset yet (Gate routes M1,
+        re-attack B1). A second admin's call is their yes, if they were an admin with a passkey of their own a week
+        before the ask and no passkey of theirs came from the asker's invite; an hour after that yes the asker or they
+        carry it out with the same call. Otherwise its asker alone, a day after the ask. Carried out, it removes their
+        passkeys, ends their sessions and spends their open links; then an admin sends the usual invite, and their
+        draws stay sealed to them until they confirm on their new device. An admin who signed in with a passkey in
+        the last 5 minutes, for someone who is not and was not lately an admin (an admin recovers with `keepsake
+        recover`). When it is asked and when it is done, the person (pushed at once), the other admins, the people of
+        their open draws and a kid's parents are told. Audited. Standalone.
       responses:
-        '204': { description: Their passkeys and sessions are gone }
+        '200':
+          description: The reset, asked or done
+          content: { application/json: { schema: { $ref: '#/components/schemas/PasskeyReset' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [sign-in]
+      operationId: cancelPasskeyReset
+      summary: Calls off a reset that waits (the person, from a device they still have, or any admin; a sign-in of the last 10 minutes). Audited. Standalone
+      responses:
+        '204': { description: Called off }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /me/reset/confirm:
+    post:
+      tags: [sign-in]
+      operationId: confirmPasskeyReset
+      summary: On the new device, the person whose passkeys were reset confirms it; their draws open to them again (a sign-in of the last 10 minutes). Audited. Standalone
+      responses:
+        '204': { description: Confirmed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /household:
     get:
@@ -576,12 +605,13 @@ paths:
     delete:
       tags: [gifts]
       operationId: releaseImportedClaim
-      summary: 'An admin releases the wish''s imported reservation (refused first, like any giving, to its person and kids)'
+      summary: 'An admin releases the wish''s imported reservation (refused first, like any giving, to its person and kids); a given one stays'
       responses:
         '204': { description: Released }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /wishes/{wishId}/named:
     parameters:
@@ -625,7 +655,7 @@ paths:
     patch:
       tags: [gifts]
       operationId: editGroupGift
-      summary: The target (while open, never below what is chipped in) or the state, by whoever started it
+      summary: 'The target (while open; once anyone has chipped in, only up and only by whoever started it) or the state, by whoever started it'
       requestBody:
         required: true
         content:
@@ -655,7 +685,7 @@ paths:
     put:
       tags: [gifts]
       operationId: chipIn
-      summary: Chips in, or changes your share, while the group gift is open (all shares together at most the target)
+      summary: 'Chips in, or changes your share, while the group gift is open (a share alone at most the target; chipping in, changing and taking back at most 3 times a day per gift)'
       requestBody:
         required: true
         content:
@@ -695,7 +725,7 @@ paths:
     post:
       tags: [celebrations]
       operationId: addCelebration
-      summary: A new celebration, hosted by the caller (grown-ups)
+      summary: A new celebration, hosted by the caller (grown-ups; at most 100 each)
       requestBody:
         required: true
         content:
@@ -710,6 +740,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /celebrations/{celebrationId}:
     parameters:
@@ -996,7 +1027,7 @@ paths:
     post:
       tags: [links]
       operationId: reissueLink
-      summary: 'A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited'
+      summary: 'A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited. Refused under HomersLab until its edge lets guests in (Homeward #317)'
       responses:
         '200':
           description: The new address
@@ -1004,6 +1035,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /people/{personId}/links:
     parameters:
@@ -1366,7 +1398,7 @@ components:
     session:
       type: apiKey
       in: cookie
-      name: keepsake_session
+      name: __Host-keepsake_session
       description: 'standalone: a passkey session (HttpOnly; Secure; SameSite=Strict; 30 days, 7 idle)'
     guestSession:
       type: apiKey
@@ -1732,11 +1764,11 @@ components:
     GroupGift:
       type: object
       additionalProperties: false
-      required: [organizer, targetMinor, totalMinor, state, givers, myShareMinor, canManage]
+      required: [organizer, targetMinor, enough, state, givers, myShareMinor, canManage]
       properties:
         organizer: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
         targetMinor: { type: integer, minimum: 1 }
-        totalMinor: { type: integer, minimum: 0 }
+        enough: { type: boolean, description: 'Whether the shares together reach the target. Never the total: with two sharers it would give the other''s amount (ADR 0003)' }
         state: { $ref: '#/components/schemas/GroupState' }
         givers:
           type: array
@@ -1816,15 +1848,27 @@ components:
       description: 'A pointer to something new (ADR 0010): question, its person''s question reached them (a kid''s: their parents); answered, the caller''s question was answered; draw, names drawn (or drawn again, or cleared); remind, a celebration coming (person: whose, for "Remind me"); reveal, a draw''s pairs show; say_thanks, gifts reached the caller; thanked, someone thanked the caller (person: whose gift)'
       type: object
       additionalProperties: false
-      required: [id, kind, on, read, celebration, person, question]
+      required: [id, kind, on, read, celebration, person, question, by]
       properties:
         id: { type: string }
-        kind: { type: string, enum: [question, answered, draw, remind, reveal, say_thanks, thanked] }
+        kind: { type: string, enum: [question, answered, draw, remind, reveal, say_thanks, thanked, reset_asked, signin_reset, new_admin, sessions_ended, target_raised], description: 'reset_asked: someone asked to reset the sign-in of `person` (to them, the other admins, the people of their open draws, a kid''s parents); signin_reset: it was reset (to the same); `by`: who asked. new_admin: `person` became an admin (to everyone, at the morning batch); sessions_ended: `by` signed the caller out everywhere (`person`: the caller, or a kid of theirs); target_raised: the target of a group gift the caller chipped in to went up (`person`: whose wish; at the morning batch)' }
         on: { $ref: '#/components/schemas/Day' }
         read: { type: boolean }
         celebration: { anyOf: [{ $ref: '#/components/schemas/CelebrationRef' }, { type: 'null' }] }
         person: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
         question: { anyOf: [{ $ref: '#/components/schemas/Id' }, { type: 'null' }] }
+        by: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+
+    PasskeyReset:
+      type: object
+      additionalProperties: false
+      required: [state, waitsFor, notBefore, askedBy, approvedBy]
+      properties:
+        state: { type: string, enum: [asked, done] }
+        waitsFor: { type: [string, 'null'], enum: [a_day, an_hour, null], description: 'Asked: a day after the ask (its asker alone), or an hour after a long-standing second admin''s yes' }
+        notBefore: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }], description: 'Asked: when it may be carried out (by its asker, or by the admin who said yes)' }
+        askedBy: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
+        approvedBy: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }], description: 'The second admin whose yes counts: an admin, with a passkey, a week before the ask, not enrolled by its asker' }
 
     Notices:
       type: object
@@ -2342,13 +2386,14 @@ components:
           anyOf:
             - type: object
               additionalProperties: false
-              required: [opened, canOpen, receiver, receiverGuest, unreadable]
+              required: [opened, canOpen, receiver, receiverGuest, unreadable, sealed]
               properties:
                 opened: { type: boolean }
                 canOpen: { type: boolean }
                 receiver: { anyOf: [{ $ref: '#/components/schemas/PersonRef' }, { type: 'null' }] }
                 receiverGuest: { type: boolean, description: 'Their person is a guest (no list in Keepsake)' }
                 unreadable: { type: boolean, description: 'Their row does not open with the keys on the server (a lost key): the host draws again' }
+                sealed: { type: boolean, description: 'Their passkeys were reset: the draw stays sealed to them until they confirm the reset on their new device (Gate routes M1)' }
             - { type: 'null' }
         pairs:
           description: 'Every giver and their person: only after the reveal date, only for the participants and the host'

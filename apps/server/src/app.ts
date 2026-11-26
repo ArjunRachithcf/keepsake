@@ -79,11 +79,13 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   const data = dataFor(cfg, db, { pusher, egress });
   pusher.start();
   app.addHook('onClose', async () => pusher.stop());
-  // The sign-in steps: 20 a minute per client (its socket address or the address a configured proxy saw; IPv6 by /64),
-  // and 300 a minute for everyone together, counting only the tries a client's own limit let through: one client's
-  // flood uses up its own budget and nobody else's (docs/security.md).
-  const signInLimit = { max: 20, timeWindow: '1 minute', keyGenerator: (req: FastifyRequest) => clientKey(cfg, req.socket.remoteAddress, req.headers) };
-  const signInWindow = { start: 0, n: 0 };
+  // The sign-in steps: 20 a minute per client over the five steps together (its socket address or the address a
+  // configured proxy saw; IPv6 by /64; Gate routes L3: the plugin's limit is per route, so it is kept only as a
+  // backstop), and 300 a minute for everyone together, counting only the tries a client's own limit let through: one
+  // client's flood uses up its own budget and nobody else's (docs/security.md).
+  const keyOf = (req: FastifyRequest) => clientKey(cfg, req.socket.remoteAddress, req.headers);
+  const signInLimit = { max: 20, timeWindow: '1 minute', keyGenerator: keyOf };
+  const signInWindow = { start: 0, n: 0, clients: new Map<string, number>() };
   await app.register(async (api) => {
     installSeam(api);
     api.addHook('onRequest', authHook(cfg, db));
@@ -91,7 +93,11 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
     api.addHook('preHandler', async (req, reply) => {
       if (!req.routeOptions.config.signIn) return;
       const now = Date.now();
-      if (now - signInWindow.start > 60_000) { signInWindow.start = now; signInWindow.n = 0; }
+      if (now - signInWindow.start > 60_000) { signInWindow.start = now; signInWindow.n = 0; signInWindow.clients.clear(); }
+      const client = keyOf(req);
+      const mine = (signInWindow.clients.get(client) ?? 0) + 1;
+      signInWindow.clients.set(client, mine);
+      if (mine > 20) return reply.code(429).send({ error: 'too many tries; wait a minute' });
       if (++signInWindow.n > 300) return reply.code(429).send({ error: 'too many tries; wait a minute' });
     });
     const router = routerFor(api, signInLimit);

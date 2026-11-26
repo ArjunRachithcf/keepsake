@@ -22,13 +22,22 @@ export function text(b: Body, field: string, max: number, o: { required?: boolea
 /**
  * Characters that make a name read as another: control characters, and every format character (Cf: the bidi marks,
  * overrides and isolates, zero-width spaces and joiners, the word joiner, the soft hyphen, review L-b), and the
- * Hangul fillers, letters that show nothing.
+ * Hangul fillers, letters that show nothing, and the other characters that draw as a blank without being spaces that
+ * trim takes (Gate re-attack): the Braille blank, the Khmer inherent vowels, the line and paragraph separators, the
+ * musical null notehead and the halfwidth Hangul filler.
  */
-const CONTROL = /[\p{Cc}\p{Cf}\u115F\u1160\u3164\uFFA0]/u;
+const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115F\u1160\u2800\u3164\uFFA0\u{1D159}]|\u17B4|\u17B5/u;
 /** A name or label shown to others (a guest's, a link's): text without control, format or invisible characters. */
 export function plainText(b: Body, field: string, max: number, o: { required?: boolean } = {}): string | undefined {
   const v = text(b, field, max, o);
   if (v !== undefined && CONTROL.test(v)) return bad(field, '1 to # characters, without control characters', max);
+  return v;
+}
+
+/** A place or other optional text shown to others: as plainText, or null (Gate routes L6). */
+export function nullablePlainText(b: Body, field: string, max: number): string | null | undefined {
+  const v = nullableText(b, field, max);
+  if (typeof v === 'string' && CONTROL.test(v)) return bad(field, 'up to # characters without control characters, or null', max);
   return v;
 }
 
@@ -87,12 +96,14 @@ export function ids(b: Body, field: string, o: { min?: number; max: number }): s
   return v as string[];
 }
 
-export function strings(b: Body, field: string, o: { maxItems: number; maxLength: number }): string[] | undefined {
+export function strings(b: Body, field: string, o: { maxItems: number; maxLength: number; plain?: boolean }): string[] | undefined {
   const v = b[field];
   if (v === undefined) return undefined;
   if (!Array.isArray(v) || v.length > o.maxItems || !v.every((s) => typeof s === 'string' && s.trim() && s.length <= o.maxLength)) {
     return bad(field, 'up to # texts of 1 to # characters', o.maxItems, o.maxLength);
   }
+  // Shown to others (profile entries, Gate routes L6): no control, format or invisible characters.
+  if (o.plain && (v as string[]).some((s) => CONTROL.test(s))) return bad(field, 'up to # texts of 1 to # characters, without control characters', o.maxItems, o.maxLength);
   return (v as string[]).map((s) => s.trim());
 }
 
@@ -117,7 +128,7 @@ export function sizes(b: Body) {
   const ok = Array.isArray(v) && v.length <= 30 && v.every((s) => s && typeof s === 'object' && !Array.isArray(s)
     && Object.keys(s).every((k) => k === 'label' || k === 'value')
     && typeof s.label === 'string' && s.label.trim() && s.label.length <= 40
-    && typeof s.value === 'string' && s.value.trim() && s.value.length <= 40);
+    && typeof s.value === 'string' && s.value.trim() && s.value.length <= 40 && !CONTROL.test(s.label) && !CONTROL.test(s.value));
   if (!ok) throw new Refused(400, 'sizes: up to 30 { label, value } of 1 to 40 characters');
   return (v as { label: string; value: string }[]).map((s) => ({ label: s.label.trim(), value: s.value.trim() }));
 }
@@ -151,7 +162,7 @@ export const WISH_FIELDS = ['name', 'link', 'priceMinor', 'quantity', 'note', 'm
 export interface WishFields { name: string; link: string | null; priceMinor: number | null; quantity: number; note: string | null; mostWanted: boolean; celebrationId: string | null }
 export function wishFields(b: Body, required: boolean): Partial<WishFields> {
   const out: Partial<WishFields> = {
-    name: text(b, 'name', 120, { required }),
+    name: plainText(b, 'name', 120, { required }),
     link: link(b, 'link'),
     priceMinor: nullableInt(b, 'priceMinor', 0, 100_000_000),
     quantity: int(b, 'quantity', 1, 99),

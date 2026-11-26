@@ -23,7 +23,19 @@ assignment of a draw other than the one where they give (ADR 0004).
   coordinate), unless they are the one it's for. A guest is a viewer like any giver, never "meant for".
 - **Kids see no gifts at all** (decided 2026-11-25, PR #8): not on anyone's wishes, so nothing spoils through a kid. A
   kid sees every list as its person does, and claims and chips in from M5 at the earliest, if ever.
-- **Givers' shares**: other givers see who chipped in and the total, not each other's amounts.
+- **Givers' shares**: other givers see who chipped in and whether it is enough, never each other's amounts nor the
+  total (Gate surprise L3: with two sharers the total less your own share is the other's, and with more the total
+  before and after gives each new share). Nothing refuses a share for what the others put in (only a share alone above
+  the target), and the organizer may set any target until someone chips in, so no refusal can be used to find the total
+  either. "Enough" flipping was itself the oracle (Gate re-attack R1, 2026-11-26: a sharer moving their own share, or the
+  organizer the target, found the others' amount in 14 tries): once anyone has chipped in the target only goes up, and
+  only by whoever started it, and each giver changes their own share of a gift (chipping in, changing it, taking it
+  back) at most 3 times a day (`share_change`). The organizer raises the target at most once a day once anyone has
+  chipped in, and every raise is told to the sharers at the morning batch (Gate re-attack 2, Q3: raising it a franc at a
+  time gave the total in a dozen tries). **Accepted, a slow oracle**: a sharer who keeps at it still halves the range of
+  the others' amount three times a day (about five days for a target of 8 000), and an organizer raising the target a
+  step a day, in view of the sharers, finds the total in as many days as steps; "enough or not" with one other sharer bounds
+  their amount (at least the target less yours, or less than it).
 - **Givers in a draw** (M3, PR #10 review): while a draw is drawn and not revealed, a claim, share or group gift by one of
   its people for another (made up to its day) names no giver to anyone but the giver, so a gift never says who drew
   whom (ADR 0004). The counts stay.

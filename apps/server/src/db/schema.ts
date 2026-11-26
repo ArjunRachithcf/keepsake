@@ -11,6 +11,20 @@ export const person = sqliteTable('person', {
   name: text('name').notNull(),
   role: text('role', { enum: ['admin', 'adult', 'kid'] }).notNull(),
   createdAt: text('created_at').notNull(),
+  /**
+   * Under HomersLab, when the edge last brought this person (at most an hour off): the edge says nothing when someone
+   * leaves, so nobody it has not shown for 30 days is pushed (Gate surprise L5). Standalone: null.
+   */
+  lastSeenAt: text('last_seen_at'),
+  /** Demoted from admin: still counts as one for passkey resets until then (Gate routes M1: no demote, reset, promote). */
+  adminUntil: text('admin_until'),
+  /** Their passkeys were reset: their draws stay sealed to them until they confirm the reset on their new device. */
+  drawsSealedAt: text('draws_sealed_at'),
+  /**
+   * An admin: since when, null otherwise (Gate re-attack B1). A second admin's yes to a passkey reset counts only from
+   * someone who was an admin a week before it was asked: one made for the occasion is nobody's second.
+   */
+  adminSince: text('admin_since'),
 }, (t) => [
   uniqueIndex('person_external_id').on(t.externalId),
   check('person_role', sql`${t.role} IN ('admin', 'adult', 'kid')`),
@@ -29,6 +43,25 @@ export const setting = sqliteTable('setting', {
 });
 
 // Standalone sign-in (Philobiblos ADR 0010): passkeys, sessions and one-time links. Tokens are stored as SHA-256.
+/**
+ * An admin's reset of someone's passkeys (Gate routes M1, decided by Arjun): it happens once a second admin says yes
+ * or, in a household with one admin, a day after it was asked (`notBefore`). The person and the other admins are told
+ * when it is asked; the person and the people of their open draws when it is done.
+ */
+export const passkeyReset = sqliteTable('passkey_reset', {
+  id: text('id').primaryKey(),
+  personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  askedBy: text('asked_by').references(() => person.id, { onDelete: 'set null' }),
+  askedAt: text('asked_at').notNull(),
+  /** The moment its asker may carry it out alone: a day after the ask (RESET_WAIT_HOURS). */
+  notBefore: text('not_before'),
+  /** A long-standing second admin's yes (Gate re-attack B1): carried out no earlier than an hour after it. */
+  approvedBy: text('approved_by').references(() => person.id, { onDelete: 'set null' }),
+  approvedAt: text('approved_at'),
+  doneAt: text('done_at'),
+  doneBy: text('done_by').references(() => person.id, { onDelete: 'set null' }),
+}, (t) => [index('passkey_reset_person').on(t.personId)]);
+
 export const passkey = sqliteTable('passkey', {
   id: text('id').primaryKey(),
   personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
@@ -60,6 +93,12 @@ export const invite = sqliteTable('invite', {
   createdAt: text('created_at').notNull(),
   expiresAt: text('expires_at').notNull(),
   usedAt: text('used_at'),
+  /**
+   * A link for another device of one's own: the `invited_by` of the passkey its session signed in with, which the new
+   * passkey inherits, so rotating keys never washes out who enrolled someone (Gate re-attack 2, C1). No foreign key (an
+   * ALTER TABLE cannot add one that sets null): enrol inherits it only while that person is still here.
+   */
+  invitedBy: text('invited_by'),
 }, (t) => [
   uniqueIndex('invite_token').on(t.tokenHash),
   check('invite_kind', sql`${t.kind} IN ('setup', 'admin', 'self', 'recovery')`),
@@ -143,6 +182,12 @@ export const AUDIT_ACTIONS = [
   // M4: an admin removed a question (never who asked it); guest links made, opened (on their one device) and revoked;
   // a sheet imported; an admin released an imported reservation.
   'question_removed', 'link_created', 'link_revoked', 'imported', 'reservation_released', 'link_opened', 'link_reissued',
+  // The Gate (routes M1): every step of taking over a sign-in is audited, and a reset needs a second admin or a day.
+  'role_changed', 'invite_created', 'reset_asked', 'reset_cancelled', 'reset_confirmed',
+  // The Gate's re-attack (B1): the second admin's yes, and every person added (an admin made for the occasion shows).
+  'reset_approved', 'person_created',
+  // The second re-attack (C2): someone ended another's sessions (the person is told who).
+  'sessions_ended',
 ] as const;
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
@@ -208,6 +253,8 @@ export const groupGift = sqliteTable('group_gift', {
   revealedOn: text('revealed_on'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+  /** The day its target last went up after someone chipped in: once a day at most (Gate re-attack 2, Q3). */
+  raisedOn: text('raised_on'),
 }, (t) => [
   check('group_gift_state', sql`${t.state} IN ('open', 'bought', 'given')`),
   check('group_gift_target', sql`${t.targetMinor} BETWEEN 1 AND 100000000`),
@@ -229,6 +276,17 @@ export const share = sqliteTable('share', {
   check('share_amount', sql`${t.amountMinor} BETWEEN 1 AND 100000000`),
   check('share_named', sql`${t.named} IN (0, 1)`),
 ]);
+
+/**
+ * How often a giver changed their own share of a group gift on a day (Gate re-attack R1): at most SHARE_CHANGES_A_DAY,
+ * so "enough" can only be searched slowly. Kept when the share is taken back; one row per gift and giver, the day's.
+ */
+export const shareChange = sqliteTable('share_change', {
+  wishId: text('wish_id').notNull().references(() => wish.id, { onDelete: 'cascade' }),
+  giverId: text('giver_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
+  day: text('day').notNull(),
+  changes: integer('changes').notNull(),
+}, (t) => [primaryKey({ columns: [t.wishId, t.giverId] })]);
 
 // Draws (spec §3, ADR 0004): one per celebration and year. Who draws whom is only ever in draw_assignment, sealed per
 // giver with AES-256-GCM under a key that is not in the database (draws/sealed.ts); nothing else here depends on it.
@@ -434,10 +492,16 @@ export const idea = sqliteTable('idea', {
  * (person, kind, subject, day), so the same notice is made once however often the morning batch runs. Only things the
  * person may know make one: never a gift, an idea, a hidden question or its asker, or another's reminder.
  */
+/**
+ * The kinds of notice. The Gate's second re-attack added three: someone became an admin (everyone, at the batch: C1),
+ * someone else ended your sessions (you, at once: C2), the target of a group gift you chipped in to went up (its
+ * sharers, at the batch: Q3).
+ */
+export const NOTICE_KINDS = ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked', 'reset_asked', 'signin_reset', 'new_admin', 'sessions_ended', 'target_raised'] as const;
 export const notice = sqliteTable('notice', {
   id: text('id').primaryKey(),
   personId: text('person_id').notNull().references(() => person.id, { onDelete: 'cascade' }),
-  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked'] }).notNull(),
+  kind: text('kind', { enum: NOTICE_KINDS }).notNull(),
   subjectId: text('subject_id').notNull(),
   /** remind: whose celebration ("Remind me" about someone); null for one's own celebrations. */
   aboutId: text('about_id').references(() => person.id, { onDelete: 'cascade' }),
@@ -445,7 +509,7 @@ export const notice = sqliteTable('notice', {
   readAt: text('read_at'),
 }, (t) => [
   index('notice_person').on(t.personId, t.day),
-  check('notice_kind', sql`${t.kind} IN ('question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked')`),
+  check('notice_kind', sql.raw(`kind IN (${NOTICE_KINDS.map((k) => `'${k}'`).join(', ')})`)),
 ]);
 
 /**
@@ -499,7 +563,7 @@ export const thankYou = sqliteTable('thank_you', {
  */
 export const pendingNotice = sqliteTable('pending_notice', {
   id: text('id').primaryKey(),
-  kind: text('kind', { enum: ['question', 'answered', 'draw', 'remind', 'reveal', 'say_thanks', 'thanked'] }).notNull(),
+  kind: text('kind', { enum: NOTICE_KINDS }).notNull(),
   subjectId: text('subject_id').notNull(),
   day: text('day').notNull(),
   again: integer('again').notNull().default(0),

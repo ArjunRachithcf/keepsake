@@ -10,9 +10,9 @@
 // - The key (VAPID) is kept like the sealing key (push/keys.ts): outside the database and its backup.
 // - A standalone subscription is the session's: it ends when that session ends (sign-out, a lost device).
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, isNull, lt, lte, notInArray, or } from 'drizzle-orm';
 import { tell, type NoticeKind } from '../notices/notices';
-import { asDb, type Db } from '../db/open';
+import { asDb, checkpoint, type Db } from '../db/open';
 import * as t from '../db/schema';
 import { Refused } from '../errors';
 import { allowed, EgressError, PUSH_HOSTS, type Egress } from '../net/egress';
@@ -71,7 +71,10 @@ export function subscribe(db: Db, personId: string, sessionId: string | null, i:
 
 /** Ends a device's subscription: the caller's only (another's endpoint changes nothing, and says nothing). */
 export function unsubscribe(db: Db, personId: string, endpoint: string): void {
-  db.delete(t.pushSubscription).where(and(eq(t.pushSubscription.id, subscriptionId(endpoint)), eq(t.pushSubscription.personId, personId))).run();
+  // Spelt as subscribe() kept it (new URL(...).href), so an endpoint the parser changes is still found (Gate routes, Info).
+  let href: string;
+  try { href = new URL(endpoint).href; } catch { return; }
+  db.delete(t.pushSubscription).where(and(eq(t.pushSubscription.id, subscriptionId(href)), eq(t.pushSubscription.personId, personId))).run();
 }
 
 /** What sends one push: the status the push service answered (production: through the egress client). */
@@ -103,6 +106,13 @@ export function webPushTransport(egress: Egress, vapid: () => Vapid | null, subj
  * A change that tells someone. `people` only where the change itself names them (a draw's people); otherwise who is
  * told is found at the tick by the kind's resolver (`resolve`), so the request's work never depends on it.
  */
+/**
+ * Kinds whose notices are made only at the morning batch, never at the next tick (Gate surprise H1): whose phone lights
+ * up half a minute after a thank-you or an answer would show its writer who gave, or who asked. At the batch every
+ * subscribed device is pushed, news or not (`batch`), so who had news says nothing either.
+ */
+export const BATCH_KINDS: readonly NoticeKind[] = ['answered', 'thanked', 'new_admin', 'target_raised'];
+
 export interface Telling { kind: NoticeKind; subjectId: string; day: string; people?: string[]; again?: boolean }
 /** Who a pending change of this kind tells, found at the tick from its subject and day. */
 export type Resolver = (subjectId: string, day: string) => string[];
@@ -132,6 +142,12 @@ export const MAX_ATTEMPTS = 8;
  * pruned with the people it names (issue #13, 3; ADR 0010).
  */
 export const SET_ASIDE_DAYS = 14;
+/**
+ * A push service that answers 429 is not called again for 1, 2, 4 … minutes (at most an hour), and once it has done so
+ * for this long since its first 429, the pushes waiting for it are dropped: their notices are still in the app (PR #14
+ * review, 2).
+ */
+export const THROTTLE_DROP_MS = DAY;
 /** stop() waits at most this long for pushes being sent (a hung push service must not hold up a shutdown, L1). */
 export const STOP_WAIT_MS = 2_000;
 
@@ -150,6 +166,8 @@ export class Pusher {
   private woken = new Set<string>();
   /** People whose push a 429 held back at the last tick: pending, but sent only at a real next tick (idle()). */
   private heldBack = new Set<string>();
+  /** Push services that answered 429: since when, how many times in a row, and not before when they are called again. */
+  private throttle = new Map<string, { first: number; n: number; until: number }>();
   private running: Promise<void> | null = null;
   private timer: NodeJS.Timeout | undefined;
   private stopped = false;
@@ -213,9 +231,10 @@ export class Pusher {
    * transaction with them. A row that fails is reported without its content, tried again later and set aside after
    * MAX_ATTEMPTS; it never stops the other rows (third review, L2).
    */
-  private makeNotices(): void {
+  private makeNotices(at: 'tick' | 'batch' = 'tick'): void {
     const now = new Date();
-    const due = this.db.select().from(t.pendingNotice).where(and(lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now.toISOString()))))
+    const kinds = at === 'batch' ? inArray(t.pendingNotice.kind, [...BATCH_KINDS]) : notInArray(t.pendingNotice.kind, [...BATCH_KINDS]);
+    const due = this.db.select().from(t.pendingNotice).where(and(kinds, lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now.toISOString()))))
       .orderBy(asc(t.pendingNotice.createdAt), asc(t.pendingNotice.id)).all();
     for (const x of due) {
       try {
@@ -238,8 +257,19 @@ export class Pusher {
   private pending(): boolean {
     const now = new Date().toISOString();
     return Boolean(this.db.select({ id: t.pendingNotice.id }).from(t.pendingNotice)
-      .where(and(lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now)))).limit(1).get())
+      .where(and(notInArray(t.pendingNotice.kind, [...BATCH_KINDS]), lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now)))).limit(1).get())
       || this.db.select({ id: t.pendingPush.personId }).from(t.pendingPush).all().some((r) => !this.heldBack.has(r.id) || this.woken.has(r.id));
+  }
+
+  /**
+   * The morning batch (jobs/morning.ts has told its own): the batch kinds' pending changes become notices, and every
+   * person with a subscribed device gets a push at the next tick, news or not, as cover (Gate surprise H1): which
+   * phones light up at 08:00 is the same whatever happened, and says nothing of who gave, who asked or who keeps a
+   * "Remind me" about whom.
+   */
+  batch(): void {
+    this.makeNotices('batch');
+    this.wake(this.db.selectDistinct({ id: t.pushSubscription.personId }).from(t.pushSubscription).all().map((r) => r.id));
   }
 
   /** One tick: what was handed over so far is told and pushed. */
@@ -256,6 +286,8 @@ export class Pusher {
     const now = Date.now();
     this.makeNotices();
     this.db.delete(t.pendingNotice).where(and(gte(t.pendingNotice.attempts, MAX_ATTEMPTS), lt(t.pendingNotice.nextAt, new Date(now - SET_ASIDE_DAYS * DAY).toISOString()))).run();
+    // What was deleted since the last tick leaves the WAL too (Gate surprise L4).
+    checkpoint(this.db);
     if (!this.transport) { this.db.delete(t.pendingPush).run(); return; }
     // A session that has ended takes its device's subscription with it (the foreign key); unconfirmed ones go.
     pruneSessions(this.db);
@@ -264,7 +296,11 @@ export class Pusher {
     this.woken.clear();
     this.heldBack.clear();
     const people = this.db.select().from(t.pendingPush).all().map((p) => p.personId);
-    const subs = this.db.select().from(t.pushSubscription).where(inArray(t.pushSubscription.personId, people)).all();
+    // Someone the edge has not brought for CONFIRM_DAYS (HomersLab: it never says who left) is pushed no more (Gate
+    // surprise L5); their rows go as if pushed. Standalone people have no lastSeenAt: their sessions decide.
+    const gone = new Set(this.db.select({ id: t.person.id }).from(t.person)
+      .where(lt(t.person.lastSeenAt, new Date(now - CONFIRM_DAYS * DAY).toISOString())).all().map((p) => p.id));
+    const subs = this.db.select().from(t.pushSubscription).where(inArray(t.pushSubscription.personId, people)).all().filter((s) => !gone.has(s.personId));
     // A person's pending row goes only once each of their devices has been tried (issue #13, 4): a crash or a stop
     // in the middle of sending leaves it, and the next start pushes them again (a device reached gets a second push).
     const left = new Map(people.map((p) => [p, subs.filter((s) => s.personId === p).length]));
@@ -275,16 +311,19 @@ export class Pusher {
       if (!this.woken.has(personId)) this.db.delete(t.pendingPush).where(eq(t.pendingPush.personId, personId)).run();
     };
     for (const [p, n] of left) if (n === 0) done(p);
-    const throttled = new Set<string>();
     for (const s of subs) {
       // Stopping: whoever is not done keeps their push pending, for the next start (L4; issue #13, 1).
       if (this.stopped) return;
       const reached = this.reached.get(s.personId) ?? new Set<string>();
       this.reached.set(s.personId, reached);
       const service = new URL(s.endpoint).hostname;
+      const backoff = this.throttle.get(service);
       if (reached.has(s.id)) {
         // Reached at an earlier tick, before a 429 held back another of this person's devices.
-      } else if (throttled.has(service)) {
+      } else if (backoff && now - backoff.first > THROTTLE_DROP_MS) {
+        // A day of 429s: this push is dropped (counted as tried); the service is tried again with the next news.
+        reached.add(s.id);
+      } else if (backoff && now < backoff.until) {
         waiting.add(s.personId);
       } else {
         let status: number;
@@ -292,12 +331,14 @@ export class Pusher {
         // The stop's wait ran out while this push was on its way: the database may be closed already.
         if (this.stopped) return;
         const at = new Date().toISOString();
+        if (status !== 429) this.throttle.delete(service);
         if (status >= 200 && status < 300) {
           if (s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: null }).where(eq(t.pushSubscription.id, s.id)).run();
         } else if (status === 404 || status === 410) {
           this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
         } else if (status === 429) {
-          throttled.add(service);
+          const n = (backoff?.n ?? 0) + 1;
+          this.throttle.set(service, { first: backoff?.first ?? now, n, until: Date.now() + Math.min(2 ** (n - 1), 60) * 60_000 });
           waiting.add(s.personId);
         } else if (status >= 400 && status < 500) {
           if (!s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: at }).where(eq(t.pushSubscription.id, s.id)).run();

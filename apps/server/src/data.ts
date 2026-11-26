@@ -11,14 +11,15 @@ import type { Config } from './config';
 import type { Db } from './db/open';
 import { callerOf } from './auth/hook';
 import { createInvite, findInvite } from './auth/invites';
-import { credentialsOf, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, RESET_FRESH_MINUTES, usedPasskey } from './auth/passkeys';
+import { cancelReset, confirmReset, credentialsOf, dropKeptSubscriptions, openReset, enrol, findPasskey, invitePersonOf, removePasskey, resetPasskeys, RESET_FRESH_MINUTES, usedPasskey } from './auth/passkeys';
 import { createSession, endAllSessions, endSession, isFresh, SESSION_COOKIE } from './auth/sessions';
 import type { NewCredential } from './auth/webauthn';
-import { addCelebration, editCelebration, getCelebration, removeCelebration, settlePastCelebrations, type CelebrationInput } from './celebrations/celebrations';
+import { addCelebration, canChange, editCelebration, getCelebration, mustGetCelebration, removeCelebration, settlePastCelebrations, type CelebrationInput } from './celebrations/celebrations';
 import { today } from './celebrations/dates';
 import { Refused } from './errors';
+import { ulid } from 'ulid';
 import {
-  addPerson, currency, editPerson, hasPasskey, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
+  addPerson, currency, editPerson, hasPasskey, household, managesKid, mustGetPerson, removePerson, setCurrency, setManagers, setupNeeded,
   type Person, type PersonInput,
 } from './household/people';
 import { chipIn, claimWish, editGroup, endGroup, refreshRevealed, releaseImported, setClaimState, setNamed, startGroup, unclaimWish, withdrawShare, type ClaimState, type GroupState } from './gifts/gifts';
@@ -33,25 +34,25 @@ import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
 import { isId } from './validate';
 import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from './view/view';
-import { answerQuestion, answerWithWish, ask, askersOf, declineQuestion, removeQuestion } from './questions/questions';
-import { addIdea, removeIdea } from './ideas/ideas';
+import { answerQuestion, answerWithWish, ask, askersOf, declineQuestion, getQuestion, removeQuestion } from './questions/questions';
+import { addIdea, getIdea, removeIdea } from './ideas/ideas';
 import {
   checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endDeviceSessions, forgetLink, getLink, GUEST_COOKIE, GUEST_DAYS, reissueLink, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
   startGuestSession, type GuestLink,
 } from './guests/guests';
-import { addGuest, guestLeaves, openDrawAsGuest } from './draws/draws';
+import { addGuest, guestLeaves, openDrawAsGuest, openDrawPeopleOf, unrevealedDraws } from './draws/draws';
 import { claimFor, setClaimStateFor, unclaimFor } from './gifts/gifts';
 import { applyImport, dryRun, type ImportInput } from './import/import';
 import { createEgress, type Egress } from './net/egress';
 import { drawStamps, drawsChanged, markRead, type NoticeKind } from './notices/notices';
-import { morning } from './jobs/morning';
+import { due, morning } from './jobs/morning';
 import { Pusher, subscribe, unsubscribe, type SubscriptionInput } from './push/push';
 import { usableVapid } from './push/keys';
 import { thankRecipients, writeThanks } from './thanks/thanks';
 import { previewLink } from './wishes/preview';
 import * as t from './db/schema';
 import { and, eq } from 'drizzle-orm';
-import { addWish, approveWish, declineWish, editWish, orderWishes, removeWish, type WishInput } from './wishes/wishes';
+import { addWish, approveWish, declineWish, editWish, getWish, orderWishes, removeWish, type WishInput } from './wishes/wishes';
 
 export type { CelebrationInput } from './celebrations/celebrations';
 export type { WishInput } from './wishes/wishes';
@@ -94,7 +95,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
    */
   const changed = <T>(v: T): T => { refreshRevealed(db, day()); return v; };
   /** After a change to a draw or a link: a guest's claims they can no longer manage go (review M1), then `changed`. */
-  const settled = <T>(v: T): T => { settleGuestClaims(db, keyring(cfg)); return changed(v); };
+  const settled = <T>(v: T): T => { settleGuestClaims(db, keyring(cfg), day(), cfg.timezone); return changed(v); };
   const fresh = (r: Req, minutes?: number) => {
     const s = fastifyRequestOf(r).caller?.session;
     if (!s || !isFresh(s, new Date(), minutes)) throw new Refused(403, 'sign in again to do this');
@@ -114,7 +115,28 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
   // The request only hands over what to tell; who is told, and the push, are the queue's (PR #12 review, L6).
   // One durable row per change; who is told is found at the tick (PR #12 review, N-M1).
   const tellLater = (kind: NoticeKind, subjectId: string, o?: { again?: boolean; people?: string[] }) => pusher.tell({ kind, subjectId, day: day(), people: o?.people, again: o?.again });
+  /** Someone became an admin (Gate re-attack 2, C1): everyone else in the household is told, at the morning batch. */
+  const tellNewAdmin = (id: string, by: string) =>
+    tellLater('new_admin', id, { people: household(db).map((p) => p.id).filter((p) => p !== id && p !== by) });
   pusher.resolve('answered', (id) => askersOf(db, id));
+  /**
+   * Reset and not confirmed yet (Gate re-attack 2, Q2): the writes on what concerns the people of the person's
+   * unrevealed draws answer as if nothing were there, the same 404 for each, and change nothing; otherwise 200 on one
+   * wish and 404 on the others would say whom they drew.
+   */
+  const sealedMate = (p: Person, personId: string) => p.drawsSealedAt !== null && personId !== p.id
+    && unrevealedDraws(db, day()).some((d) => d.people.has(p.id) && d.people.has(personId));
+  const onWish = (r: Req, wishId: string): Person => {
+    const p = me(r);
+    const w = getWish(db, wishId);
+    if (w && sealedMate(p, w.personId)) throw new Refused(404, 'no such wish');
+    return p;
+  };
+  const about = (r: Req, personId: string): Person => {
+    const p = me(r);
+    if (sealedMate(p, personId)) throw new Refused(404, 'no such person');
+    return p;
+  };
   pusher.resolve('thanked', (id, on) => thankRecipients(db, id, on));
   /** A change that may draw names, draw them again or clear them: the draw's people (but whoever did it) are told. */
   // The change and its pending row in one transaction: kept or lost together (PR #12 third review, L3).
@@ -176,7 +198,15 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
         const p = kind === 'admin' ? admin(r) : me(r);
         if (kind === 'self' && personId !== p.id) throw new Refused(403, 'not allowed');
         fresh(r);
-        return linkAnswer(fastifyRequestOf(r), createInvite(db, cfg, { kind, personId: mustGetPerson(db, personId).id, createdBy: p.id }));
+        // Audited (Gate routes M1): whoever holds an invite link can put a passkey on that account.
+        return atomically(() => {
+          // A link for another device of one's own carries the lineage of the key signed in with (Gate re-attack 2, C1).
+          const key = kind === 'self' ? fastifyRequestOf(r).caller?.session?.passkeyId : null;
+          const invitedBy = key ? db.select({ by: t.passkey.invitedBy }).from(t.passkey).where(eq(t.passkey.id, key)).get()?.by ?? null : null;
+          const made = createInvite(db, cfg, { kind, personId: mustGetPerson(db, personId).id, createdBy: p.id, invitedBy });
+          db.insert(t.audit).values({ id: ulid(), at: new Date().toISOString(), actorId: p.id, action: 'invite_created', subjectId: personId }).run();
+          return linkAnswer(fastifyRequestOf(r), made);
+        });
       },
       credentialsOf: (personId: string) => credentialsOf(db, personId),
       enrol: (o: { inviteId: string; name?: string; newPersonId?: string }, cred: NewCredential, label: string) => enrol(db, cfg, o, cred, label),
@@ -190,33 +220,68 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
         return createSession(db, personId, passkeyId).token;
       },
       endThisSession: (r: Req) => endSession(db, cookie(r)),
-      endMySessions: (r: Req) => endAllSessions(db, me(r).id),
-      removeMyPasskey: (r: Req, id: string) => removePasskey(db, me(r).id, id),
+      // One's own sign-out everywhere, or a passkey removed: the devices' subscriptions go too, those another's
+      // sign-out had kept (Gate re-attack 2, C2).
+      endMySessions: (r: Req) => atomically(() => { const id = me(r).id; endAllSessions(db, id); if (cfg.mode === 'standalone') dropKeptSubscriptions(db, id); }),
+      removeMyPasskey: (r: Req, id: string) => atomically(() => { const p = me(r).id; removePasskey(db, p, id); if (cfg.mode === 'standalone') dropKeptSubscriptions(db, p); }),
       /** A kid's parent or an admin ends someone's sessions. */
       endSessionsOf: (r: Req, personId: string) => {
         const p = mustGetPerson(db, personId);
         const by = me(r);
         if (by.role !== 'admin' && !managesKid(db, by, p)) throw new Refused(403, 'a kid\'s parent or an admin only');
-        endAllSessions(db, p.id);
+        // Gate re-attack 2, C2: ending someone's sessions silenced their phone before a reset. Never while a reset of
+        // them waits; their devices' subscriptions stay (only their own sign-out, a removed passkey or a reset carried
+        // out ends those); and they are told who signed them out, at once.
+        if (openReset(db, p.id)) throw new Refused(409, 'a reset of their sign-in waits: it is carried out or called off first');
+        atomically(() => {
+          db.update(t.pushSubscription).set({ sessionId: null }).where(eq(t.pushSubscription.personId, p.id)).run();
+          endAllSessions(db, p.id);
+          const id = ulid();
+          db.insert(t.audit).values({ id, at: new Date().toISOString(), actorId: by.id, action: 'sessions_ended', subjectId: p.id }).run();
+          tellLater('sessions_ended', id, { people: [p.id] });
+        });
       },
       /** An admin with a passkey sign-in of the last RESET_FRESH_MINUTES resets someone's passkeys. */
+      /** Asks, or (a second admin's yes, or the asker a day later with one admin) carries out a reset (Gate routes M1). */
       resetPasskeys: (r: Req, personId: string) => {
         const by = admin(r);
         fresh(r, RESET_FRESH_MINUTES);
-        resetPasskeys(db, by.id, personId);
+        resetPasskeys(db, by.id, personId, (kind, id, people) => tellLater(kind, id, { people }), (id) => openDrawPeopleOf(db, id, day()));
+        return viewOf(r).passkeyReset(personId);
       },
+      /** The person themselves (a device they still have) or any admin calls off a reset that waits. */
+      cancelReset: (r: Req, personId: string) => {
+        const by = me(r);
+        if (by.id !== personId && by.role !== 'admin') throw new Refused(403, 'admins only');
+        fresh(r);
+        cancelReset(db, by.id, mustGetPerson(db, personId).id);
+      },
+      /** On their new device, the person confirms the reset: their draws open to them again. */
+      confirmReset: (r: Req) => { fresh(r); confirmReset(db, me(r).id); },
     },
     people: {
       /** A name like a guest's the admin sees is refused until confirmed (review L-b). */
       add: (r: Req, i: PersonInput, confirmed: boolean) => {
         const by = admin(r);
         if (!confirmed) checkMemberName(db, by, i.name);
-        return addPerson(db, i).id;
+        // Audited (Gate re-attack B1): an admin made for the occasion was how a lone admin found a "second admin".
+        return atomically(() => {
+          const p = addPerson(db, i);
+          db.insert(t.audit).values({ id: ulid(), at: p.createdAt, actorId: by.id, action: 'person_created', subjectId: p.id }).run();
+          if (p.role === 'admin') tellNewAdmin(p.id, by.id);
+          return p.id;
+        });
       },
       edit: (r: Req, id: string, patch: Partial<PersonInput>, confirmed: boolean) => {
         const by = admin(r);
-        if (patch.name !== undefined && !confirmed && !sameName(mustGetPerson(db, id).name, patch.name)) checkMemberName(db, by, patch.name);
-        editPerson(db, id, patch);
+        if (patch.name !== undefined && !confirmed && !sameName(mustGetPerson(db, id).name, patch.name)) checkMemberName(db, by, patch.name, id);
+        atomically(() => {
+          const was = mustGetPerson(db, id).role;
+          editPerson(db, id, patch);
+          // Audited (Gate routes M1): a demotion before a reset was how "never an admin's passkeys" was got round.
+          if (patch.role && patch.role !== was) db.insert(t.audit).values({ id: ulid(), at: new Date().toISOString(), actorId: by.id, action: 'role_changed', subjectId: id }).run();
+          if (patch.role === 'admin' && was !== 'admin') tellNewAdmin(id, by.id);
+        });
       },
       /** Someone in a drawn draw leaves it first, under the re-draw rules (draws/draws.ts), in the same transaction. */
       remove: (r: Req, id: string) => drawsTold(r, () => {
@@ -241,20 +306,20 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       remove: (r: Req, id: string) => changed(removeWish(db, me(r), id)),
       approve: (r: Req, id: string) => { approveWish(db, me(r), id); changed(0); },
       decline: (r: Req, id: string) => changed(declineWish(db, me(r), id)),
-      order: (r: Req, personId: string, ids: string[]) => orderWishes(db, me(r), personId, ids),
+      order: (r: Req, personId: string, ids: string[]) => orderWishes(db, me(r), personId, ids, (id) => viewOf(r).orderable(id)),
     },
     /** What givers do (gifts/gifts.ts), as the request's person: each returns the wish's id for the view layer. */
     gifts: {
-      claim: (r: Req, wishId: string, quantity: number) => changed(claimWish(db, me(r), wishId, quantity).id),
-      setState: (r: Req, wishId: string, state: ClaimState) => changed(setClaimState(db, me(r), wishId, state, day()).id),
-      unclaim: (r: Req, wishId: string) => changed(unclaimWish(db, me(r), wishId)),
-      releaseImported: (r: Req, wishId: string) => { releaseImported(db, me(r), wishId); changed(0); },
-      setNamed: (r: Req, wishId: string, named: boolean) => changed(setNamed(db, me(r), wishId, named, day()).id),
-      startGroup: (r: Req, wishId: string, targetMinor: number) => changed(startGroup(db, me(r), wishId, targetMinor).id),
-      editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => changed(editGroup(db, me(r), wishId, patch, day()).id),
-      endGroup: (r: Req, wishId: string) => changed(endGroup(db, me(r), wishId)),
-      chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, me(r), wishId, amountMinor).id),
-      withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, me(r), wishId)),
+      claim: (r: Req, wishId: string, quantity: number) => changed(claimWish(db, onWish(r, wishId), wishId, quantity).id),
+      setState: (r: Req, wishId: string, state: ClaimState) => changed(setClaimState(db, onWish(r, wishId), wishId, state, day()).id),
+      unclaim: (r: Req, wishId: string) => changed(unclaimWish(db, onWish(r, wishId), wishId)),
+      releaseImported: (r: Req, wishId: string) => { releaseImported(db, onWish(r, wishId), wishId); changed(0); },
+      setNamed: (r: Req, wishId: string, named: boolean) => changed(setNamed(db, onWish(r, wishId), wishId, named, day()).id),
+      startGroup: (r: Req, wishId: string, targetMinor: number) => changed(startGroup(db, onWish(r, wishId), wishId, targetMinor).id),
+      editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => changed(atomically(() => editGroup(db, onWish(r, wishId), wishId, patch, day(), (people) => tellLater('target_raised', wishId, { people }))).id),
+      endGroup: (r: Req, wishId: string) => changed(endGroup(db, onWish(r, wishId), wishId)),
+      chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, onWish(r, wishId), wishId, amountMinor, day()).id),
+      withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, onWish(r, wishId), wishId, day())),
     },
     /** A celebration's draw (draws/draws.ts), as the request's person: each returns the celebration's id for the view layer. */
     draws: {
@@ -266,16 +331,24 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     },
     /** Anonymous questions (questions/questions.ts): each returns an id for the view layer, never the asker. */
     questions: {
-      ask: (r: Req, personId: string, text: string) => { const p = me(r); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
+      ask: (r: Req, personId: string, text: string) => { const p = about(r, personId); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
       // Its asker (someone of the household) is told it was answered: questions.ts hands the id to the notice only.
       answer: (r: Req, id: string, text: string) => atomically(() => { answerQuestion(db, me(r), id, text, new Date(), () => tellLater('answered', id)); }),
       decline: (r: Req, id: string) => atomically(() => { declineQuestion(db, me(r), id, new Date(), () => tellLater('answered', id)); }),
       withWish: (r: Req, id: string, i: WishInput) => changed(atomically(() => answerWithWish(db, me(r), id, i, new Date(), () => tellLater('answered', id)))),
-      remove: (r: Req, id: string) => removeQuestion(db, me(r), id),
+      remove: (r: Req, id: string) => {
+        const q = getQuestion(db, id);
+        if (q && sealedMate(me(r), q.personId)) throw new Refused(404, 'no such question');
+        removeQuestion(db, me(r), id);
+      },
     },
     ideas: {
-      add: (r: Req, personId: string, text: string) => addIdea(db, me(r), personId, text),
-      remove: (r: Req, id: string) => { removeIdea(db, me(r), id); },
+      add: (r: Req, personId: string, text: string) => addIdea(db, about(r, personId), personId, text),
+      remove: (r: Req, id: string) => {
+        const i = getIdea(db, id);
+        if (i && sealedMate(me(r), i.personId)) throw new Refused(404, 'no such idea');
+        removeIdea(db, me(r), id);
+      },
     },
     /** Guest links (guests/guests.ts): a new link's address is built here and shown once. */
     links: {
@@ -294,6 +367,8 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       revoke: (r: Req, id: string) => drawsTold(r, () => { revokeLink(db, me(r), id, (linkId) => guestLeaves(db, linkId)); settled(0); }),
       /** A new address for a link (review M-b): the same guest, a new token shown once. */
       reissue: (r: Req, id: string) => {
+        // A link left from a standalone past waits for the edge too (Gate routes L5).
+        homersLabWaits();
         const made = reissueLink(db, me(r), id);
         return viewOf(r).linkMade(made.id, linkUrl(cfg, made.token));
       },
@@ -301,7 +376,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     /** The sheet import (import/import.ts): admins only, checked there too. */
     imports: {
       dryRun: (r: Req, i: ImportInput) => viewOf(r).importPlan(dryRun(db, admin(r), i)),
-      apply: (r: Req, i: ImportInput) => viewOf(r).importDone(changed(applyImport(db, admin(r), i))),
+      apply: (r: Req, i: ImportInput) => viewOf(r).importDone(changed(applyImport(db, admin(r), i, cfg.timezone))),
     },
     /** What a guest does (ADR 0009), as the request's guest: only on what their link reaches. */
     guest: {
@@ -312,6 +387,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
        * guest. The browser's own guest session of that link goes on; another exchange of an opened link is refused.
        */
       start: (r: Req, token: unknown) => {
+        homersLabWaits();
         // The browser's own household session, if any: one the link is not for is refused (H1, defence in depth).
         const req = fastifyRequestOf(r);
         const c = callerOf(cfg, db, req);
@@ -355,14 +431,21 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       read: (r: Req) => markRead(db, me(r).id),
       /** Reminded `days` before each of this person's celebrations, or not (null). Never about oneself. */
       remind: (r: Req, personId: string, days: number | null) => {
-        const by = me(r);
+        const by = about(r, personId);
         const p = mustGetPerson(db, personId);
         if (p.id === by.id) throw new Refused(403, 'your own celebrations remind you a week before');
         if (days === null) db.delete(t.reminder).where(and(eq(t.reminder.personId, by.id), eq(t.reminder.aboutId, p.id))).run();
         else db.insert(t.reminder).values({ personId: by.id, aboutId: p.id, days }).onConflictDoUpdate({ target: [t.reminder.personId, t.reminder.aboutId], set: { days } }).run();
       },
       /** The morning batch (jobs/morning.ts), from the scheduler: who was told is woken in the push queue. */
-      morning: (now: Date) => pusher.wake(morning(db, cfg, now)),
+      // Once a day: the batch kinds' notices, and a push to every subscribed device whatever it was told (Gate surprise H1).
+      // And the rollover of guests' claims: one no draw or veil covers any more is settled (Gate re-attack R4, Q1).
+      morning: (now: Date) => {
+        const first = due(db, cfg, now);
+        if (first) db.transaction(() => settleGuestClaims(db, keyring(cfg), today(cfg.timezone, now), cfg.timezone));
+        morning(db, cfg, now);
+        if (first) pusher.batch();
+      },
     },
     /** This device's Web Push subscription (push/push.ts): the caller's own; a standalone one ends with this session. */
     push: {
@@ -396,6 +479,8 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     celebrations: {
       add: (r: Req, i: CelebrationInput) => changed(addCelebration(db, me(r), i).id),
       edit: (r: Req, id: string, patch: Partial<CelebrationInput>) => {
+        // Decided from the caller first (Gate routes, Info): who may not change it learns nothing of its draw.
+        if (!canChange(me(r), mustGetCelebration(db, id))) throw new Refused(403, 'only its host or an admin changes a celebration');
         // Someone in a drawn draw stays in the celebration until the draw changes; a draw not drawn yet lets them go.
         if (patch.people) checkPeopleChange(db, id, patch.people, day());
         // A drawn draw's day only moves later (review H2); a move is audited.
@@ -415,7 +500,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
           veilCelebration(asDb(tx), id, day());
           // Its draw links go with it: their guests' claims are settled first (only-made ones go, review M1).
           // (A refused removal rolls this back with it.)
-          settleGuestClaims(asDb(tx), keyring(cfg), drawLinksOf(asDb(tx), id));
+          settleGuestClaims(asDb(tx), keyring(cfg), day(), cfg.timezone, drawLinksOf(asDb(tx), id));
           removeCelebration(asDb(tx), me(r), id);
         });
         return changed(undefined);

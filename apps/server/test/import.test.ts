@@ -34,7 +34,7 @@ describe('the sheet import', () => {
     expect(r.statusCode, r.body).toBe(200);
     expect(everything(db)).toBe(before);
     const p = r.json();
-    expect(p).toMatchObject({ rows: 10, wishes: 6, claims: 3, ready: false });
+    expect(p).toMatchObject({ rows: 10, wishes: 7, claims: 4, ready: false });
     expect(p.people).toEqual([
       { name: 'Alex', personId: 'p_alex', status: 'matched', rows: 2 },
       { name: 'Grandpa Joe', personId: null, status: 'unmapped', rows: 1 },
@@ -44,12 +44,13 @@ describe('the sheet import', () => {
     ]);
     expect(p.occasions).toEqual([
       { name: 'Any time', celebrationId: null, status: 'any', rows: 3 },
-      { name: 'Christmas', celebrationId: 'c_xmas', status: 'matched', rows: 1 },
+      { name: 'Christmas', celebrationId: 'c_xmas', status: 'matched', rows: 2 },
       { name: 'Easter', celebrationId: null, status: 'unmatched', rows: 1 },
       { name: 'Mia\'s birthday', celebrationId: 'c_mia', status: 'matched', rows: 1 },
     ]);
-    expect(p.buyers).toEqual([{ name: 'Mia', personId: 'p_mia', rows: 1 }, { name: 'Nobody Here', personId: null, rows: 1 }, { name: 'Sam', personId: 'p_sam', rows: 1 }]);
-    expect(p.skipped).toEqual([{ row: 4, reason: 'bought' }, { row: 8, reason: 'person_unmapped' }, { row: 9, reason: 'no_item' }, { row: 10, reason: 'no_person' }]);
+    expect(p.buyers).toEqual([{ name: 'Mia', personId: 'p_mia', rows: 1 }, { name: 'Nobody Here', personId: null, rows: 1 }, { name: 'Robin', personId: 'p_robin', rows: 1 }, { name: 'Sam', personId: 'p_sam', rows: 1 }]);
+    // A Bought row is a bought claim now, not skipped (Gate surprise H2).
+    expect(p.skipped).toEqual([{ row: 8, reason: 'person_unmapped' }, { row: 9, reason: 'no_item' }, { row: 10, reason: 'no_person' }]);
     expect(p.warnings).toEqual([{ row: 6, kind: 'link_dropped' }, { row: 6, kind: 'buyer_unknown' }, { row: 7, kind: 'price_dropped' }, { row: 11, kind: 'buyer_unknown' }]);
   });
 
@@ -62,7 +63,7 @@ describe('the sheet import', () => {
     expect((await post('/api/import', { csv: SAMPLE, people: { 'Grandpa Joe': 'p_nobody' } })).statusCode).toBe(400);
     const done = await post('/api/import', { csv: SAMPLE, people: { 'grandpa joe': null }, occasions: { Easter: 'c_xmas' } });
     expect(done.statusCode, done.body).toBe(200);
-    expect(done.json()).toEqual({ wishes: 6, claims: 3, skipped: 4 });
+    expect(done.json()).toEqual({ wishes: 7, claims: 4, skipped: 3 });
     const made = db.select().from(t.wish).all().filter((w) => !before.includes(w.id));
     const by = (name: string) => made.find((w) => w.name === name)!;
     expect(by('A two-person tent')).toMatchObject({ personId: 'p_alex', celebrationId: 'c_xmas', priceMinor: 24900, mostWanted: 1, link: 'https://shop.example/tent', note: 'Green if possible', state: 'listed', addedBy: 'p_alex' });
@@ -77,7 +78,7 @@ describe('the sheet import', () => {
     const claims = db.select().from(t.claim).all().filter((c) => made.some((w) => w.id === c.wishId));
     const of = (c: typeof claims[number]) => made.find((w) => w.id === c.wishId)!.name;
     expect(claims.map((c) => [of(c), c.giverId, c.imported, c.state]).sort()).toEqual([
-      ['A red bike', null, 1, 'claimed'], ['A wool scarf', null, 1, 'claimed'], ['Hiking socks, wool', 'p_sam', 0, 'claimed']]);
+      ['A cookbook', 'p_robin', 0, 'bought'], ['A red bike', null, 1, 'claimed'], ['A wool scarf', null, 1, 'claimed'], ['Hiking socks, wool', 'p_sam', 0, 'claimed']]);
     // Givers see it as an imported reservation; an admin releases it (audited), nobody else, and never its person.
     const scarf = by('A wool scarf').id;
     expect((await post('/api/people/p_robin', undefined, 'p_sam', 'GET')).json().wishes.find((w: { id: string }) => w.id === scarf).gift.claims).toEqual([{ giver: null, guest: null, imported: true, quantity: 1, state: 'claimed', mine: false }]);
@@ -88,7 +89,7 @@ describe('the sheet import', () => {
     expect(db.select().from(t.audit).all().filter((a) => a.action === 'reservation_released').map((a) => [a.actorId, a.subjectId])).toEqual([['p_alex', scarf]]);
     for (const w of made) for (const v of [w.name, w.note ?? '']) expect(v).not.toMatch(/^[=+\-@\t\r]/);
     const after = everything(db);
-    for (const gone of ['Grandpa Joe', 'pipe stand', 'Nobody Here', 'already wrapped', 'orphan', 'empty row', 'javascript', 'not a price', 'Easter']) expect(after, gone).not.toContain(gone);
+    for (const gone of ['Grandpa Joe', 'pipe stand', 'Nobody Here', 'orphan', 'empty row', 'javascript', 'not a price', 'Easter']) expect(after, gone).not.toContain(gone);
     expect(db.select().from(t.audit).all().filter((a) => a.action === 'imported').map((a) => a.actorId)).toEqual(['p_alex']);
   });
 

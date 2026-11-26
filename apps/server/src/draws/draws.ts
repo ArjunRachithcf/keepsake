@@ -419,6 +419,11 @@ export function editDraw(db: Db, me: Person, celebrationId: string, patch: Parti
   const otherChange = (['budgetMinor', 'drawTogetherAt'] as const).some((k) => !same(k));
   if (dayHasCome(c, d, today) && (rulesChange || otherChange)) throw new Refused(409, 'its day has come: the draw stays as it is');
   if (!same('revealOn') && isRevealed(c, d, today)) throw new Refused(409, 'it is revealed: it stays revealed');
+  // Once drawn, "never" is never (no host can read the pairs later) and a reveal date only moves later (Gate surprise L1).
+  if (!same('revealOn') && d.drawnAt) {
+    if (before.revealOn === null) throw new Refused(409, 'drawn with never: the pairs stay sealed for good');
+    if (next.revealOn !== null && next.revealOn < before.revealOn) throw new Refused(409, 'the names are drawn: the reveal date only moves later');
+  }
   if (rulesChange && d.drawnAt) mayChangePairs(db, me, c, d, today);
   const k = rulesChange && d.drawnAt ? needKey(ring) : null;
   if (k) often(db, d);
@@ -507,6 +512,18 @@ export function guestLeaves(db: Db, linkId: string): void {
   if (place && !place.d.drawnAt) db.delete(t.drawParticipant).where(eq(t.drawParticipant.id, place.me.id)).run();
 }
 
+/** The people of the drawn draws, not revealed yet, that someone is in (Gate routes M1: told of a reset of their sign-in). */
+export function openDrawPeopleOf(db: Db, personId: string, today: string): string[] {
+  const out = new Set<string>();
+  for (const [cid, d] of latestDraws(db)) {
+    const c = mustGetCelebration(db, cid);
+    if (!d.drawnAt || isRevealed(c, d, today)) continue;
+    const ps = participantsOf(db, [d.id]).filter((p) => p.kind === 'person' && p.personId).map((p) => p.personId!);
+    if (ps.includes(personId)) for (const p of ps) if (p !== personId) out.add(p);
+  }
+  return [...out];
+}
+
 /** A guest opens theirs (after the draw-together time). */
 export function openDrawAsGuest(db: Db, linkId: string, now: Date, ring: Keyring): void {
   const place = guestPlace(db, linkId);
@@ -523,6 +540,7 @@ export function openDraw(db: Db, me: Person, celebrationId: string, now: Date, r
   const mine = participantsOf(db, [d.id]).find((p) => p.kind === 'person' && p.personId === me.id);
   if (!mine) throw new Refused(403, 'you are not in this draw');
   if (!d.drawnAt) throw new Refused(409, 'the names are not drawn yet');
+  if (me.drawsSealedAt) throw new Refused(409, 'confirm the reset of your sign-in first');
   if (!opensNow(d, now)) throw new Refused(409, 'not yet: everyone opens together at the set time');
   needKey(ring);
   if (!mine.openedAt) db.update(t.drawParticipant).set({ openedAt: now.toISOString() }).where(eq(t.drawParticipant.id, mine.id)).run();

@@ -1,4 +1,4 @@
-# Standalone: mkdir -m 700 data keys, docker compose up -d, then open the link in data/setup-link.txt to make the first
+# Standalone: mkdir -m 700 data keys, docker compose up -d, then open the link in keys/setup-link.txt to make the first
 # admin's passkey (published on this machine only; nobody becomes admin by arriving first).
 # Keepsake keeps data/ and its files for its own user only (0700, 0600). Back up data/ as you like. keys/ holds the key
 # that seals the draws (keys/sealing.key, made at the first start, ADR 0004): keep its copy apart (a password manager,

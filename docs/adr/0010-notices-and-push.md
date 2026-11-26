@@ -16,7 +16,12 @@ something is new.
 - **Only what the person may know makes a notice**: a question that reached them (a kid's: their parents), the answer
   to their own question, names drawn, drawn again or cleared in a draw they are in, a celebration a week away (its
   people), "Remind me", a draw's reveal date (its people and host), gifts that reached them (after the occasion, as
-  `thanks` shows them), a thank-you for a gift they gave. Never a claim, a share, an idea, a question on its way or its
+  `thanks` shows them), a thank-you for a gift they gave, a reset of a sign-in (Gate routes M1, re-attack B1: asked
+  and done, to its person, the other admins, the people of their open draws and a kid's parents, with who asked, `by`;
+  pushed at the next tick, not held for the batch: the person's warning comes before anything is reset, it is about
+  them, and the set told is the draw's, which its people know). Gate re-attack 2: someone became an admin (everyone
+  else, at the batch: C1), someone else signed you out everywhere (you, at once: C2), the target of a group gift you
+  chipped in to went up (its other sharers, at the batch: Q3). Never a claim, a share, an idea, a question on its way or its
   asker, someone else's reminder, or a pair. The twin-household matrices of M2–M4 read `/api/notices` after running
   the batch, and count the pushes each person was sent, so a notice or a push that followed a hidden thing fails them.
 - **A push is one fixed message**: `{"v":1}`, encrypted (RFC 8291, aes128gcm, padded) for every device, so the push
@@ -38,9 +43,9 @@ something is new.
   aside after 8 tries; it never holds up the others (third review, L1–L4). A row set aside is kept 14 days after its
   last try, long enough for whoever reads the log to look at it, then pruned with the people it names (issue #13).
 - **What a push service answers** (L4; only its status is read, the body is never parsed): 404 or 410 drops the
-  subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then; their people
-  stay in `pending_push`, so a crash meanwhile loses nothing, and their devices already reached are not pushed again
-  by that process); a 5xx, a timeout or our own failure never drops one; another 4xx drops it only after 3 days of
+  subscription; 429 backs that service off for 1, 2, 4 … minutes (at most an hour; its other pushes wait and are sent
+  then; their people stay in `pending_push`, so a crash meanwhile loses nothing, and their devices already reached are
+  not pushed again by that process), and after a day of 429s the pushes waiting for it are dropped (PR #14 review); a 5xx, a timeout or our own failure never drops one; another 4xx drops it only after 3 days of
   failing. **What can still be lost** (accepted): a push a service failed with a 5xx or a timeout, or accepted and
   never delivered, is not tried again; its notice is still in the app, read at the next open.
 - **Kept in step** (M2, L7, N4): the app sends its subscription again at every start and whenever it is shown again, so
@@ -60,11 +65,20 @@ something is new.
 - **A device's subscription is its session's** (standalone): signing out, or a lost device's sessions ended, ends it,
   so a family computer someone signed out of gets nothing more for them. At most 10 devices a person.
 - **The morning batch** (ADR 0008's 08:00, household time): questions that reached their person, celebrations a week
-  away, "Remind me", reveal dates and gifts received, for everyone at once. It runs once a day (`job_run`); a server
-  that was off at 08:00 runs it at its next start that day, catching up a week of questions, reveals and thank-you
-  prompts (reminders only on their day); a batch that fails is tried again 15 minutes later while it is still due
-  (L8). Answers to a question, draws and thank-yous are told at the queue's next tick: only the person told could learn
-  anything from their timing, and they know it already.
+  away, "Remind me", reveal dates and gifts received, and the answers to questions and the thank-yous written since
+  the last one (`BATCH_KINDS`), for everyone at once. It runs once a day (`job_run`); a server that was off at 08:00
+  runs it at its next start that day, catching up a week of questions, reveals and thank-you prompts (reminders only
+  on their day); a batch that fails is tried again 15 minutes later while it is still due (L8).
+- **Who is pushed says nothing either** (Gate surprise H1, 2026-11-26). The earlier reasoning, "only the person told
+  could learn anything from their timing, and they know it already", was wrong: the one who **caused** the notice
+  knows the moment they acted. Robin thanks for a gift whose giver stays hidden from her for good, and half a minute
+  later exactly that giver's phone says "Something new"; she answers an anonymous question and only the asker's phone
+  does, or nobody's when a guest asked. So answers and thank-yous wait for the next batch (their pending row is still
+  written in the change's own transaction), and at each day's batch **every subscribed device of the household is
+  pushed, news or not** (cover): which phones light up at 08:00 is the same whatever anyone did, so it no longer
+  points at who gave, who asked or who keeps a "Remind me" about whom. Only draws are still told at the queue's next
+  tick: they go to all of a draw's people but its host, who already knows who is in it. Accepted: an answer or a
+  thank-you reaches its reader up to a day later, and every device gets one push a day.
 - **"Remind me"** (`PUT /api/people/{id}/reminder`): 1 to 60 days before each of that person's celebrations, at the
   batch; the caller's own, never about themselves; `PersonPage.reminder` shows only the caller's, so nobody learns
   who keeps a reminder about them. A celebration's own people are reminded a week before without asking.
@@ -81,4 +95,8 @@ client in the server (ADR 0011); the service worker (`apps/web/public/sw.js`) al
 touches `/api`. Accepted: the push service learns when a device gets something (not what); a push can arrive while
 the screen is unlocked next to someone else, and says only "Something new". Under HomersLab a subscription has no
 Keepsake session to end with: it ends when the person turns notifications off on that device, the browser drops it,
-the person leaves the household, or the app has not been opened on that device for 30 days.
+or the app has not been opened on that device for 30 days. HomersLab's edge never tells Keepsake that someone left
+(Homeward has no household API or removal call yet, #86), so a request through the edge is the only sign of
+membership: each one marks its person seen (`person.last_seen_at`, at most once an hour), and nobody unseen for 30
+days is pushed, cover pushes included (Gate surprise L5). **The gap, accepted until Homeward #86**: someone removed
+from the household keeps getting "Something new" on their devices for up to 30 days.

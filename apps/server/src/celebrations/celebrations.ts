@@ -64,8 +64,13 @@ export function canChange(me: Pick<Person, 'id' | 'role'>, c: Pick<Celebration, 
   return me.role === 'admin' || (me.role === 'adult' && c.hostId === me.id);
 }
 
+/** A grown-up hosts at most this many celebrations (Gate routes, Info: as wishes, links, ideas and guests are capped). */
+export const MAX_HOSTED = 100; // the message says it
+
 export function addCelebration(db: Db, me: Person, i: CelebrationInput): Celebration {
   if (me.role === 'kid') throw new Refused(403, 'grown-ups host celebrations');
+  const hosted = db.select({ id: t.celebration.id }).from(t.celebration).where(eq(t.celebration.hostId, me.id)).all().length;
+  if (hosted >= MAX_HOSTED) throw new Refused(409, 'at most 100 celebrations for one host');
   const people = checkPeople(db, i.people);
   const id = ulid();
   db.transaction((tx) => {

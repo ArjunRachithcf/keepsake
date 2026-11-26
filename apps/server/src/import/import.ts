@@ -1,7 +1,9 @@
 // The one-time import of the household's sheet (spec §5, ADR 0005): an admin uploads the "Gift List" tab as CSV
 // (Person, Item, Link, Priority, Status, Bought by, Price, Occasion, Notes). A dry run shows the plan: each name in the
 // file matched to someone of the household or waiting to be mapped (or skipped), each occasion matched to a celebration
-// or any time, Reserved rows as claims by the household member named in "Bought by", Bought rows skipped. Applying
+// or any time, Reserved, Bought and Given rows as claims (claimed, bought, given) by the household member named in
+// "Bought by", or nobody's imported reservation (Gate surprise H2: a skipped Bought row would be missing from its
+// person's list, which says it was bought). Applying
 // makes everything in one transaction, or nothing. Nothing of the file is kept but the wishes and claims it made: no
 // table holds it, no log gets it, and the plan names only what the admin needs to map.
 //
@@ -15,6 +17,8 @@ import { allCelebrations, peopleByCelebration } from '../celebrations/celebratio
 import { Refused } from '../errors';
 import { currency, household, type Person } from '../household/people';
 import { MAX_WISHES } from '../wishes/wishes';
+import { givenFields } from '../gifts/gifts';
+import { today } from '../celebrations/dates';
 
 export const MAX_CSV = 512 * 1024; // characters; the contract says it
 export const MAX_ROWS = 2000;
@@ -35,7 +39,9 @@ export interface Plan {
   warnings: { row: number; kind: WarningKind }[];
   ready: boolean;
 }
-interface NewWish { personId: string; name: string; link: string | null; priceMinor: number | null; note: string | null; mostWanted: boolean; celebrationId: string | null; buyer: string | null }
+interface NewWish { personId: string; name: string; link: string | null; priceMinor: number | null; note: string | null; mostWanted: boolean; celebrationId: string | null; buyer: string | null; state: 'claimed' | 'bought' | 'given' }
+/** What the Status column says of a row: a claim in that state, or none. */
+const CLAIM_STATES: Record<string, NewWish['state']> = { reserved: 'claimed', bought: 'bought', purchased: 'bought', given: 'given' };
 
 const NOT_CSV = () => new Refused(400, 'the file is not a CSV the importer reads');
 
@@ -155,7 +161,6 @@ function planOf(db: Db, i: ImportInput): { plan: Plan; make: NewWish[] } {
     if (!item) return void skipped.push({ row, reason: 'no_item' });
     const who = tally(pm, name, () => resolve(name));
     const status = key(cell(r, 'status'));
-    if (status === 'bought' || status === 'given' || status === 'purchased') return void skipped.push({ row, reason: 'bought' });
     if (who.status === 'skipped') return void skipped.push({ row, reason: 'person_skipped' });
     if (!who.personId) return void skipped.push({ row, reason: 'person_unmapped' });
     if (item.length > 120) return void skipped.push({ row, reason: 'item_too_long' });
@@ -176,7 +181,8 @@ function planOf(db: Db, i: ImportInput): { plan: Plan; make: NewWish[] } {
     // A Reserved row keeps its reservation: by its buyer when they are someone here who may give, otherwise as nobody's
     // "imported reservation" (review L1), so nobody buys it twice; an admin releases it if it was a mistake.
     let buyer: string | null = null;
-    if (status === 'reserved') {
+    const state = CLAIM_STATES[status] ?? 'claimed';
+    if (CLAIM_STATES[status]) {
       const by = cell(r, 'buyer');
       const b = by ? tally(bm, by, () => ({ personId: resolve(by).personId })) : null;
       const p = b?.personId ? ids.get(b.personId) : undefined;
@@ -184,7 +190,7 @@ function planOf(db: Db, i: ImportInput): { plan: Plan; make: NewWish[] } {
       else { buyer = IMPORTED; warnings.push({ row, kind: 'buyer_unknown' }); }
     }
     const pr = key(cell(r, 'priority'));
-    make.push({ personId: who.personId, name: item, link, priceMinor, note, mostWanted: /^(high|top|1|most wanted|must have|\*+|★+)$/.test(pr), celebrationId, buyer });
+    make.push({ personId: who.personId, name: item, link, priceMinor, note, mostWanted: /^(high|top|1|most wanted|must have|\*+|★+)$/.test(pr), celebrationId, buyer, state });
   });
   const plan: Plan = {
     rows: rows.length,
@@ -207,7 +213,7 @@ export function dryRun(db: Db, me: Person, i: ImportInput): Plan {
 }
 
 /** Applies the plan in one transaction (every name mapped or skipped first). Returns what it made. */
-export function applyImport(db: Db, me: Person, i: ImportInput): { wishes: number; claims: number; skipped: number } {
+export function applyImport(db: Db, me: Person, i: ImportInput, tz = 'UTC'): { wishes: number; claims: number; skipped: number } {
   adminOnly(me);
   return db.transaction((tx0) => {
     const tx = asDb(tx0);
@@ -225,7 +231,9 @@ export function applyImport(db: Db, me: Person, i: ImportInput): { wishes: numbe
       next.set(w.personId, next.get(w.personId)! + 1);
       if (w.buyer) {
         const imported = w.buyer === IMPORTED;
-        tx.insert(t.claim).values({ id: ulid(), wishId: id, giverId: imported ? null : w.buyer, imported: imported ? 1 : 0, quantity: 1, state: 'claimed', createdAt: now, updatedAt: now }).run();
+        // A Given row is given today, so its reveal follows the usual rule (ADR 0003): after its occasion.
+        const dates = w.state === 'given' ? givenFields(tx, tx.select().from(t.wish).where(eq(t.wish.id, id)).get()!, true, today(tz, new Date(now))) : {};
+        tx.insert(t.claim).values({ id: ulid(), wishId: id, giverId: imported ? null : w.buyer, imported: imported ? 1 : 0, quantity: 1, state: w.state, ...dates, createdAt: now, updatedAt: now }).run();
       }
     }
     tx.insert(t.audit).values({ id: ulid(), at: now, actorId: me.id, action: 'imported', subjectId: ulid() }).run();

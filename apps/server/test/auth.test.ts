@@ -1,8 +1,8 @@
 // Standalone sign-in, step by step (Philobiblos ADR 0010), with a stand-in authenticator (helpers.fakeWebAuthn). The
 // first admin comes from the setup link in the data folder, never from the first visitor.
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { buildApp, type BuiltApp } from '../src/app';
@@ -21,7 +21,7 @@ let db: Db;
 let app: BuiltApp['app'];
 
 beforeEach(async () => {
-  cfg = loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: mkdtempSync(join(tmpdir(), 'keepsake-auth-')) });
+  cfg = loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: mkdtempSync(join(tmpdir(), 'keepsake-auth-')), KEEPSAKE_KEYS_DIR: join(mkdtempSync(join(tmpdir(), 'keepsake-keys-')), 'keys') });
   db = openDb(':memory:');
   app = (await buildApp(cfg, db, { webauthn: fakeWebAuthn() })).app;
 });
@@ -35,10 +35,10 @@ async function enrol(token: string, name?: string, credId = 'cred-1') {
   return post('/api/auth/enrol/verify', { challengeId, response: { id: credId, challenge: options.challenge }, label: 'Laptop' });
 }
 const cookieOf = (res: { cookies: { name: string; value: string }[] }) => {
-  const c = res.cookies.find((x) => x.name === 'keepsake_session');
-  return c ? `keepsake_session=${c.value}` : '';
+  const c = res.cookies.find((x) => x.name === '__Host-keepsake_session');
+  return c ? `__Host-keepsake_session=${c.value}` : '';
 };
-const setupToken = () => readFileSync(join(cfg.dataDir, SETUP_FILE), 'utf8').trim().split('#')[1]!;
+const setupToken = () => readFileSync(join(cfg.keysDir, SETUP_FILE), 'utf8').trim().split('#')[1]!;
 
 describe('the first admin', () => {
   it('an empty install has no admin and lets nobody in; the setup link is in a private file, used once, then removed', async () => {
@@ -52,19 +52,26 @@ describe('the first admin', () => {
     const res = await enrol(token, 'Alex');
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toMatchObject({ signedIn: true, person: { name: 'Alex', role: 'admin', signsIn: true } });
-    expect(res.cookies.find((c) => c.name === 'keepsake_session')).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
+    expect(res.cookies.find((c) => c.name === '__Host-keepsake_session')).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
     expect(existsSync(file)).toBe(false);
     expect((await app.inject({ url: '/api/household', headers: { cookie: cookieOf(res) } })).json().me.role).toBe('admin');
     expect((await post('/api/auth/enrol/options', { token, name: 'Mallory' })).statusCode).toBe(401);
     expect(ensureSetupLink(db, cfg)).toBeNull();
   });
 
+  it('the session cookie is __Host- only: one a sibling subdomain could plant (no prefix) is no session (Gate routes L1)', async () => {
+    db.insert(t.person).values({ id: 'p_robin', name: 'Robin', role: 'adult', createdAt: new Date().toISOString() }).run();
+    const live = createSession(db, 'p_robin').token;
+    const session = (cookie: string) => app.inject({ url: '/api/auth/session', headers: { cookie } }).then((r) => r.json().signedIn);
+    expect([await session(`keepsake_session=${live}`), await session(`__Host-keepsake_session=${live}`)]).toEqual([false, true]);
+  });
+
   it('a new start-up replaces the setup link; a link planted at the path is not followed', () => {
     ensureSetupLink(db, cfg);
     const first = setupToken();
-    const target = join(cfg.dataDir, 'elsewhere.txt');
+    const target = join(cfg.keysDir, 'elsewhere.txt');
     writeFileSync(target, 'keep me');
-    const file = join(cfg.dataDir, SETUP_FILE);
+    const file = join(cfg.keysDir, SETUP_FILE);
     // someone replaces the file with a link to another file: the next write removes the link, not the target
     rmSync(file);
     symlinkSync(target, file);
@@ -157,6 +164,13 @@ describe('sign-in', () => {
     expect(other.every((c) => c === 200)).toBe(true);
   });
 
+  it('the five sign-in steps share one budget of 20 a minute per client (Gate routes L3)', async () => {
+    const routes = ['/api/auth/sign-in/options', '/api/auth/sign-in/verify', '/api/auth/enrol/options', '/api/auth/enrol/verify', '/api/guest/session'];
+    const codes: number[] = [];
+    for (let i = 0; i < 25; i++) codes.push((await app.inject({ method: 'POST', url: routes[i % 5]!, headers: H, payload: {}, remoteAddress: '192.0.2.44' })).statusCode);
+    expect([codes.slice(0, 20).includes(429), codes.slice(20)]).toEqual([false, [429, 429, 429, 429, 429]]);
+  });
+
   it('IPv6 counts by /64: one host cannot spread its tries over its addresses', async () => {
     const from = (remoteAddress: string) => app.inject({ method: 'POST', url: '/api/auth/sign-in/options', headers: H, remoteAddress });
     const codes = [];
@@ -176,7 +190,7 @@ describe('invites', () => {
     const o = (await call('/api/auth/enrol/options', '', { token })).json();
     return call('/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: credId, challenge: o.options.challenge }, label: 'Phone' });
   }
-  const stale = (personId: string) => `keepsake_session=${createSession(hh, personId, null, new Date(Date.now() - (FRESH_MINUTES + 1) * 60_000)).token}`;
+  const stale = (personId: string) => `__Host-keepsake_session=${createSession(hh, personId, null, new Date(Date.now() - (FRESH_MINUTES + 1) * 60_000)).token}`;
 
   it('an admin invites someone without a passkey (a kid too), with a fresh sign-in; once only', async () => {
     expect((await call('/api/people/p_sam/invites', stale('p_alex'))).statusCode).toBe(403);
@@ -214,6 +228,18 @@ describe('invites', () => {
     const file = createRecoveryLink(hh, cfg, 'p_alex');
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(readFileSync(file, 'utf8')).toMatch(/\/enrol#/);
+  });
+
+  it('neither the setup link nor a recovery link is ever in the data folder (its backup), only in the keys folder (Gate routes L2)', () => {
+    const empty = openDb(':memory:');
+    const inData = () => readdirSync(cfg.dataDir).filter((f) => f.includes('link'));
+    // One an earlier version left in data/ goes at the next write.
+    writeFileSync(join(cfg.dataDir, SETUP_FILE), 'old');
+    const setup = ensureSetupLink(empty, cfg)!;
+    expect([dirname(setup), inData()]).toEqual([cfg.keysDir, []]);
+    const recovery = createRecoveryLink(hh, cfg, 'p_alex');
+    expect([dirname(recovery), inData(), statSync(cfg.keysDir).mode & 0o777]).toEqual([cfg.keysDir, [], 0o700]);
+    expect(() => createRecoveryLink(hh, { ...cfg, keysDir: join(cfg.dataDir, 'keys') }, 'p_alex')).toThrow(/KEEPSAKE_KEYS_DIR/);
   });
 });
 
@@ -271,7 +297,7 @@ describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
   });
   afterEach(() => a.close());
   const call = (method: 'GET' | 'POST' | 'DELETE', url: string, cookie: string, payload?: object) => a.inject({ method, url, payload, headers: { ...H, cookie } });
-  const pkSession = (personId: string, passkeyId: string) => `keepsake_session=${createSession(hh, personId, passkeyId).token}`;
+  const pkSession = (personId: string, passkeyId: string) => `__Host-keepsake_session=${createSession(hh, personId, passkeyId).token}`;
 
   it('you list your passkeys; removing one ends the sessions it signed in; the last one stays', async () => {
     const via1 = pkSession('p_alex', 'pk1');
@@ -330,7 +356,7 @@ describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
   it('an admin, just signed in with a passkey, resets the passkeys of someone who lost every device; audited', async () => {
     hh.insert(t.passkey).values({ id: 'pk-sam', personId: 'p_sam', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
     const sams = pkSession('p_sam', 'pk-sam');
-    const old = (personId: string) => `keepsake_session=${createSession(hh, personId, 'pk1', new Date(Date.now() - 6 * 60_000)).token}`;
+    const old = (personId: string) => `__Host-keepsake_session=${createSession(hh, personId, 'pk1', new Date(Date.now() - 6 * 60_000)).token}`;
     // not someone else, not with a sign-in older than 5 minutes, never an admin's
     expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_robin', 'pk1'))).statusCode).toBe(403);
     expect((await call('POST', '/api/people/p_sam/passkeys/reset', old('p_alex'))).statusCode).toBe(403);
@@ -338,12 +364,19 @@ describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
     expect(admin.statusCode).toBe(409);
     expect(admin.json().error).toBe('an admin recovers with keepsake recover');
     expect((await call('POST', '/api/people/p_nobody/passkeys/reset', pkSession('p_alex', 'pk1'))).statusCode).toBe(404);
-    // the reset: passkeys and sessions gone, then the usual invite works again
-    expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'))).statusCode).toBe(204);
+    // Alex is the household's one admin: the reset is asked, and waits a day (Gate routes M1); asking again changes nothing.
+    const asked = await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'));
+    expect([asked.statusCode, asked.json()]).toEqual([200, { state: 'asked', waitsFor: 'a_day', notBefore: expect.any(String), askedBy: { id: 'p_alex', name: 'Alex' }, approvedBy: null }]);
+    expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'))).json().state).toBe('asked');
+    expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toHaveLength(1);
+    // A day later: the reset, passkeys and sessions gone, then the usual invite works again.
+    hh.update(t.passkeyReset).set({ notBefore: new Date(Date.now() - 1000).toISOString() }).run();
+    expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'))).json().state).toBe('done');
     expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toEqual([]);
     expect((await call('GET', '/api/household', sams)).statusCode).toBe(401);
-    expect(hh.select().from(t.audit).all()).toEqual([expect.objectContaining({ actorId: 'p_alex', action: 'passkeys_reset', subjectId: 'p_sam' })]);
     expect((await call('POST', '/api/people/p_sam/invites', pkSession('p_alex', 'pk1'))).statusCode).toBe(201);
+    expect(hh.select().from(t.audit).all().map((x) => [x.actorId, x.action, x.subjectId])).toEqual([
+      ['p_alex', 'reset_asked', 'p_sam'], ['p_alex', 'passkeys_reset', 'p_sam'], ['p_alex', 'invite_created', 'p_sam']]);
   });
 
   it('an admin who stops being one takes their unused invites along', async () => {

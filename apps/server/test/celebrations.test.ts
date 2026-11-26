@@ -88,3 +88,19 @@ describe('the routes', () => {
     expect(list.past[0].daysUntil).toBeLessThan(0);
   });
 });
+
+describe('a cap on celebrations (Gate routes, Info)', () => {
+  let built: BuiltApp | undefined;
+  afterEach(async () => { await built?.app.close(); built = undefined; });
+  it(`one grown-up hosts at most ${100} celebrations; others still can`, async () => {
+    const db = household();
+    built = await buildApp(standalone(), db);
+    const add = (who: string, i: number) => built!.app.inject({ method: 'POST', url: '/api/celebrations', headers: { cookie: sessionCookie(db, who), origin: ORIGIN },
+      payload: { name: `Party ${i}`, date: '2027-01-01', recurrence: 'none', poster: 'pine', people: ['p_alex', 'p_robin'] } });
+    const hosted = db.$client.prepare('SELECT count(*) AS n FROM celebration WHERE host_id = ?').get('p_robin') as { n: number };
+    for (let i = hosted.n; i < 100; i++) expect((await add('p_robin', i)).statusCode).toBe(201);
+    const r = await add('p_robin', 100);
+    expect([r.statusCode, r.json()]).toEqual([409, { error: 'at most 100 celebrations for one host' }]);
+    expect((await add('p_alex', 0)).statusCode).toBe(201);
+  });
+});

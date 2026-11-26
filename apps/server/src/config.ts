@@ -9,6 +9,11 @@ export type Mode = 'homerslab' | 'standalone';
 export interface Config {
   mode: Mode;
   dataDir: string;
+  /**
+   * KEEPSAKE_KEYS_DIR (default ./keys): standalone's key files and its one-time admin links (setup, `keepsake recover`),
+   * kept out of the data folder and so out of its backups (Gate routes L2).
+   */
+  keysDir: string;
   dbFile: string;
   host: string;
   port: number;
@@ -103,6 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     mode,
     dataDir,
+    keysDir: resolve(env.KEEPSAKE_KEYS_DIR ?? './keys'),
     dbFile: env.KEEPSAKE_DB_FILE ?? join(dataDir, 'keepsake.sqlite'),
     // Standalone binds to localhost unless told otherwise (docs/security.md); the container sets KEEPSAKE_HOST=0.0.0.0
     // and compose publishes the port on 127.0.0.1 only.

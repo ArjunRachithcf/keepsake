@@ -15,7 +15,7 @@ import type * as api from '@keepsake/contracts';
 import type { PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialDescriptorJSON, PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/server';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { passkeysOf } from '../auth/passkeys';
+import { passkeysOf, resetNotBefore } from '../auth/passkeys';
 import { canChange, allCelebrations, mustGetCelebration, peopleByCelebration, type Celebration } from '../celebrations/celebrations';
 import { daysBetween, nextDate, today } from '../celebrations/dates';
 import { currency, hasPasskey, household, keeps, managersOf, mustGetPerson, type Person } from '../household/people';
@@ -34,7 +34,7 @@ import { getIdea, ideasFor, seesIdeas } from '../ideas/ideas';
 import { getLink, lastDayOf, linksFor, managesLink, reachOf, reaches, type GuestLink } from '../guests/guests';
 import { guestPlace } from '../draws/draws';
 import type { Plan } from '../import/import';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { noticesOf, type Notice } from '../notices/notices';
 import { usableVapid } from '../push/keys';
 import { getThankYou, thankedBy, thankYouFor } from '../thanks/thanks';
@@ -182,8 +182,15 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
    * The counts stay, so nobody buys twice. This depends on who is in which draw, never on who drew whom.
    */
   const live = lazy(() => unrevealedDraws(db, now));
+  /**
+   * Reset and not confirmed yet on the new device (Gate routes M1, re-attack R2): to the viewer, the draw is sealed, and
+   * so is what they did for the people of their draws: their own claims, shares, ideas, questions and gifts given to
+   * them read as anyone's. Whoever enrolled as them learns no pair from "mine".
+   */
+  const sealedFor = (personId: string) => viewer.drawsSealedAt !== null && personId !== viewer.id
+    && live().some((d) => d.people.has(viewer.id) && d.people.has(personId));
   /** `key`: a person's id, or `g:<link id>` for a guest (gifts/gifts.ts giverKey). The same rule holds for ideas. */
-  const unnamed = (personId: string, key: string | null, at: string) => key !== null && key !== viewer.id
+  const unnamed = (personId: string, key: string | null, at: string) => key !== null && (key !== viewer.id || sealedFor(personId))
     && live().some((d) => d.people.has(key) && d.people.has(personId) && dayOfInstant(cfg.timezone, at) <= d.on);
   const giverRef = (w: Wish, giverId: string | null, at: string) => (unnamed(w.personId, giverId, at) ? null : ref(giverId));
   const guestNames = lazy(() => guestNamesOf(db));
@@ -194,8 +201,9 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
   const gift = (w: Wish, g: Gifts): api.Gift => {
     const byTime = <T extends { createdAt: string; id: string }>(xs: T[]) => [...xs].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     const claimed = g.claims.reduce((n, c) => n + c.quantity, 0);
-    const myClaim = g.claims.find((c) => c.giverId === viewer.id);
-    const myShare = g.shares.find((x) => x.giverId === viewer.id);
+    const me = sealedFor(w.personId) ? null : viewer.id;
+    const myClaim = me ? g.claims.find((c) => c.giverId === me) : undefined;
+    const myShare = me ? g.shares.find((x) => x.giverId === me) : undefined;
     const mine = g.group ? (myShare ? { state: g.group.state, named: myShare.named === 1, dated: g.group } : null)
       : myClaim ? { state: myClaim.state, named: myClaim.named === 1, dated: myClaim } : null;
     return {
@@ -203,14 +211,15 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       left: g.group ? 0 : Math.max(0, w.quantity - claimed),
       given: fullyGiven(w, g),
       claims: byTime(g.claims).map((c) => ({
-        giver: giverRef(w, c.giverId, c.createdAt), guest: guestRef(w, c.guestId, c.createdAt), imported: c.imported === 1, quantity: c.quantity, state: c.state, mine: c.giverId === viewer.id,
+        giver: giverRef(w, c.giverId, c.createdAt), guest: guestRef(w, c.guestId, c.createdAt), imported: c.imported === 1, quantity: c.quantity, state: c.state, mine: me !== null && c.giverId === me,
       })),
       group: g.group ? {
         organizer: giverRef(w, g.group.organizerId, g.group.createdAt), targetMinor: g.group.targetMinor, state: g.group.state,
-        totalMinor: g.shares.reduce((n, x) => n + x.amountMinor, 0),
-        givers: byTime(g.shares).map((x) => ({ giver: giverRef(w, x.giverId, x.createdAt), mine: x.giverId === viewer.id })),
+        // Enough or not, never the total: with two sharers the total less your own is the other's (Gate surprise L3).
+        enough: g.shares.reduce((n, x) => n + x.amountMinor, 0) >= g.group.targetMinor,
+        givers: byTime(g.shares).map((x) => ({ giver: giverRef(w, x.giverId, x.createdAt), mine: me !== null && x.giverId === me })),
         myShareMinor: myShare?.amountMinor ?? null,
-        canManage: managesGroup(db, viewer, g.group),
+        canManage: me !== null && managesGroup(db, viewer, g.group),
       } : null,
       mine: mine ? (() => {
         const occ = occasionOf(w, mine.dated.givenOn ?? now, calendar());
@@ -296,14 +305,15 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
 
   // Questions (ADR 0008): what the viewer may see, the asker never (only `mine`, about the viewer themselves).
   const wishName = (id: string) => { const w = getWish(db, id); return w && canSee(db, viewer, w) ? w.name : null; };
-  const asked = (q: Question) => askedOf(q, isAsker(q, { personId: viewer.id }), instant, cfg.timezone, wishName);
-  const questionsOf = (personId: string) => questionsFor(db, [personId]).filter((q) => seesQuestion(db, viewer, q, instant)).sort(byMorning).map(asked);
+  const asked = (q: Question) => askedOf(q, !sealedFor(q.personId) && isAsker(q, { personId: viewer.id }), instant, cfg.timezone, wishName);
+  const seesQ = (q: Question) => seesQuestion(db, viewer, q, instant, { asAsker: !sealedFor(q.personId) });
+  const questionsOf = (personId: string) => questionsFor(db, [personId]).filter(seesQ).sort(byMorning).map(asked);
   // Ideas: only for a viewer who `seesIdeas`; for anyone else none is read. Named as gifts are (review H1).
   // Only the day, newest first, then by (random) id: no idea tells the moment it was written (review L4).
   const ideasOf = (personId: string): api.Idea[] => ideasFor(db, [personId])
     .map((i) => ({ i, on: dayOfInstant(cfg.timezone, i.createdAt) }))
     .sort((a, b) => b.on.localeCompare(a.on) || a.i.id.localeCompare(b.i.id))
-    .map(({ i, on }) => ({ id: i.id, text: i.text, by: unnamed(personId, i.authorId, i.createdAt) ? null : ref(i.authorId), mine: i.authorId === viewer.id, on }));
+    .map(({ i, on }) => ({ id: i.id, text: i.text, by: unnamed(personId, i.authorId, i.createdAt) ? null : ref(i.authorId), mine: i.authorId === viewer.id && !sealedFor(personId), on }));
   const link = (l: GuestLink): api.GuestLink => ({
     id: l.id, kind: l.kind, label: l.label, guestName: l.guestName,
     person: l.personId ? ref(l.personId) : null, celebration: celebrationRef(l.celebrationId),
@@ -335,7 +345,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
   };
   const thankedList = (): api.ThankedYou[] => (viewer.role === 'kid' ? [] : thankedBy(db, viewer.id, now).flatMap((x) => {
     const w = getWish(db, x.wishId);
-    if (!w || !canSee(db, viewer, w)) return [];
+    if (!w || !canSee(db, viewer, w) || sealedFor(w.personId)) return [];
     return [{ id: x.id, wish: { id: w.id, name: w.name }, from: ref(x.personId), by: x.writtenBy && x.writtenBy !== x.personId ? ref(x.writtenBy) : null, text: x.text, on: x.day }];
   }));
   /**
@@ -344,7 +354,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
    * gone, a thank-you for a gift no longer theirs: dropped).
    */
   const noticeOf = (n: Notice): api.Notice[] => {
-    const base = { id: n.id, kind: n.kind, on: n.day, read: n.readAt !== null, celebration: null, person: null, question: null };
+    const base = { id: n.id, kind: n.kind, on: n.day, read: n.readAt !== null, celebration: null, person: null, question: null, by: null };
     switch (n.kind) {
       case 'question': {
         const q = getQuestion(db, n.subjectId);
@@ -354,7 +364,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       }
       case 'answered': {
         const q = getQuestion(db, n.subjectId);
-        if (!q || !isAsker(q, { personId: viewer.id }) || q.state === 'open') return [];
+        if (!q || !isAsker(q, { personId: viewer.id }) || q.state === 'open' || sealedFor(q.personId)) return [];
         return [{ ...base, person: ref(q.personId), question: q.id }];
       }
       case 'draw': case 'reveal': {
@@ -363,9 +373,31 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       }
       case 'remind': {
         const c = celebrationRef(n.subjectId);
-        return c ? [{ ...base, celebration: c, person: n.aboutId ? ref(n.aboutId) : null }] : [];
+        return c && !(n.aboutId && sealedFor(n.aboutId)) ? [{ ...base, celebration: c, person: n.aboutId ? ref(n.aboutId) : null }] : [];
       }
       case 'say_thanks': return [{ ...base, celebration: n.subjectId === 'any' ? null : celebrationRef(n.subjectId) }];
+      // Whose sign-in, and who asked to reset it (Gate routes M1): to the person, the other admins, the people of their draws.
+      case 'reset_asked': case 'signin_reset': {
+        const x = db.select().from(t.passkeyReset).where(eq(t.passkeyReset.id, n.subjectId)).get();
+        const p = x ? ref(x.personId) : null;
+        return x && p ? [{ ...base, person: p, by: x.askedBy ? ref(x.askedBy) : null }] : [];
+      }
+      // Someone became an admin (Gate re-attack 2, C1): everyone hears of it, so an admin made for the occasion shows.
+      case 'new_admin': {
+        const p = people().get(n.subjectId);
+        return p && p.role === 'admin' ? [{ ...base, person: ref(p.id) }] : [];
+      }
+      // Someone else signed the viewer (or a kid of theirs) out everywhere (C2): who, and whom.
+      case 'sessions_ended': {
+        const a = db.select().from(t.audit).where(eq(t.audit.id, n.subjectId)).get();
+        return a ? [{ ...base, person: ref(a.subjectId), by: ref(a.actorId) }] : [];
+      }
+      // The target of a group gift the viewer chipped in to went up (Q3): only while they still give to it.
+      case 'target_raised': {
+        const w = getWish(db, n.subjectId);
+        if (!w || !canSee(db, viewer, w) || !seesGifts(viewer, w) || sealedFor(w.personId)) return [];
+        return [{ ...base, person: ref(w.personId) }];
+      }
       case 'thanked': {
         const ty = getThankYou(db, n.subjectId);
         const mine = ty ? thankedList().find((x) => x.id === ty.id) : undefined;
@@ -373,11 +405,27 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       }
     }
   };
-  const reminderFor = (personId: string): number | null => (personId === viewer.id ? null
+  // A sealed viewer's own "Remind me" about the people of their draws is sealed too (Gate re-attack 2, Q2).
+  const reminderFor = (personId: string): number | null => (personId === viewer.id || sealedFor(personId) ? null
     : db.select({ days: t.reminder.days }).from(t.reminder).where(and(eq(t.reminder.personId, viewer.id), eq(t.reminder.aboutId, personId))).get()?.days ?? null);
 
   // Every helper builds its own answer from ids, for this viewer: none takes a person, a row or a ready object.
   return {
+    /**
+     * The ids of a person's wishes the viewer orders: their list as this viewer sees it (Gate surprise L2: a received
+     * wish is gone from its person's list, so it is not theirs to order). Never sent: wishes.ts checks an order with it.
+     */
+    orderable: (personId: string): string[] => present(seen(wishesOf(db, [personId])))
+      .filter(({ w }) => w.state === 'listed' || w.state === 'awaiting_parent').map(({ w }) => w.id),
+    /** A passkey reset of this person as an admin sees it (Gate routes M1): asked (waiting for what) or done. */
+    passkeyReset: (personId: string): Viewed<api.PasskeyReset> => {
+      const x = db.select().from(t.passkeyReset).where(eq(t.passkeyReset.personId, personId)).orderBy(desc(t.passkeyReset.askedAt)).limit(1).get();
+      if (!x) throw new Refused(404, 'no reset is waiting');
+      return answer({
+        state: x.doneAt ? 'done' : 'asked', waitsFor: x.doneAt ? null : x.approvedBy ? 'an_hour' : 'a_day',
+        notBefore: x.doneAt ? null : resetNotBefore(x), askedBy: x.askedBy ? ref(x.askedBy) : null, approvedBy: x.approvedBy ? ref(x.approvedBy) : null,
+      });
+    },
     signedIn: (): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),
     household: (): Viewed<api.Household> => answer({
       mode: cfg.mode, me: person(viewer), people: [...people().values()].map(person), currency: currency(db),
@@ -398,14 +446,14 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         wishes: listOf(viewer.id, f),
         suggestions: approvals.filter(({ w }) => w.personId === viewer.id).sort(byPosition).map(wish),
         toApprove: approvals.filter(({ w }) => w.personId !== viewer.id).sort(byPosition).map(wish),
-        suggested: wishes(wishesAddedBy(db, viewer.id, 'suggested')).filter((w) => w.personId !== viewer.id),
+        suggested: wishes(wishesAddedBy(db, viewer.id, 'suggested')).filter((w) => w.personId !== viewer.id && !sealedFor(w.personId)),
         // After the celebration: thank-yous (named givers only) for the viewer's gifts and, for a kid's parent, the
         // kid's; and the gifts the viewer gave, to put their name on.
         thanks: thanksList(),
         thanked: thankedList(),
         gave: viewer.role === 'kid' ? [] : gaveBy(db, viewer.id, now).flatMap((x) => {
           const row = getWish(db, x.wishId);
-          return (row ? seen([row]) : []).filter((s) => s.gift)
+          return (row && !sealedFor(row.personId) ? seen([row]) : []).filter((s) => s.gift)
             .map((s) => ({ wish: wish(s), celebration: celebrationRef(x.celebrationId), on: x.on, named: x.named }));
         }),
         // Delivered and waiting for an answer, for the viewer and the kids they are a parent of; kids answer none.
@@ -461,9 +509,11 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       const mine = ps.find(isMine);
       const revealed = revealedNow(db, c, d, now);
       // A row that does not open with the keys here (a lost or rotated key) is only its own giver's problem.
-      const own = mine?.openedAt && d.drawnAt ? openOwn(db, ring(), d, mine) : null;
+      // Reset and not confirmed yet on the new device (Gate routes M1): the draw stays sealed to them, pairs included.
+      const sealed = viewer.drawsSealedAt !== null;
+      const own = !sealed && mine?.openedAt && d.drawnAt ? openOwn(db, ring(), d, mine) : null;
       const receiver = own === 'unreadable' ? null : own;
-      const pairs = revealed && d.drawnAt && (mine || manages)
+      const pairs = !sealed && revealed && d.drawnAt && (mine || manages)
         ? [...openAll(db, ring(), d)].map(([g, r]) => ({ giver: pref(g), receiver: r ? pref(r) : null })).sort((a, b) => byName(a.giver, b.giver))
         : null;
       return answer({
@@ -482,7 +532,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
         canManage: manages,
         canRedraw: manages && canRedraw(db, viewer, c, d, now),
         mine: mine ? {
-          opened: mine.openedAt !== null, canOpen: mine.openedAt === null && opensNow(d, instant), receiver: receiver ? pref(receiver) : null,
+          opened: mine.openedAt !== null, canOpen: !sealed && mine.openedAt === null && opensNow(d, instant), receiver: receiver ? pref(receiver) : null, sealed,
           receiverGuest: receiver ? byId.get(receiver)?.kind === 'guest' : false,
           unreadable: own === 'unreadable',
         } : null,
@@ -492,7 +542,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
     /** A question the viewer asked or may see (404 otherwise). */
     question: (id: string): Viewed<api.AskedQuestion> => {
       const q = getQuestion(db, id);
-      if (!q || !seesQuestion(db, viewer, q, instant)) throw new Refused(404, 'no such question');
+      if (!q || !seesQ(q)) throw new Refused(404, 'no such question');
       return answer(asked(q));
     },
     idea: (id: string): Viewed<api.Idea> => {
@@ -574,7 +624,7 @@ export function guestViewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'se
       claimed, left: g.group ? 0 : Math.max(0, w.quantity - claimed), given: fullyGiven(w, g),
       claims: byTime(g.claims).map((c) => ({ giver: null, guest: null, imported: c.imported === 1, quantity: c.quantity, state: c.state, mine: c.guestId === l.id })),
       group: g.group ? {
-        organizer: null, targetMinor: g.group.targetMinor, state: g.group.state, totalMinor: g.shares.reduce((n, x) => n + x.amountMinor, 0),
+        organizer: null, targetMinor: g.group.targetMinor, state: g.group.state, enough: g.shares.reduce((n, x) => n + x.amountMinor, 0) >= g.group.targetMinor,
         givers: byTime(g.shares).map(() => ({ giver: null, mine: false })), myShareMinor: null, canManage: false,
       } : null,
       mine: mine ? (() => {
