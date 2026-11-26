@@ -254,7 +254,7 @@ export function withM4(db: Db): Db {
 }
 
 export function sessionCookie(db: Db, personId: string): string {
-  return `keepsake_session=${createSession(db, personId).token}`;
+  return `__Host-keepsake_session=${createSession(db, personId).token}`;
 }
 
 /** The X-HomersLab-* headers the edge would send for someone of household(). */

@@ -35,8 +35,8 @@ async function enrol(token: string, name?: string, credId = 'cred-1') {
   return post('/api/auth/enrol/verify', { challengeId, response: { id: credId, challenge: options.challenge }, label: 'Laptop' });
 }
 const cookieOf = (res: { cookies: { name: string; value: string }[] }) => {
-  const c = res.cookies.find((x) => x.name === 'keepsake_session');
-  return c ? `keepsake_session=${c.value}` : '';
+  const c = res.cookies.find((x) => x.name === '__Host-keepsake_session');
+  return c ? `__Host-keepsake_session=${c.value}` : '';
 };
 const setupToken = () => readFileSync(join(cfg.dataDir, SETUP_FILE), 'utf8').trim().split('#')[1]!;
 
@@ -52,11 +52,18 @@ describe('the first admin', () => {
     const res = await enrol(token, 'Alex');
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toMatchObject({ signedIn: true, person: { name: 'Alex', role: 'admin', signsIn: true } });
-    expect(res.cookies.find((c) => c.name === 'keepsake_session')).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
+    expect(res.cookies.find((c) => c.name === '__Host-keepsake_session')).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Strict', path: '/' });
     expect(existsSync(file)).toBe(false);
     expect((await app.inject({ url: '/api/household', headers: { cookie: cookieOf(res) } })).json().me.role).toBe('admin');
     expect((await post('/api/auth/enrol/options', { token, name: 'Mallory' })).statusCode).toBe(401);
     expect(ensureSetupLink(db, cfg)).toBeNull();
+  });
+
+  it('the session cookie is __Host- only: one a sibling subdomain could plant (no prefix) is no session (Gate routes L1)', async () => {
+    db.insert(t.person).values({ id: 'p_robin', name: 'Robin', role: 'adult', createdAt: new Date().toISOString() }).run();
+    const live = createSession(db, 'p_robin').token;
+    const session = (cookie: string) => app.inject({ url: '/api/auth/session', headers: { cookie } }).then((r) => r.json().signedIn);
+    expect([await session(`keepsake_session=${live}`), await session(`__Host-keepsake_session=${live}`)]).toEqual([false, true]);
   });
 
   it('a new start-up replaces the setup link; a link planted at the path is not followed', () => {
@@ -176,7 +183,7 @@ describe('invites', () => {
     const o = (await call('/api/auth/enrol/options', '', { token })).json();
     return call('/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: credId, challenge: o.options.challenge }, label: 'Phone' });
   }
-  const stale = (personId: string) => `keepsake_session=${createSession(hh, personId, null, new Date(Date.now() - (FRESH_MINUTES + 1) * 60_000)).token}`;
+  const stale = (personId: string) => `__Host-keepsake_session=${createSession(hh, personId, null, new Date(Date.now() - (FRESH_MINUTES + 1) * 60_000)).token}`;
 
   it('an admin invites someone without a passkey (a kid too), with a fresh sign-in; once only', async () => {
     expect((await call('/api/people/p_sam/invites', stale('p_alex'))).statusCode).toBe(403);
@@ -271,7 +278,7 @@ describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
   });
   afterEach(() => a.close());
   const call = (method: 'GET' | 'POST' | 'DELETE', url: string, cookie: string, payload?: object) => a.inject({ method, url, payload, headers: { ...H, cookie } });
-  const pkSession = (personId: string, passkeyId: string) => `keepsake_session=${createSession(hh, personId, passkeyId).token}`;
+  const pkSession = (personId: string, passkeyId: string) => `__Host-keepsake_session=${createSession(hh, personId, passkeyId).token}`;
 
   it('you list your passkeys; removing one ends the sessions it signed in; the last one stays', async () => {
     const via1 = pkSession('p_alex', 'pk1');
@@ -330,7 +337,7 @@ describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
   it('an admin, just signed in with a passkey, resets the passkeys of someone who lost every device; audited', async () => {
     hh.insert(t.passkey).values({ id: 'pk-sam', personId: 'p_sam', publicKey: Buffer.from([1]), label: 'x', createdAt: new Date().toISOString() }).run();
     const sams = pkSession('p_sam', 'pk-sam');
-    const old = (personId: string) => `keepsake_session=${createSession(hh, personId, 'pk1', new Date(Date.now() - 6 * 60_000)).token}`;
+    const old = (personId: string) => `__Host-keepsake_session=${createSession(hh, personId, 'pk1', new Date(Date.now() - 6 * 60_000)).token}`;
     // not someone else, not with a sign-in older than 5 minutes, never an admin's
     expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_robin', 'pk1'))).statusCode).toBe(403);
     expect((await call('POST', '/api/people/p_sam/passkeys/reset', old('p_alex'))).statusCode).toBe(403);

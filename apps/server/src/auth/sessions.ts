@@ -6,7 +6,8 @@ import type { Db } from '../db/open';
 import * as t from '../db/schema';
 import { hashToken, looksLikeToken, newToken } from './tokens';
 
-export const SESSION_COOKIE = 'keepsake_session';
+/** `__Host-`: Secure, Path=/ and no Domain, so a sibling subdomain cannot set or shadow it (Gate routes L1). */
+export const SESSION_COOKIE = '__Host-keepsake_session';
 export const SESSION_DAYS = 30;
 export const IDLE_DAYS = 7;
 const DAY = 86_400_000;

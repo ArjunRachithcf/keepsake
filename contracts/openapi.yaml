@@ -90,7 +90,7 @@ paths:
             schema: { $ref: '#/components/schemas/CredentialInput' }
       responses:
         '200':
-          description: Signed in (Set-Cookie keepsake_session)
+          description: Signed in (Set-Cookie __Host-keepsake_session)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthSession' }
@@ -129,7 +129,7 @@ paths:
             schema: { $ref: '#/components/schemas/CredentialInput' }
       responses:
         '200':
-          description: Signed in (Set-Cookie keepsake_session)
+          description: Signed in (Set-Cookie __Host-keepsake_session)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AuthSession' }
@@ -1366,7 +1366,7 @@ components:
     session:
       type: apiKey
       in: cookie
-      name: keepsake_session
+      name: __Host-keepsake_session
       description: 'standalone: a passkey session (HttpOnly; Secure; SameSite=Strict; 30 days, 7 idle)'
     guestSession:
       type: apiKey

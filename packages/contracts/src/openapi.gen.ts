@@ -2124,7 +2124,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Signed in (Set-Cookie keepsake_session) */
+            /** @description Signed in (Set-Cookie __Host-keepsake_session) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2176,7 +2176,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Signed in (Set-Cookie keepsake_session) */
+            /** @description Signed in (Set-Cookie __Host-keepsake_session) */
             200: {
                 headers: {
                     [name: string]: unknown;
