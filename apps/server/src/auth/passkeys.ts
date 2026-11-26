@@ -40,7 +40,7 @@ export function getInvite(db: Db, id: string): Invite | undefined {
  * session ends, and their unused invites go (a lost or stolen device keeps nothing). Returns the person signed in, 'taken' if the passkey is
  * already enrolled, or null if the link is no longer good.
  */
-export function enrol(db: Db, cfg: Pick<Config, 'dataDir'>, o: { inviteId: string; name?: string; newPersonId?: string }, cred: NewCredential, label: string): string | 'taken' | null {
+export function enrol(db: Db, cfg: Pick<Config, 'dataDir' | 'keysDir'>, o: { inviteId: string; name?: string; newPersonId?: string }, cred: NewCredential, label: string): string | 'taken' | null {
   const { inviteId, name } = o;
   if (db.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.id, cred.id)).get()) return 'taken';
   const now = new Date().toISOString();

@@ -1,6 +1,6 @@
 // `keepsake recover <admin id>` (Philobiblos ADR 0010): when an admin has lost every passkey, whoever runs Keepsake's
-// container writes a one-time link (24 hours) for that admin into KEEPSAKE_DATA_DIR/setup-link.txt (0600), never to
-// the terminal or a log. Using it removes the admin's other passkeys and ends their sessions. `keepsake admins` lists the admins' ids and names to pick from.
+// container writes a one-time link (24 hours) for that admin into KEEPSAKE_KEYS_DIR/setup-link.txt (0600), never into
+// the data folder (its backup must not carry a live admin link, Gate routes L2), the terminal or a log. Using it removes the admin's other passkeys and ends their sessions. `keepsake admins` lists the admins' ids and names to pick from.
 // `keepsake rotate-key` (ADR 0004): with the new key as KEEPSAKE_SEALING_KEY and the old one as
 // KEEPSAKE_SEALING_KEY_PREVIOUS, seals every draw's rows again with the new key; it prints counts, never a key or a pair.
 import { createRecoveryLink } from './auth/invites';

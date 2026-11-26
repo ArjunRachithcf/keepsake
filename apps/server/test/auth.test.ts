@@ -1,8 +1,8 @@
 // Standalone sign-in, step by step (Philobiblos ADR 0010), with a stand-in authenticator (helpers.fakeWebAuthn). The
 // first admin comes from the setup link in the data folder, never from the first visitor.
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { buildApp, type BuiltApp } from '../src/app';
@@ -21,7 +21,7 @@ let db: Db;
 let app: BuiltApp['app'];
 
 beforeEach(async () => {
-  cfg = loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: mkdtempSync(join(tmpdir(), 'keepsake-auth-')) });
+  cfg = loadConfig({ KEEPSAKE_MODE: 'standalone', KEEPSAKE_DATA_DIR: mkdtempSync(join(tmpdir(), 'keepsake-auth-')), KEEPSAKE_KEYS_DIR: join(mkdtempSync(join(tmpdir(), 'keepsake-keys-')), 'keys') });
   db = openDb(':memory:');
   app = (await buildApp(cfg, db, { webauthn: fakeWebAuthn() })).app;
 });
@@ -38,7 +38,7 @@ const cookieOf = (res: { cookies: { name: string; value: string }[] }) => {
   const c = res.cookies.find((x) => x.name === '__Host-keepsake_session');
   return c ? `__Host-keepsake_session=${c.value}` : '';
 };
-const setupToken = () => readFileSync(join(cfg.dataDir, SETUP_FILE), 'utf8').trim().split('#')[1]!;
+const setupToken = () => readFileSync(join(cfg.keysDir, SETUP_FILE), 'utf8').trim().split('#')[1]!;
 
 describe('the first admin', () => {
   it('an empty install has no admin and lets nobody in; the setup link is in a private file, used once, then removed', async () => {
@@ -69,9 +69,9 @@ describe('the first admin', () => {
   it('a new start-up replaces the setup link; a link planted at the path is not followed', () => {
     ensureSetupLink(db, cfg);
     const first = setupToken();
-    const target = join(cfg.dataDir, 'elsewhere.txt');
+    const target = join(cfg.keysDir, 'elsewhere.txt');
     writeFileSync(target, 'keep me');
-    const file = join(cfg.dataDir, SETUP_FILE);
+    const file = join(cfg.keysDir, SETUP_FILE);
     // someone replaces the file with a link to another file: the next write removes the link, not the target
     rmSync(file);
     symlinkSync(target, file);
@@ -221,6 +221,18 @@ describe('invites', () => {
     const file = createRecoveryLink(hh, cfg, 'p_alex');
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(readFileSync(file, 'utf8')).toMatch(/\/enrol#/);
+  });
+
+  it('neither the setup link nor a recovery link is ever in the data folder (its backup), only in the keys folder (Gate routes L2)', () => {
+    const empty = openDb(':memory:');
+    const inData = () => readdirSync(cfg.dataDir).filter((f) => f.includes('link'));
+    // One an earlier version left in data/ goes at the next write.
+    writeFileSync(join(cfg.dataDir, SETUP_FILE), 'old');
+    const setup = ensureSetupLink(empty, cfg)!;
+    expect([dirname(setup), inData()]).toEqual([cfg.keysDir, []]);
+    const recovery = createRecoveryLink(hh, cfg, 'p_alex');
+    expect([dirname(recovery), inData(), statSync(cfg.keysDir).mode & 0o777]).toEqual([cfg.keysDir, [], 0o700]);
+    expect(() => createRecoveryLink(hh, { ...cfg, keysDir: join(cfg.dataDir, 'keys') }, 'p_alex')).toThrow(/KEEPSAKE_KEYS_DIR/);
   });
 });
 

@@ -2,7 +2,7 @@
 # Builds the image and starts it both ways: standalone with docker-compose.yml, and with the environment of the
 # HomersLab manifest (contracts/homerslab-app.yaml). Each must answer /api/health in its mode with the security headers,
 # let nobody in without a person (a forged X-HomersLab-* from anywhere but the trusted proxy included), and standalone
-# must write its one-time setup link to the data folder (0600) instead of making the first visitor admin, and make the
+# must write its one-time setup link to the keys folder (0600, never data/) instead of making the first visitor admin, and make the
 # keys that seal the draws and sign pushes in keys/ (0600), never in data/ and never in the log. homerslab mode must refuse to start
 # without its three settings, and run without a sealing key (draws off).
 # Logs are read whole before grep -q (never piped into it: under pipefail, grep -q stopping at its first match could
@@ -61,9 +61,11 @@ wait_health "http://127.0.0.1:$port/api/health" standalone
 [ "$(dc exec -T keepsake id -u)" != 0 ] || { echo "runs as root" >&2; exit 1; }
 dc exec -T keepsake sh -c 'touch /app/x' 2>/dev/null && { echo "the root is writable" >&2; exit 1; }
 dc exec -T keepsake sh -c 'touch /data/x && rm /data/x' || { echo "/data is not writable" >&2; exit 1; }
-# no first-visitor admin: a setup link in the data folder, readable by Keepsake's user only, and nobody signed in
-[ "$(stat -c %a "$work/data/setup-link.txt")" = 600 ] || { echo "no private setup link in data/" >&2; exit 1; }
-grep -Eq '^http://localhost:[0-9]+/setup#[A-Za-z0-9_-]{43}$' "$work/data/setup-link.txt" || { echo "the setup link looks wrong" >&2; exit 1; }
+# no first-visitor admin: a setup link in the keys folder (never in data/, which gets backed up), readable by
+# Keepsake's user only, and nobody signed in
+[ ! -e "$work/data/setup-link.txt" ] || { echo "a live admin link in data/" >&2; exit 1; }
+[ "$(stat -c %a "$work/keys/setup-link.txt")" = 600 ] || { echo "no private setup link in keys/" >&2; exit 1; }
+grep -Eq '^http://localhost:[0-9]+/setup#[A-Za-z0-9_-]{43}$' "$work/keys/setup-link.txt" || { echo "the setup link looks wrong" >&2; exit 1; }
 [ -s "$work/data/keepsake.sqlite" ] || { echo "no database in data/" >&2; exit 1; }
 # the household's data for Keepsake's user only, although data/ was made with the usual umask
 for f in "$work/data/keepsake.sqlite" "$work/data/keepsake.sqlite-wal" "$work/data/keepsake.sqlite-shm"; do

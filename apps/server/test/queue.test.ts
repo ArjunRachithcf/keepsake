@@ -181,7 +181,7 @@ describe('the push queue', () => {
   /** Robin's devices: one on Mozilla's push service, one on Google's. */
   function robinTwoServices(h: Home) {
     h.db.delete(t.pushSubscription).run();
-    for (const [id, host] of [['moz', 'updates.push.services.mozilla.com'], ['fcm', 'fcm.googleapis.com']]) {
+    for (const [id, host] of [['moz', 'updates.push.services.mozilla.com'], ['fcm', 'fcm.googleapis.com']] as const) {
       h.db.insert(t.pushSubscription).values({ id, personId: 'p_robin', endpoint: `https://${host}/wpush/v2/${id}`, p256dh: 'x', auth: 'x', createdAt: T0.toISOString(), confirmedAt: T0.toISOString() }).run();
     }
   }
