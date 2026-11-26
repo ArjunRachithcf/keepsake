@@ -47,10 +47,11 @@ export function answersFor(db: Db, me: Pick<Person, 'id' | 'role'>, person: Pick
 export const givesTo = (me: Pick<Person, 'id' | 'role'>, personId: string) => me.role !== 'kid' && me.id !== personId;
 
 /** What a household viewer may see of a question: theirs always; once delivered, the answerers' and givers' (not a declined one). */
-export function seesQuestion(db: Db, me: Person, q: Question, now: Date): boolean {
+/** `asAsker: false`: as anyone else sees it, the viewer's own included (a sealed viewer's, Gate re-attack R2). */
+export function seesQuestion(db: Db, me: Person, q: Question, now: Date, o: { asAsker?: boolean } = {}): boolean {
   // A kid never asks and sees no question, not even one answered for them (answers are for the givers).
   if (me.role === 'kid') return false;
-  if (isAsker(q, { personId: me.id })) return true;
+  if (o.asAsker !== false && isAsker(q, { personId: me.id })) return true;
   if (!isDelivered(q, now)) return false;
   const p = getPerson(db, q.personId);
   if (!p) return false;

@@ -122,6 +122,7 @@ pair, and the veils would lift).
   "never an admin's"). Now a reset needs a second admin's yes, or a day with one admin; the person and the other
   admins are told when it is asked (the person can call it off), the person and everyone in their open draws when it
   is done ("X's sign-in was reset by Y"); the reset person's draws stay sealed to them (no receiver, no pairs, no
-  opening) until they confirm on their new device; someone demoted from admin in the last 30 days is still an admin
+  opening, and nothing of their own for the people of those draws is marked theirs: claims, shares, ideas, questions,
+  gifts given and their thank-yous, Gate re-attack R2) until they confirm on their new device; someone demoted from admin in the last 30 days is still an admin
   for resets; role changes, invites and every step of a reset are audited. Accepted: two admins acting together, or
   one with a day nobody uses to stop them, can still do it, loudly (docs/security.md).

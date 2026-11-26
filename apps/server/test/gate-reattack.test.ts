@@ -1,8 +1,10 @@
 // The Gate re-attack's probes on PR #15 (surprise R1–R4), kept as tests: each one failed before its fix.
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { buildApp, type BuiltApp } from '../src/app';
+import { createSession } from '../src/auth/sessions';
 import * as t from '../src/db/schema';
-import { sessionCookie } from './helpers';
+import { ORIGIN, fakeWebAuthn, household, sessionCookie, standalone, withDraws } from './helpers';
 import { as, makeHome, ok, pin, setNow, type Home } from './m4';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
@@ -10,7 +12,8 @@ beforeAll(() => pin(T0));
 afterAll(() => { vi.useRealTimers(); });
 const homes: Home[] = [];
 const home = async () => { const h = await makeHome(); homes.push(h); return h; };
-afterEach(async () => { setNow(T0); for (const h of homes.splice(0)) await h.built.app.close(); });
+const apps: BuiltApp[] = [];
+afterEach(async () => { setNow(T0); for (const h of homes.splice(0)) await h.built.app.close(); for (const a of apps.splice(0)) await a.app.close(); });
 
 describe('R3: an imported reservation that was given stays given', () => {
   it('Robin received an imported Given gift (her thank-yous show it); an admin\'s release is refused and it stays off her list', async () => {
@@ -30,5 +33,53 @@ describe('R3: an imported reservation that was given stays given', () => {
     expect([rel.statusCode, rel.json()]).toEqual([409, { error: 'it was given: the reservation stays' }]);
     expect((await ok(as(h, 'robin').get('/api/home'))).body).toBe(before);
     expect((await as(h, 'alex').send('DELETE', `/api/wishes/${scarf}/imported-claim`)).statusCode).toBe(204);
+  });
+});
+
+describe('R2: while the draw is sealed after a reset, nothing of the person\'s own points at whom they drew', () => {
+  it('Sam opened, claimed, chipped in, wrote an idea and asked his receiver; reset and unconfirmed, no answer marks any of it his', async () => {
+    const NOW = new Date().toISOString();
+    const db = withDraws(household());
+    db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    const mates = ['p_alex', 'p_robin', 'p_mia'];
+    for (const p of mates) {
+      db.insert(t.wish).values({ id: `w_${p}_xmas`, personId: p, celebrationId: 'c_xmas', name: 'A puzzle', quantity: 3, state: 'listed', position: 9, addedBy: p, createdAt: NOW, updatedAt: NOW }).run();
+      db.insert(t.wish).values({ id: `w_${p}_bike`, personId: p, celebrationId: 'c_xmas', name: 'A bike', quantity: 1, state: 'listed', position: 10, addedBy: p, createdAt: NOW, updatedAt: NOW }).run();
+    }
+    db.insert(t.passkey).values({ id: 'pk-p_sam', personId: 'p_sam', publicKey: Buffer.from([1]), label: 'x', createdAt: NOW }).run();
+    const built = await buildApp(standalone(), db, { webauthn: fakeWebAuthn() }); apps.push(built);
+    const fresh = (p: string) => `__Host-keepsake_session=${createSession(db, p, p === 'p_alex' ? 'pk1' : `pk-${p}`).token}`;
+    const send = (method: 'POST' | 'PUT' | 'GET' | 'PATCH', url: string, cookie: string, payload?: object) => built.app.inject({ method, url, payload, headers: { origin: ORIGIN, cookie } });
+    await ok(send('POST', '/api/celebrations/c_xmas/draw/run', fresh('p_alex')));
+    const sam0 = fresh('p_sam');
+    await ok(send('POST', '/api/celebrations/c_xmas/draw/open', sam0));
+    const receiver = (await ok(send('GET', '/api/celebrations/c_xmas/draw', sam0))).json().mine.receiver.id as string;
+    await ok(send('PUT', `/api/wishes/w_${receiver}_xmas/claim`, sam0, { quantity: 1 }));
+    await ok(send('POST', `/api/wishes/w_${receiver}_bike/group`, sam0, { targetMinor: 20000 }));
+    await ok(send('PUT', `/api/wishes/w_${receiver}_bike/group/share`, sam0, { amountMinor: 500 }));
+    await ok(send('POST', `/api/people/${receiver}/ideas`, sam0, { text: 'Gloves' }));
+    await ok(send('POST', `/api/people/${receiver}/questions`, sam0, { text: 'Which size?' }));
+    // The reset (one admin, a day later), the invite, the enrolment: an admin is now Sam on a new device.
+    await send('POST', '/api/people/p_sam/passkeys/reset', fresh('p_alex'));
+    db.update(t.passkeyReset).set({ notBefore: new Date(Date.now() - 1000).toISOString() }).run();
+    await ok(send('POST', '/api/people/p_sam/passkeys/reset', fresh('p_alex')));
+    const inv = (await ok(send('POST', '/api/people/p_sam/invites', fresh('p_alex')))).json();
+    const o = (await send('POST', '/api/auth/enrol/options', '', { token: inv.url.split('#')[1] })).json();
+    await ok(send('POST', '/api/auth/enrol/verify', '', { challengeId: o.challengeId, response: { id: 'cred-new', challenge: o.options.challenge }, label: 'New phone' }));
+    const pk = db.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).get()!.id;
+    const sam = () => `__Host-keepsake_session=${createSession(db, 'p_sam', pk).token}`;
+    expect((await ok(send('GET', '/api/celebrations/c_xmas/draw', sam()))).json().mine).toMatchObject({ sealed: true, receiver: null });
+    const pages = async () => Promise.all(mates.map(async (p) => (await ok(send('GET', `/api/people/${p}`, sam()))).body));
+    for (const [i, body] of (await pages()).entries()) {
+      expect([mates[i], body.includes('"mine":true'), body.includes('"canManage":true'), body.includes('Which size?'), body.includes('"myShareMinor":500')]).toEqual([mates[i], false, false, false, false]);
+    }
+    expect((await ok(send('GET', '/api/home', sam()))).json()).toMatchObject({ gave: [], suggested: [] });
+    // After the day (a draw revealed never), a gift he gave is not among his, and its thank-you does not reach him.
+    db.update(t.claim).set({ state: 'given', givenOn: '2026-12-20' }).where(eq(t.claim.giverId, 'p_sam')).run();
+    setNow(new Date('2026-12-27T10:00:00.000Z'));
+    expect((await ok(send('GET', '/api/home', sam()))).json()).toMatchObject({ gave: [], thanked: [] });
+    // Confirmed: all of it is his again.
+    await ok(send('POST', '/api/me/reset/confirm', sam()));
+    expect((await ok(send('GET', '/api/home', sam()))).json().gave).toHaveLength(1);
   });
 });
