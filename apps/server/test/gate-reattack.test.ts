@@ -41,6 +41,8 @@ describe('R2: while the draw is sealed after a reset, nothing of the person\'s o
     const NOW = new Date().toISOString();
     const db = withDraws(household());
     db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
+    // Robin is Mia's parent here, so Sam may write ideas and ask questions for whoever he draws.
+    db.update(t.manager).set({ managerId: 'p_robin' }).where(eq(t.manager.kidId, 'p_mia')).run();
     const mates = ['p_alex', 'p_robin', 'p_mia'];
     for (const p of mates) {
       db.insert(t.wish).values({ id: `w_${p}_xmas`, personId: p, celebrationId: 'c_xmas', name: 'A puzzle', quantity: 3, state: 'listed', position: 9, addedBy: p, createdAt: NOW, updatedAt: NOW }).run();
