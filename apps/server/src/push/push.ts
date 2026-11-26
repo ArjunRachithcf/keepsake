@@ -12,7 +12,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { and, asc, count, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
 import { tell, type NoticeKind } from '../notices/notices';
-import { asDb, type Db } from '../db/open';
+import { asDb, checkpoint, type Db } from '../db/open';
 import * as t from '../db/schema';
 import { Refused } from '../errors';
 import { allowed, EgressError, PUSH_HOSTS, type Egress } from '../net/egress';
@@ -267,6 +267,8 @@ export class Pusher {
     const now = Date.now();
     this.makeNotices();
     this.db.delete(t.pendingNotice).where(and(gte(t.pendingNotice.attempts, MAX_ATTEMPTS), lt(t.pendingNotice.nextAt, new Date(now - SET_ASIDE_DAYS * DAY).toISOString()))).run();
+    // What was deleted since the last tick leaves the WAL too (Gate surprise L4).
+    checkpoint(this.db);
     if (!this.transport) { this.db.delete(t.pendingPush).run(); return; }
     // A session that has ended takes its device's subscription with it (the foreign key); unconfirmed ones go.
     pruneSessions(this.db);

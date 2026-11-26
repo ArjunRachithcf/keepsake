@@ -1,7 +1,12 @@
 // The Gate's surprise review (issue #6, comment 7180972935): each red-team probe kept as a test, the other way round.
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { openDb } from '../src/db/open';
 import * as t from '../src/db/schema';
+import { Pusher } from '../src/push/push';
 import { as, makeHome, ok, pin, setNow, type Home } from './m4';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
@@ -53,5 +58,24 @@ describe('L3 (probe P8): "not each other\'s amounts" holds with two sharers', ()
     expect((await as(h, 'alex').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 8001 })).statusCode).toBe(409);
     // The organizer may set any target; nothing refuses it for what is in.
     expect((await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 100 })).statusCode).toBe(200);
+  });
+});
+
+describe('L4 (probe P7): what is deleted leaves the database files', () => {
+  it('a question its asker took back: neither its text nor its asker stays in the file or the WAL after the next tick', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'keepsake-del-'));
+    try {
+      const db = openDb(join(dir, 'keepsake.sqlite'));
+      expect(db.$client.pragma('secure_delete', { simple: true })).toBe(1);
+      db.insert(t.person).values([{ id: 'p_quinn_asker', name: 'Quinn', role: 'adult', createdAt: T0.toISOString() }, { id: 'p_robin', name: 'Robin', role: 'adult', createdAt: T0.toISOString() }]).run();
+      db.$client.pragma('wal_checkpoint(TRUNCATE)');
+      db.insert(t.question).values({ id: 'q1', personId: 'p_robin', askerId: 'p_quinn_asker', text: 'TAKEN-BACK-QUESTION', askedAt: 'x', deliverAt: 'y', state: 'open' }).run();
+      db.delete(t.question).run();
+      db.delete(t.person).where(eq(t.person.id, 'p_quinn_asker')).run();
+      await new Pusher(db, null).tick();
+      const bytes = readdirSync(dir).map((f) => readFileSync(join(dir, f)).toString('latin1')).join('');
+      expect([bytes.includes('TAKEN-BACK-QUESTION'), bytes.includes('p_quinn_asker')]).toEqual([false, false]);
+      db.$client.close();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
