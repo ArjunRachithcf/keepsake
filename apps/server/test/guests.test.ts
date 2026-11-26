@@ -12,7 +12,7 @@ import { buildApp, type BuiltApp } from '../src/app';
 import { hashToken } from '../src/auth/tokens';
 import type { Db } from '../src/db/open';
 import * as t from '../src/db/schema';
-import { ORIGIN, household, inDays, sessionCookie, standalone, withDraws } from './helpers';
+import { ORIGIN, hl, homerslab, household, inDays, sessionCookie, standalone, withDraws, withM4 } from './helpers';
 import { as, makeHome, ok, pin, reads, setNow, tokenOf, type Home } from './m4';
 import { openLink } from '../src/guests/guests';
 
@@ -856,3 +856,18 @@ describe('a draw guest\'s profiles', () => {
 });
 
 it('tokens look like every other token', () => expect(tokenOf('gR')).toHaveLength(43));
+
+describe('under HomersLab, guest links wait for the edge (Gate routes L5)', () => {
+  it('a link left from a standalone past gets no new address, and its token opens nothing', async () => {
+    const db = withM4(household());
+    db.update(t.person).set({ externalId: 'hl-alex' }).where(eq(t.person.id, 'p_alex')).run();
+    const built = await buildApp(homerslab(), db);
+    apps.push(built);
+    const alex = { ...hl('hl-alex', 'Alex', 'admin'), origin: ORIGIN };
+    const send = (url: string, headers: Record<string, string>, payload?: object) => built.app.inject({ method: 'POST', url, headers, payload, remoteAddress: '127.0.0.1' });
+    expect((await send('/api/people/p_robin/links', alex, { label: 'Friends' })).statusCode).toBe(409);
+    const reissue = await send('/api/links/l_leo/address', alex);
+    expect([reissue.statusCode, reissue.json()]).toEqual([409, { error: 'guest links work once HomersLab lets guests in' }]);
+    expect((await send('/api/guest/session', { origin: ORIGIN }, { token: 'b'.repeat(43) })).statusCode).toBe(409);
+  });
+});

@@ -837,7 +837,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited */
+        /** A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited. Refused under HomersLab until its edge lets guests in (Homeward #317) */
         post: operations["reissueLink"];
         delete?: never;
         options?: never;
@@ -3519,6 +3519,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     shareLink: {

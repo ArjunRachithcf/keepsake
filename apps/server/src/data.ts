@@ -294,6 +294,8 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       revoke: (r: Req, id: string) => drawsTold(r, () => { revokeLink(db, me(r), id, (linkId) => guestLeaves(db, linkId)); settled(0); }),
       /** A new address for a link (review M-b): the same guest, a new token shown once. */
       reissue: (r: Req, id: string) => {
+        // A link left from a standalone past waits for the edge too (Gate routes L5).
+        homersLabWaits();
         const made = reissueLink(db, me(r), id);
         return viewOf(r).linkMade(made.id, linkUrl(cfg, made.token));
       },
@@ -312,6 +314,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
        * guest. The browser's own guest session of that link goes on; another exchange of an opened link is refused.
        */
       start: (r: Req, token: unknown) => {
+        homersLabWaits();
         // The browser's own household session, if any: one the link is not for is refused (H1, defence in depth).
         const req = fastifyRequestOf(r);
         const c = callerOf(cfg, db, req);

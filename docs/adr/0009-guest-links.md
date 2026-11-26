@@ -40,8 +40,9 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   celebration or draw goes, their claims only made go (the wish is free again) and bought
   or given ones stay with nobody's name, as when a giver leaves (ADR 0003). The changing request does it, never a
   person's reading one.
-- **Under HomersLab** no guest link is made (409, and the screens say so) until HomersLab's edge lets guests through
-  to `guest_paths` (Homeward #317).
+- **Under HomersLab** no guest link is made, given a new address or exchanged for a session (409, and the screens say
+  so; a link left from a standalone past included, Gate routes L5) until HomersLab's edge lets guests through to
+  `guest_paths` (Homeward #317).
 
 **Review of PR #11, decided 2026-11-25 (H1)**: the person, and kids, never hold a working link to their own wishes.
 

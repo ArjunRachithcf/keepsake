@@ -51,7 +51,7 @@ describe.each(['standalone', 'homerslab'] as const)('contracts/openapi.yaml (%s)
       // A share-link guest has no draw to open: the spec's 404.
       else if (o.op.operationId === 'openGuestDraw') expect(res.statusCode, res.body).toBe(404);
       // Guest links wait for HomersLab's edge (Homeward #317): refused there.
-      else if (mode === 'homerslab' && ['shareLink', 'inviteGuest'].includes(o.op.operationId)) expect(res.statusCode, res.body).toBe(409);
+      else if (mode === 'homerslab' && ['shareLink', 'inviteGuest', 'reissueLink'].includes(o.op.operationId)) expect(res.statusCode, res.body).toBe(409);
       else expect(res.statusCode, res.body).toBeLessThan(300);
     }
     expectValid(o, res.statusCode, res.body ? res.json() : undefined);

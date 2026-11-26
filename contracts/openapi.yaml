@@ -996,7 +996,7 @@ paths:
     post:
       tags: [links]
       operationId: reissueLink
-      summary: 'A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited'
+      summary: 'A new address for the same link (its managers, as for revoking): a new token, shown this once; the old address and every session of it end, and no device holds it until the new one is opened. A draw guest keeps their place, pair and claims. Audited. Refused under HomersLab until its edge lets guests in (Homeward #317)'
       responses:
         '200':
           description: The new address
@@ -1004,6 +1004,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
 
   /people/{personId}/links:
     parameters:
