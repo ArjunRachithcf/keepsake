@@ -130,14 +130,17 @@ function ManageHousehold() {
             )}
             {standalone && p.signsIn && p.role !== 'admin' && (
               <button type="button" className="btn btn-sm" onClick={() => {
-                if (!confirm(`Lost every device? This removes ${p.name}’s passkeys and signs them out everywhere, once another admin says yes too (or, with one admin, a day from now); then you send them a new sign-in link.`)) return;
+                if (!confirm(`Lost every device? ${p.name} is told at once and can call it off. Their passkeys are removed and they are signed out everywhere an hour after another admin says yes too (or a day from now); then you send them a new sign-in link.`)) return;
                 void run(async () => {
                   setAsked(null);
                   const r = await api<PasskeyReset>(`/people/${p.id}/passkeys/reset`, { method: 'POST' });
                   if (r.state === 'done') setLink({ name: p.name, link: await api<OneTimeLink>(`/people/${p.id}/invites`, { method: 'POST' }) });
-                  else setAsked(r.waitsFor === 'another_admin'
-                    ? `Asked: ${p.name}’s passkeys are reset once another admin presses Reset passkeys too. ${p.name} and the other admins are told.`
-                    : `Asked: press Reset passkeys again from ${r.notBefore ? new Date(r.notBefore).toLocaleString() : 'tomorrow'} to reset them. ${p.name} is told, and can call it off.`);
+                  else {
+                    const from = r.notBefore ? new Date(r.notBefore).toLocaleString() : 'tomorrow';
+                    setAsked(r.waitsFor === 'an_hour'
+                      ? `${r.approvedBy?.name ?? 'Another admin'} said yes: press Reset passkeys again from ${from} to reset them. ${p.name} is told, and can call it off until then.`
+                      : `Asked: press Reset passkeys again from ${from} to reset them, or sooner, an hour after another admin presses it too. ${p.name}, the other admins and the people of their draws are told; ${p.name} can call it off.`);
+                  }
                 });
               }}>
                 Reset passkeys<span className="sr-only"> ({p.name})</span>

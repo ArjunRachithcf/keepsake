@@ -181,7 +181,7 @@ const NOW = '2026-11-01T10:00:00.000Z';
 export function household(): Db {
   const db = openDb(':memory:');
   db.insert(t.person).values([
-    { id: 'p_alex', externalId: 'hl-alex', name: 'Alex', role: 'admin', createdAt: NOW },
+    { id: 'p_alex', externalId: 'hl-alex', name: 'Alex', role: 'admin', createdAt: NOW, adminSince: NOW },
     { id: 'p_sam', externalId: 'hl-sam', name: 'Sam', role: 'adult', createdAt: NOW },
     { id: 'p_robin', externalId: 'hl-robin', name: 'Robin', role: 'adult', createdAt: NOW },
     { id: 'p_mia', externalId: 'hl-mia', name: 'Mia', role: 'kid', createdAt: NOW },

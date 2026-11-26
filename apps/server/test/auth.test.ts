@@ -366,7 +366,7 @@ describe('passkeys and sessions after the first (Philobiblos ADR 0010)', () => {
     expect((await call('POST', '/api/people/p_nobody/passkeys/reset', pkSession('p_alex', 'pk1'))).statusCode).toBe(404);
     // Alex is the household's one admin: the reset is asked, and waits a day (Gate routes M1); asking again changes nothing.
     const asked = await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'));
-    expect([asked.statusCode, asked.json()]).toEqual([200, { state: 'asked', waitsFor: 'a_day', notBefore: expect.any(String), askedBy: { id: 'p_alex', name: 'Alex' } }]);
+    expect([asked.statusCode, asked.json()]).toEqual([200, { state: 'asked', waitsFor: 'a_day', notBefore: expect.any(String), askedBy: { id: 'p_alex', name: 'Alex' }, approvedBy: null }]);
     expect((await call('POST', '/api/people/p_sam/passkeys/reset', pkSession('p_alex', 'pk1'))).json().state).toBe('asked');
     expect(hh.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).all()).toHaveLength(1);
     // A day later: the reset, passkeys and sessions gone, then the usual invite works again.

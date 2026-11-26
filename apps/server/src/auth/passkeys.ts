@@ -53,7 +53,8 @@ export function enrol(db: Db, cfg: Pick<Config, 'dataDir' | 'keysDir'>, o: { inv
       if (invite.kind === 'setup') {
         if (!o.newPersonId) return;
         personId = o.newPersonId;
-        tx.insert(t.person).values({ id: personId, name: name ?? 'Admin', role: 'admin', createdAt: now }).run();
+        tx.insert(t.person).values({ id: personId, name: name ?? 'Admin', role: 'admin', createdAt: now, adminSince: now }).run();
+        tx.insert(t.audit).values({ id: ulid(), at: now, actorId: personId, action: 'person_created', subjectId: personId }).run();
       } else {
         personId = invite.personId;
         recovery = invite.kind === 'recovery';
@@ -108,8 +109,13 @@ export const RESET_FRESH_MINUTES = 5;
 /** A reset asked in a household with one admin waits this long; one not carried out goes after RESET_ASK_DAYS. */
 export const RESET_WAIT_HOURS = 24;
 export const RESET_ASK_DAYS = 7;
+/** A second admin's yes counts only from someone who was an admin, with a passkey of their own, this long before the ask. */
+export const RESET_SECOND_ADMIN_DAYS = 7;
+/** Even with a second admin's yes, this long before it is carried out: the person's devices are warned first. */
+export const RESET_YES_WAIT_HOURS = 1;
+const HOUR = 3_600_000;
 export type PasskeyReset = typeof t.passkeyReset.$inferSelect;
-/** Who is told what of a reset (the queue's `tell`): asked, the person and the other admins; done, the person and their draws' people. */
+/** Who is told what of a reset (the queue's `tell`): the person, the other admins, their draws' people, a kid's parents. */
 export type ResetTelling = (kind: 'reset_asked' | 'signin_reset', resetId: string, people: string[]) => void;
 
 /** The reset asked for this person and not carried out yet, if any (one asked more than RESET_ASK_DAYS ago is over). */
@@ -119,14 +125,39 @@ export function openReset(db: Db, personId: string, now = new Date()): PasskeyRe
 }
 
 /**
+ * Whether `adminId` is a second admin for this reset (Gate re-attack B1): an admin since a week before it was asked,
+ * with a passkey of their own from then, and none of whose passkeys came from an invite its asker made. An admin the
+ * asker made, or enrolled, for the occasion is nobody's second; nor is anyone for an asker who has gone.
+ */
+export function secondAdmin(db: Db, adminId: string, r: Pick<PasskeyReset, 'askedBy' | 'askedAt'>): boolean {
+  if (!r.askedBy || adminId === r.askedBy) return false;
+  const a = db.select().from(t.person).where(eq(t.person.id, adminId)).get();
+  const before = new Date(Date.parse(r.askedAt) - RESET_SECOND_ADMIN_DAYS * 86_400_000).toISOString();
+  if (!a || a.role !== 'admin' || !a.adminSince || a.adminSince > before) return false;
+  const keys = db.select({ createdAt: t.passkey.createdAt, invitedBy: t.passkey.invitedBy }).from(t.passkey).where(eq(t.passkey.personId, adminId)).all();
+  return keys.some((k) => k.createdAt <= before) && !keys.some((k) => k.invitedBy === r.askedBy);
+}
+
+/** The first moment a reset may be carried out: a day after the ask, or an hour after a second admin's yes. */
+export function resetNotBefore(r: PasskeyReset): string {
+  const day = r.notBefore ?? new Date(Date.parse(r.askedAt) + RESET_WAIT_HOURS * HOUR).toISOString();
+  const yes = r.approvedBy && r.approvedAt ? new Date(Date.parse(r.approvedAt) + RESET_YES_WAIT_HOURS * HOUR).toISOString() : null;
+  return yes && yes < day ? yes : day;
+}
+
+/**
  * An admin's reset of someone's passkeys, for a person who lost every device (an admin who did uses `keepsake
- * recover`). Decided by Arjun at the Gate (routes M1): an admin alone can no longer become anyone. The first call asks:
- * the reset is carried out when **another admin** makes the same call, or, in a household with one admin, when its
- * asker calls again a day later (RESET_WAIT_HOURS). Meanwhile the person (who may still have a device) and the other
- * admins are told, and the person or any admin can cancel it. Carried out: their passkeys go, their sessions end with
- * them and their open links are spent, their draws stay sealed to them until they confirm the reset on their new
- * device, and they and the people of their open draws are told. Someone who is or was recently an admin
- * (`wasAdmin`) is never reset. Every step is audited.
+ * recover`). Decided by Arjun at the Gate (routes M1, re-attack B1): an admin alone never becomes anyone, at once.
+ * - The first call **asks**. The person is warned at once (a notice, and a push to their devices at the next tick,
+ *   off the morning batch: it is about them and says nothing of gifts), and so are the other admins, the people of
+ *   their open draws and a kid's parents. Nothing is reset yet: their passkeys and sessions stay, and they (or any
+ *   admin) can call it off.
+ * - A **second admin's** yes (`secondAdmin`: long-standing, not enrolled by the asker) counts once; the asker or they
+ *   carry it out an hour after it at the earliest. Otherwise the asker alone, a day after the ask.
+ * - An ask whose asker has gone is nobody's: the next call asks anew.
+ * - Carried out: their passkeys go, their sessions end and their open links are spent, their draws stay sealed to them
+ *   until they confirm on their new device, and everyone told of the ask is told it was done.
+ * Someone who is or was recently an admin (`wasAdmin`) is never reset. Every step is audited.
  */
 export function resetPasskeys(db: Db, actorId: string, personId: string, tellOf: ResetTelling, openDrawsOf: (personId: string) => string[], now = new Date()): PasskeyReset {
   const p = mustGetPerson(db, personId);
@@ -134,26 +165,44 @@ export function resetPasskeys(db: Db, actorId: string, personId: string, tellOf:
   const at = now.toISOString();
   return db.transaction((tx0) => {
     const tx = asDb(tx0);
-    const open = openReset(tx, p.id, now);
+    const told = () => {
+      const admins = tx.select({ id: t.person.id }).from(t.person).where(eq(t.person.role, 'admin')).all().map((a) => a.id).filter((id) => id !== actorId);
+      const parents = p.role === 'kid' ? tx.select({ id: t.manager.managerId }).from(t.manager).where(eq(t.manager.kidId, p.id)).all().map((m) => m.id) : [];
+      return [...new Set([p.id, ...admins, ...openDrawsOf(p.id), ...parents])];
+    };
+    const audit = (action: 'reset_asked' | 'reset_approved' | 'reset_cancelled' | 'passkeys_reset') =>
+      tx.insert(t.audit).values({ id: ulid(), at, actorId, action, subjectId: p.id }).run();
+    let open = openReset(tx, p.id, now);
+    if (open && open.askedBy === null) {
+      tx.delete(t.passkeyReset).where(eq(t.passkeyReset.id, open.id)).run();
+      audit('reset_cancelled');
+      open = undefined;
+    }
     if (!open) {
-      const admins = tx.select({ id: t.person.id }).from(t.person).where(eq(t.person.role, 'admin')).all().map((a) => a.id)
-        .filter((id) => id !== actorId && id !== p.id && Boolean(tx.select({ id: t.passkey.id }).from(t.passkey).where(eq(t.passkey.personId, id)).get()));
-      const r = { id: ulid(), personId: p.id, askedBy: actorId, askedAt: at, notBefore: admins.length ? null : new Date(now.getTime() + RESET_WAIT_HOURS * 3_600_000).toISOString(), approvedBy: null, approvedAt: null, doneAt: null, doneBy: null };
+      const r = { id: ulid(), personId: p.id, askedBy: actorId, askedAt: at, notBefore: new Date(now.getTime() + RESET_WAIT_HOURS * HOUR).toISOString(), approvedBy: null, approvedAt: null, doneAt: null, doneBy: null };
       tx.insert(t.passkeyReset).values(r).run();
-      tx.insert(t.audit).values({ id: ulid(), at, actorId, action: 'reset_asked', subjectId: p.id }).run();
-      tellOf('reset_asked', r.id, [p.id, ...admins]);
+      audit('reset_asked');
+      tellOf('reset_asked', r.id, told());
       return r;
     }
-    // The asker again: only once its day has passed, in a household with one admin; anyone else here is the second admin.
-    const second = open.askedBy !== actorId;
-    if (!second && (open.notBefore === null || at < open.notBefore)) return open;
+    if (!open.approvedBy && secondAdmin(tx, actorId, open)) {
+      tx.update(t.passkeyReset).set({ approvedBy: actorId, approvedAt: at }).where(eq(t.passkeyReset.id, open.id)).run();
+      audit('reset_approved');
+      return { ...open, approvedBy: actorId, approvedAt: at };
+    }
+    // Carried out by its asker, or by the admin who said yes while they still are one, once its time has come.
+    const approver = open.approvedBy ? tx.select().from(t.person).where(eq(t.person.id, open.approvedBy)).get() : undefined;
+    const byYes = approver?.role === 'admin' && open.approvedAt !== null && (actorId === open.askedBy || actorId === approver.id)
+      && at >= new Date(Date.parse(open.approvedAt) + RESET_YES_WAIT_HOURS * HOUR).toISOString();
+    const byDay = actorId === open.askedBy && open.notBefore !== null && at >= open.notBefore;
+    if (!byYes && !byDay) return open;
     tx.delete(t.session).where(eq(t.session.personId, p.id)).run();
     tx.delete(t.passkey).where(eq(t.passkey.personId, p.id)).run();
     spendInvites(tx, p.id, now);
     tx.update(t.person).set({ drawsSealedAt: at }).where(eq(t.person.id, p.id)).run();
     tx.update(t.passkeyReset).set({ doneAt: at, doneBy: actorId }).where(eq(t.passkeyReset.id, open.id)).run();
-    tx.insert(t.audit).values({ id: ulid(), at, actorId, action: 'passkeys_reset', subjectId: p.id }).run();
-    tellOf('signin_reset', open.id, [p.id, ...openDrawsOf(p.id)]);
+    audit('passkeys_reset');
+    tellOf('signin_reset', open.id, told());
     return { ...open, doneAt: at, doneBy: actorId };
   });
 }

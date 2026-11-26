@@ -228,7 +228,12 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       add: (r: Req, i: PersonInput, confirmed: boolean) => {
         const by = admin(r);
         if (!confirmed) checkMemberName(db, by, i.name);
-        return addPerson(db, i).id;
+        // Audited (Gate re-attack B1): an admin made for the occasion was how a lone admin found a "second admin".
+        return atomically(() => {
+          const p = addPerson(db, i);
+          db.insert(t.audit).values({ id: ulid(), at: p.createdAt, actorId: by.id, action: 'person_created', subjectId: p.id }).run();
+          return p.id;
+        });
       },
       edit: (r: Req, id: string, patch: Partial<PersonInput>, confirmed: boolean) => {
         const by = admin(r);

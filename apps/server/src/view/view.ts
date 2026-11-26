@@ -15,7 +15,7 @@ import type * as api from '@keepsake/contracts';
 import type { PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialDescriptorJSON, PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/server';
 import type { Config } from '../config';
 import type { Db } from '../db/open';
-import { passkeysOf } from '../auth/passkeys';
+import { passkeysOf, resetNotBefore } from '../auth/passkeys';
 import { canChange, allCelebrations, mustGetCelebration, peopleByCelebration, type Celebration } from '../celebrations/celebrations';
 import { daysBetween, nextDate, today } from '../celebrations/dates';
 import { currency, hasPasskey, household, keeps, managersOf, mustGetPerson, type Person } from '../household/people';
@@ -405,8 +405,8 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       const x = db.select().from(t.passkeyReset).where(eq(t.passkeyReset.personId, personId)).orderBy(desc(t.passkeyReset.askedAt)).limit(1).get();
       if (!x) throw new Refused(404, 'no reset is waiting');
       return answer({
-        state: x.doneAt ? 'done' : 'asked', waitsFor: x.doneAt ? null : x.notBefore ? 'a_day' : 'another_admin',
-        notBefore: x.doneAt ? null : x.notBefore, askedBy: x.askedBy ? ref(x.askedBy) : null,
+        state: x.doneAt ? 'done' : 'asked', waitsFor: x.doneAt ? null : x.approvedBy ? 'an_hour' : 'a_day',
+        notBefore: x.doneAt ? null : resetNotBefore(x), askedBy: x.askedBy ? ref(x.askedBy) : null, approvedBy: x.approvedBy ? ref(x.approvedBy) : null,
       });
     },
     signedIn: (): Viewed<api.AuthSession> => answer({ mode: cfg.mode, signedIn: true, setupNeeded: false, person: person(viewer) }),

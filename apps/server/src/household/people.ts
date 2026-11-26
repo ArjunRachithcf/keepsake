@@ -67,7 +67,8 @@ function adminsWithPasskey(db: Db, except: string): number {
 export interface PersonInput { name: string; role: Role }
 
 export function addPerson(db: Db, i: PersonInput): Person {
-  const p = { id: ulid(), name: i.name.trim(), role: i.role, createdAt: new Date().toISOString() };
+  const at = new Date().toISOString();
+  const p = { id: ulid(), name: i.name.trim(), role: i.role, createdAt: at, adminSince: i.role === 'admin' ? at : null };
   db.insert(t.person).values(p).run();
   return getPerson(db, p.id)!;
 }
@@ -90,6 +91,9 @@ function applyPerson(db: Db, p: Person, name: string, role: Role): void {
   const id = p.id;
   db.transaction((tx) => {
     tx.update(t.person).set({ name, role }).where(eq(t.person.id, id)).run();
+    // Since when they are an admin (Gate re-attack B1): a second admin's yes to a reset counts after a week only.
+    if (role === 'admin' && p.role !== 'admin') tx.update(t.person).set({ adminSince: new Date().toISOString() }).where(eq(t.person.id, id)).run();
+    if (role !== 'admin') tx.update(t.person).set({ adminSince: null }).where(eq(t.person.id, id)).run();
     // Someone who stops being a kid has no managers; a kid manages nobody.
     if (role !== 'kid') tx.delete(t.manager).where(eq(t.manager.kidId, id)).run();
     if (role === 'kid') tx.delete(t.manager).where(eq(t.manager.managerId, id)).run();
@@ -150,7 +154,7 @@ const SEEN_EVERY_MS = 3_600_000;
 export function syncHomersLabPerson(db: Db, id: Identity & { role: Role }, now = new Date()): Person {
   const existing = db.select().from(t.person).where(eq(t.person.externalId, id.externalId)).get();
   if (!existing) {
-    const p = { id: ulid(), externalId: id.externalId, name: id.name ?? 'Someone', role: id.role, createdAt: now.toISOString(), lastSeenAt: now.toISOString() };
+    const p = { id: ulid(), externalId: id.externalId, name: id.name ?? 'Someone', role: id.role, createdAt: now.toISOString(), lastSeenAt: now.toISOString(), adminSince: id.role === 'admin' ? now.toISOString() : null };
     db.insert(t.person).values(p).run();
     return getPerson(db, p.id)!;
   }

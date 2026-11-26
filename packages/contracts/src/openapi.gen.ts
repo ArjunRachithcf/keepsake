@@ -223,7 +223,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** For someone who lost every device: the first call asks for a reset; it is carried out when another admin makes the same call, or, in a household with one admin, when its asker calls again a day later (Gate routes M1). Carried out, it removes their passkeys, ends their sessions and spends their open links; then an admin sends the usual invite, and their draws stay sealed to them until they confirm on their new device. An admin who signed in with a passkey in the last 5 minutes, for someone who is not and was not lately an admin (an admin recovers with `keepsake recover`). The person and the other admins are told when it is asked, the person and the people of their open draws when it is done. Audited. Standalone. */
+        /** For someone who lost every device: the first call asks for a reset, and nothing is reset yet (Gate routes M1, re-attack B1). A second admin's call is their yes, if they were an admin with a passkey of their own a week before the ask and no passkey of theirs came from the asker's invite; an hour after that yes the asker or they carry it out with the same call. Otherwise its asker alone, a day after the ask. Carried out, it removes their passkeys, ends their sessions and spends their open links; then an admin sends the usual invite, and their draws stay sealed to them until they confirm on their new device. An admin who signed in with a passkey in the last 5 minutes, for someone who is not and was not lately an admin (an admin recovers with `keepsake recover`). When it is asked and when it is done, the person (pushed at once), the other admins, the people of their open draws and a kid's parents are told. Audited. Standalone. */
         post: operations["resetPasskeys"];
         /** Calls off a reset that waits (the person, from a device they still have, or any admin; a sign-in of the last 10 minutes). Audited. Standalone */
         delete: operations["cancelPasskeyReset"];
@@ -1470,13 +1470,15 @@ export interface components {
             /** @enum {string} */
             state: "asked" | "done";
             /**
-             * @description Asked: another admin's yes, or (one admin) a day
+             * @description Asked: a day after the ask (its asker alone), or an hour after a long-standing second admin's yes
              * @enum {string|null}
              */
-            waitsFor: "another_admin" | "a_day" | null;
-            /** @description One admin: when its asker may carry it out */
+            waitsFor: "a_day" | "an_hour" | null;
+            /** @description Asked: when it may be carried out (by its asker, or by the admin who said yes) */
             notBefore: components["schemas"]["DateTime"] | null;
             askedBy: components["schemas"]["PersonRef"] | null;
+            /** @description The second admin whose yes counts: an admin, with a passkey, a week before the ask, not enrolled by its asker */
+            approvedBy: components["schemas"]["PersonRef"] | null;
         };
         Notices: {
             notices: components["schemas"]["Notice"][];
