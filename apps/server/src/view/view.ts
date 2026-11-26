@@ -373,7 +373,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       }
       case 'remind': {
         const c = celebrationRef(n.subjectId);
-        return c ? [{ ...base, celebration: c, person: n.aboutId ? ref(n.aboutId) : null }] : [];
+        return c && !(n.aboutId && sealedFor(n.aboutId)) ? [{ ...base, celebration: c, person: n.aboutId ? ref(n.aboutId) : null }] : [];
       }
       case 'say_thanks': return [{ ...base, celebration: n.subjectId === 'any' ? null : celebrationRef(n.subjectId) }];
       // Whose sign-in, and who asked to reset it (Gate routes M1): to the person, the other admins, the people of their draws.
@@ -405,7 +405,8 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
       }
     }
   };
-  const reminderFor = (personId: string): number | null => (personId === viewer.id ? null
+  // A sealed viewer's own "Remind me" about the people of their draws is sealed too (Gate re-attack 2, Q2).
+  const reminderFor = (personId: string): number | null => (personId === viewer.id || sealedFor(personId) ? null
     : db.select({ days: t.reminder.days }).from(t.reminder).where(and(eq(t.reminder.personId, viewer.id), eq(t.reminder.aboutId, personId))).get()?.days ?? null);
 
   // Every helper builds its own answer from ids, for this viewer: none takes a person, a row or a ready object.

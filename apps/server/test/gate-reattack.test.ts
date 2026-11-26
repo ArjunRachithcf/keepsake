@@ -36,8 +36,7 @@ describe('R3: an imported reservation that was given stays given', () => {
   });
 });
 
-describe('R2: while the draw is sealed after a reset, nothing of the person\'s own points at whom they drew', () => {
-  it('Sam opened, claimed, chipped in, wrote an idea and asked his receiver; reset and unconfirmed, no answer marks any of it his', async () => {
+async function sealedSam() {
     const NOW = new Date().toISOString();
     const db = withDraws(household());
     db.insert(t.setting).values({ key: 'currency', value: 'CHF' }).run();
@@ -51,7 +50,7 @@ describe('R2: while the draw is sealed after a reset, nothing of the person\'s o
     db.insert(t.passkey).values({ id: 'pk-p_sam', personId: 'p_sam', publicKey: Buffer.from([1]), label: 'x', createdAt: NOW }).run();
     const built = await buildApp(standalone(), db, { webauthn: fakeWebAuthn() }); apps.push(built);
     const fresh = (p: string) => `__Host-keepsake_session=${createSession(db, p, p === 'p_alex' ? 'pk1' : `pk-${p}`).token}`;
-    const send = (method: 'POST' | 'PUT' | 'GET' | 'PATCH', url: string, cookie: string, payload?: object) => built.app.inject({ method, url, payload, headers: { origin: ORIGIN, cookie } });
+    const send = (method: 'POST' | 'PUT' | 'GET' | 'PATCH' | 'DELETE', url: string, cookie: string, payload?: object) => built.app.inject({ method, url, payload, headers: { origin: ORIGIN, cookie } });
     await ok(send('POST', '/api/celebrations/c_xmas/draw/run', fresh('p_alex')));
     const sam0 = fresh('p_sam');
     await ok(send('POST', '/api/celebrations/c_xmas/draw/open', sam0));
@@ -71,6 +70,13 @@ describe('R2: while the draw is sealed after a reset, nothing of the person\'s o
     const pk = db.select().from(t.passkey).where(eq(t.passkey.personId, 'p_sam')).get()!.id;
     const sam = () => `__Host-keepsake_session=${createSession(db, 'p_sam', pk).token}`;
     expect((await ok(send('GET', '/api/celebrations/c_xmas/draw', sam()))).json().mine).toMatchObject({ sealed: true, receiver: null });
+    return { db, send, sam, receiver, mates };
+}
+
+describe('R2: while the draw is sealed after a reset, nothing of the person\'s own points at whom they drew', () => {
+  it('Sam opened, claimed, chipped in, wrote an idea and asked his receiver; reset and unconfirmed, no answer marks any of it his', async () => {
+    const { db, send, sam, receiver, mates } = await sealedSam();
+    void receiver;
     const pages = async () => Promise.all(mates.map(async (p) => (await ok(send('GET', `/api/people/${p}`, sam()))).body));
     for (const [i, body] of (await pages()).entries()) {
       expect([mates[i], body.includes('"mine":true'), body.includes('"canManage":true'), body.includes('Which size?'), body.includes('"myShareMinor":500')]).toEqual([mates[i], false, false, false, false]);
@@ -117,5 +123,52 @@ describe('R1: "enough" is no quick oracle: the target is locked once anyone chip
     expect((await as(h, 'robin').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 9000 })).statusCode).toBe(403);
     expect((await ok(as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 9000 }))).json().gift.group.targetMinor).toBe(9000);
     expect((await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 8999 })).statusCode).toBe(409);
+  });
+});
+
+describe('re-attack 2, Q3: the organizer raises the target once a day, and the sharers hear of each raise', () => {
+  it('target 80; Robin 31, Alex 60; Alex raising a franc at a time stops after one raise a day; Robin is told at the batch', async () => {
+    const h = await home();
+    await ok(as(h, 'robin').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 3100 }));
+    await ok(as(h, 'alex').send('PUT', '/api/wishes/w_sam_pan/group/share', { amountMinor: 6000 }));
+    expect((await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 8100 })).statusCode).toBe(200);
+    const again = await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 8200 });
+    expect([again.statusCode, again.json()]).toEqual([409, { error: 'the target went up today already: again tomorrow' }]);
+    const told = async (who: 'robin' | 'alex') => (await ok(as(h, who).get('/api/notices'))).json().notices.filter((n: { kind: string }) => n.kind === 'target_raised').map((n: { person: { id: string } }) => n.person.id);
+    await h.built.pusher.idle();
+    expect(await told('robin')).toEqual([]);
+    h.built.pusher.batch();
+    await h.built.pusher.idle();
+    expect([await told('robin'), await told('alex')]).toEqual([['p_sam'], []]);
+    setNow(new Date('2026-12-02T10:00:00.000Z'));
+    for (const p of ['alex', 'robin'] as const) h.cookies[p] = sessionCookie(h.db, `p_${p}`);
+    expect((await as(h, 'alex').send('PATCH', '/api/wishes/w_sam_pan/group', { targetMinor: 8200 })).statusCode).toBe(200);
+  });
+});
+
+describe('re-attack 2, Q2: while sealed, the writes on his draw-mates\' wishes say nothing of whom Sam drew', () => {
+  it('every draw-mate\'s wish answers the same 404 to his claim, share and idea writes; nothing changes; his "Remind me" is sealed too', async () => {
+    const { db, send, sam, receiver, mates } = await sealedSam();
+    db.insert(t.reminder).values({ personId: 'p_sam', aboutId: receiver, days: 7 }).run();
+    const before = JSON.stringify([db.select().from(t.claim).all(), db.select().from(t.share).all(), db.select().from(t.idea).all(), db.select().from(t.audit).all()]);
+    const idea = db.select().from(t.idea).where(eq(t.idea.authorId, 'p_sam')).get()!.id;
+    const seen = new Set<string>();
+    for (const p of mates) {
+      for (const [method, url, payload] of [['PATCH', `/api/wishes/w_${p}_xmas/claim`, { state: 'claimed' }], ['DELETE', `/api/wishes/w_${p}_xmas/claim`], ['DELETE', `/api/wishes/w_${p}_bike/group/share`], ['PUT', `/api/wishes/w_${p}_bike/group/share`, { amountMinor: 100 }]] as const) {
+        const r = await send(method, url, sam(), payload as object | undefined);
+        seen.add(`${method} ${url.replace(p, 'X')} ${r.statusCode} ${r.body}`);
+      }
+      const remind = await send('PUT', `/api/people/${p}/reminder`, sam(), { days: 3 });
+      seen.add(`remind ${remind.statusCode} ${remind.body}`);
+      expect((await ok(send('GET', `/api/people/${p}`, sam()))).json().reminder).toBeNull();
+    }
+    // One answer per route, whoever's wish it is: 404, as for a wish that is not there.
+    expect([...seen].every((x) => x.includes(' 404 '))).toBe(true);
+    expect(seen.size).toBe(5);
+    expect((await send('DELETE', `/api/ideas/${idea}`, sam())).statusCode).toBe(404);
+    expect(JSON.stringify([db.select().from(t.claim).all(), db.select().from(t.share).all(), db.select().from(t.idea).all(), db.select().from(t.audit).all()])).toBe(before);
+    // Confirmed: his own again.
+    await ok(send('POST', '/api/me/reset/confirm', sam()));
+    expect((await send('DELETE', `/api/ideas/${idea}`, sam())).statusCode).toBe(204);
   });
 });

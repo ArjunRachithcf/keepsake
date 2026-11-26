@@ -19,7 +19,9 @@ something is new.
   `thanks` shows them), a thank-you for a gift they gave, a reset of a sign-in (Gate routes M1, re-attack B1: asked
   and done, to its person, the other admins, the people of their open draws and a kid's parents, with who asked, `by`;
   pushed at the next tick, not held for the batch: the person's warning comes before anything is reset, it is about
-  them, and the set told is the draw's, which its people know). Never a claim, a share, an idea, a question on its way or its
+  them, and the set told is the draw's, which its people know). Gate re-attack 2: someone became an admin (everyone
+  else, at the batch: C1), someone else signed you out everywhere (you, at once: C2), the target of a group gift you
+  chipped in to went up (its other sharers, at the batch: Q3). Never a claim, a share, an idea, a question on its way or its
   asker, someone else's reminder, or a pair. The twin-household matrices of M2–M4 read `/api/notices` after running
   the batch, and count the pushes each person was sent, so a notice or a push that followed a hidden thing fails them.
 - **A push is one fixed message**: `{"v":1}`, encrypted (RFC 8291, aes128gcm, padded) for every device, so the push

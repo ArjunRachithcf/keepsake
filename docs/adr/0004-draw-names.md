@@ -121,13 +121,17 @@ pair, and the veils would lift).
   the same day). A passkey reset followed by an invite let an admin enrol as anyone and open their draw (demoting an
   admin first got round "never an admin's"); then a lone admin made a "second admin", enrolled them from their own
   invite and had the yes at once. Now a reset needs a second admin's yes or a day; the yes counts only from someone who
-  was an admin, with a passkey of their own, a week before the ask, none of whose passkeys came from the asker's invite,
-  and it is carried out an hour after the yes at the earliest. An ask whose asker has gone is nobody's. At the ask,
+  was an admin, with a passkey of their own, a week before the ask, whom the asker never added, changed the role of or
+  made a sign-in link for (decided by the person in the audit, not by their keys: a second re-attack rotated the key
+  away; a key made from one's own link inherits the lineage of the one that made it), and it is carried out an hour
+  after the yes at the earliest. Everyone is told, at the morning batch, when someone becomes an admin. Ending the
+  person's sessions keeps their devices subscribed and tells them, and is refused while a reset waits (C2). An ask whose asker has gone is nobody's. At the ask,
   before anything is reset, the person is warned (a notice and a push to their devices, their sessions kept, so they
   can call it off), and the other admins, the people of their open draws and a kid's parents are told; done, all of
   them again ("X's sign-in was reset by Y"). The reset person's draws stay sealed to them (no receiver, no pairs, no
   opening, and nothing of their own for the people of those draws is marked theirs: claims, shares, ideas, questions,
-  gifts given and their thank-yous, Gate re-attack R2) until they confirm on their new device; someone demoted from
+  gifts given and their thank-yous, Gate re-attack R2; and their writes on those people's wishes, ideas, questions
+  and reminders answer the same 404 and change nothing, Gate re-attack 2, Q2) until they confirm on their new device; someone demoted from
   admin in the last 30 days is still an admin for resets; new people, role changes, invites and every step of a reset
   are audited. Accepted: two genuine, long-standing admins acting together, or one admin when the person ignores a day
   of warnings, can still do it, loudly (docs/security.md).

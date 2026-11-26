@@ -323,7 +323,7 @@ export function managesGroup(db: Db, me: Pick<Person, 'id'>, g: GroupGift): bool
   return Boolean(myShare(db, me, g.wishId));
 }
 
-export function editGroup(db: Db, me: Person, wishId: string, patch: { targetMinor?: number; state?: GroupState }, today: string): Wish {
+export function editGroup(db: Db, me: Person, wishId: string, patch: { targetMinor?: number; state?: GroupState }, today: string, raised: (sharers: string[]) => void = () => {}): Wish {
   const w = giving(db, me, wishId);
   const g = mustGroup(db, w.id);
   if (!managesGroup(db, me, g)) throw new Refused(403, 'whoever started the group gift changes it');
@@ -331,14 +331,20 @@ export function editGroup(db: Db, me: Person, wishId: string, patch: { targetMin
   // Any target until someone chips in: one refused for what is in would let the organizer find the total (Gate surprise
   // L3). Then it only goes up, and only by whoever started it (re-attack R1): moving it to and fro, "enough" flipping,
   // gave the total in a few tries.
-  if (patch.targetMinor !== undefined && patch.targetMinor !== g.targetMinor && db.select({ id: t.share.id }).from(t.share).where(eq(t.share.wishId, w.id)).get()) {
-    if (g.organizerId !== me.id || patch.targetMinor < g.targetMinor) throw new Refused(409, 'someone has chipped in: only whoever started it raises the target');
+  // And at most once a day, each raise told to the sharers (re-attack 2, Q3): raising it a franc at a time until
+  // "enough" turned false gave the total in a dozen tries.
+  const sharers = db.select({ giverId: t.share.giverId }).from(t.share).where(eq(t.share.wishId, w.id)).all();
+  const raising = patch.targetMinor !== undefined && patch.targetMinor !== g.targetMinor && sharers.length > 0;
+  if (raising) {
+    if (g.organizerId !== me.id || patch.targetMinor! < g.targetMinor) throw new Refused(409, 'someone has chipped in: only whoever started it raises the target');
+    if (g.raisedOn === today) throw new Refused(409, 'the target went up today already: again tomorrow');
   }
   const state = patch.state ?? g.state;
   if (state !== g.state && overNow(db, w, g, today)) throw new Refused(409, 'it was given, and its celebration is over');
   const dates = state === g.state ? {} : givenFields(db, w, state === 'given', today);
   db.transaction((tx) => {
-    tx.update(t.groupGift).set({ targetMinor: patch.targetMinor ?? g.targetMinor, state, ...dates, updatedAt: ts() }).where(eq(t.groupGift.wishId, w.id)).run();
+    tx.update(t.groupGift).set({ targetMinor: patch.targetMinor ?? g.targetMinor, state, ...dates, ...(raising ? { raisedOn: today } : {}), updatedAt: ts() }).where(eq(t.groupGift.wishId, w.id)).run();
+    if (raising) raised(sharers.map((x) => x.giverId).filter((id): id is string => id !== null && id !== me.id));
     if (state !== g.state) tx.update(t.share).set({ named: 0 }).where(eq(t.share.wishId, w.id)).run();
   });
   return w;

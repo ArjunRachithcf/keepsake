@@ -34,13 +34,13 @@ import { clientKey } from './identity';
 import { fastifyRequestOf, type Req } from './router';
 import { isId } from './validate';
 import { guestViewFor, linkAnswer, publicViewFor, viewFor, type ListFor } from './view/view';
-import { answerQuestion, answerWithWish, ask, askersOf, declineQuestion, removeQuestion } from './questions/questions';
-import { addIdea, removeIdea } from './ideas/ideas';
+import { answerQuestion, answerWithWish, ask, askersOf, declineQuestion, getQuestion, removeQuestion } from './questions/questions';
+import { addIdea, getIdea, removeIdea } from './ideas/ideas';
 import {
   checkMemberName, createShareLink, drawLinksOf, drawLinkWriter, settleGuestClaims, endDeviceSessions, forgetLink, getLink, GUEST_COOKIE, GUEST_DAYS, reissueLink, guestGiving, linkUrl, reachOf, revokeLink, sameName, setGuestName,
   startGuestSession, type GuestLink,
 } from './guests/guests';
-import { addGuest, guestLeaves, openDrawAsGuest, openDrawPeopleOf } from './draws/draws';
+import { addGuest, guestLeaves, openDrawAsGuest, openDrawPeopleOf, unrevealedDraws } from './draws/draws';
 import { claimFor, setClaimStateFor, unclaimFor } from './gifts/gifts';
 import { applyImport, dryRun, type ImportInput } from './import/import';
 import { createEgress, type Egress } from './net/egress';
@@ -52,7 +52,7 @@ import { thankRecipients, writeThanks } from './thanks/thanks';
 import { previewLink } from './wishes/preview';
 import * as t from './db/schema';
 import { and, eq } from 'drizzle-orm';
-import { addWish, approveWish, declineWish, editWish, orderWishes, removeWish, type WishInput } from './wishes/wishes';
+import { addWish, approveWish, declineWish, editWish, getWish, orderWishes, removeWish, type WishInput } from './wishes/wishes';
 
 export type { CelebrationInput } from './celebrations/celebrations';
 export type { WishInput } from './wishes/wishes';
@@ -119,6 +119,24 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
   const tellNewAdmin = (id: string, by: string) =>
     tellLater('new_admin', id, { people: household(db).map((p) => p.id).filter((p) => p !== id && p !== by) });
   pusher.resolve('answered', (id) => askersOf(db, id));
+  /**
+   * Reset and not confirmed yet (Gate re-attack 2, Q2): the writes on what concerns the people of the person's
+   * unrevealed draws answer as if nothing were there, the same 404 for each, and change nothing; otherwise 200 on one
+   * wish and 404 on the others would say whom they drew.
+   */
+  const sealedMate = (p: Person, personId: string) => p.drawsSealedAt !== null && personId !== p.id
+    && unrevealedDraws(db, day()).some((d) => d.people.has(p.id) && d.people.has(personId));
+  const onWish = (r: Req, wishId: string): Person => {
+    const p = me(r);
+    const w = getWish(db, wishId);
+    if (w && sealedMate(p, w.personId)) throw new Refused(404, 'no such wish');
+    return p;
+  };
+  const about = (r: Req, personId: string): Person => {
+    const p = me(r);
+    if (sealedMate(p, personId)) throw new Refused(404, 'no such person');
+    return p;
+  };
   pusher.resolve('thanked', (id, on) => thankRecipients(db, id, on));
   /** A change that may draw names, draw them again or clear them: the draw's people (but whoever did it) are told. */
   // The change and its pending row in one transaction: kept or lost together (PR #12 third review, L3).
@@ -292,16 +310,16 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     },
     /** What givers do (gifts/gifts.ts), as the request's person: each returns the wish's id for the view layer. */
     gifts: {
-      claim: (r: Req, wishId: string, quantity: number) => changed(claimWish(db, me(r), wishId, quantity).id),
-      setState: (r: Req, wishId: string, state: ClaimState) => changed(setClaimState(db, me(r), wishId, state, day()).id),
-      unclaim: (r: Req, wishId: string) => changed(unclaimWish(db, me(r), wishId)),
-      releaseImported: (r: Req, wishId: string) => { releaseImported(db, me(r), wishId); changed(0); },
-      setNamed: (r: Req, wishId: string, named: boolean) => changed(setNamed(db, me(r), wishId, named, day()).id),
-      startGroup: (r: Req, wishId: string, targetMinor: number) => changed(startGroup(db, me(r), wishId, targetMinor).id),
-      editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => changed(editGroup(db, me(r), wishId, patch, day()).id),
-      endGroup: (r: Req, wishId: string) => changed(endGroup(db, me(r), wishId)),
-      chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, me(r), wishId, amountMinor, day()).id),
-      withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, me(r), wishId, day())),
+      claim: (r: Req, wishId: string, quantity: number) => changed(claimWish(db, onWish(r, wishId), wishId, quantity).id),
+      setState: (r: Req, wishId: string, state: ClaimState) => changed(setClaimState(db, onWish(r, wishId), wishId, state, day()).id),
+      unclaim: (r: Req, wishId: string) => changed(unclaimWish(db, onWish(r, wishId), wishId)),
+      releaseImported: (r: Req, wishId: string) => { releaseImported(db, onWish(r, wishId), wishId); changed(0); },
+      setNamed: (r: Req, wishId: string, named: boolean) => changed(setNamed(db, onWish(r, wishId), wishId, named, day()).id),
+      startGroup: (r: Req, wishId: string, targetMinor: number) => changed(startGroup(db, onWish(r, wishId), wishId, targetMinor).id),
+      editGroup: (r: Req, wishId: string, patch: { targetMinor?: number; state?: GroupState }) => changed(atomically(() => editGroup(db, onWish(r, wishId), wishId, patch, day(), (people) => tellLater('target_raised', wishId, { people }))).id),
+      endGroup: (r: Req, wishId: string) => changed(endGroup(db, onWish(r, wishId), wishId)),
+      chipIn: (r: Req, wishId: string, amountMinor: number) => changed(chipIn(db, onWish(r, wishId), wishId, amountMinor, day()).id),
+      withdraw: (r: Req, wishId: string) => changed(withdrawShare(db, onWish(r, wishId), wishId, day())),
     },
     /** A celebration's draw (draws/draws.ts), as the request's person: each returns the celebration's id for the view layer. */
     draws: {
@@ -313,16 +331,24 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     },
     /** Anonymous questions (questions/questions.ts): each returns an id for the view layer, never the asker. */
     questions: {
-      ask: (r: Req, personId: string, text: string) => { const p = me(r); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
+      ask: (r: Req, personId: string, text: string) => { const p = about(r, personId); return ask(db, cfg.timezone, { personId: p.id, role: p.role }, personId, text); },
       // Its asker (someone of the household) is told it was answered: questions.ts hands the id to the notice only.
       answer: (r: Req, id: string, text: string) => atomically(() => { answerQuestion(db, me(r), id, text, new Date(), () => tellLater('answered', id)); }),
       decline: (r: Req, id: string) => atomically(() => { declineQuestion(db, me(r), id, new Date(), () => tellLater('answered', id)); }),
       withWish: (r: Req, id: string, i: WishInput) => changed(atomically(() => answerWithWish(db, me(r), id, i, new Date(), () => tellLater('answered', id)))),
-      remove: (r: Req, id: string) => removeQuestion(db, me(r), id),
+      remove: (r: Req, id: string) => {
+        const q = getQuestion(db, id);
+        if (q && sealedMate(me(r), q.personId)) throw new Refused(404, 'no such question');
+        removeQuestion(db, me(r), id);
+      },
     },
     ideas: {
-      add: (r: Req, personId: string, text: string) => addIdea(db, me(r), personId, text),
-      remove: (r: Req, id: string) => { removeIdea(db, me(r), id); },
+      add: (r: Req, personId: string, text: string) => addIdea(db, about(r, personId), personId, text),
+      remove: (r: Req, id: string) => {
+        const i = getIdea(db, id);
+        if (i && sealedMate(me(r), i.personId)) throw new Refused(404, 'no such idea');
+        removeIdea(db, me(r), id);
+      },
     },
     /** Guest links (guests/guests.ts): a new link's address is built here and shown once. */
     links: {
@@ -405,7 +431,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       read: (r: Req) => markRead(db, me(r).id),
       /** Reminded `days` before each of this person's celebrations, or not (null). Never about oneself. */
       remind: (r: Req, personId: string, days: number | null) => {
-        const by = me(r);
+        const by = about(r, personId);
         const p = mustGetPerson(db, personId);
         if (p.id === by.id) throw new Refused(403, 'your own celebrations remind you a week before');
         if (days === null) db.delete(t.reminder).where(and(eq(t.reminder.personId, by.id), eq(t.reminder.aboutId, p.id))).run();
