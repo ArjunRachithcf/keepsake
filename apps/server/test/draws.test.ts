@@ -122,6 +122,23 @@ describe('setting up a draw', () => {
   });
 });
 
+describe('when the names were drawn (UI round 4: "You drew the names · 26 Nov")', () => {
+  it('is the host\'s only to see', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    expect((await as('alex').get(DRAW)).json().drawnAt).toBeNull();
+    const run = await as('alex').send('POST', `${DRAW}/run`);
+    expect(run.statusCode, run.body).toBe(200);
+    expect(run.json().drawnAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    for (const who of ['sam', 'robin', 'quinn', 'mia', 'leo', 'uma'] as const) {
+      const g = await as(who).get(DRAW);
+      expect(g.statusCode).toBe(200);
+      expect(g.json().drawnAt, who).toBeNull();
+    }
+  });
+});
+
 describe('drawing the names', () => {
   it('refuses rules that cannot be drawn, or that let someone work out another\'s person, naming the rule; audited without pairs', async () => {
     const db = home();

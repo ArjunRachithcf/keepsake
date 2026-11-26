@@ -2356,7 +2356,7 @@ components:
     Draw:
       type: object
       additionalProperties: false
-      required: [celebrationId, year, on, budgetMinor, kidsDraw, notLastYear, drawTogetherAt, revealOn, people, guests, exclusions, drawn, redrawnAt, opened, total, over, revealed, canManage, canRedraw, mine, pairs]
+      required: [celebrationId, year, on, budgetMinor, kidsDraw, notLastYear, drawTogetherAt, revealOn, people, guests, exclusions, drawn, drawnAt, redrawnAt, opened, total, over, revealed, canManage, canRedraw, mine, pairs]
       properties:
         celebrationId: { $ref: '#/components/schemas/Id' }
         year: { type: integer }
@@ -2374,6 +2374,7 @@ components:
             - { type: array, items: { type: array, minItems: 2, maxItems: 2, items: { $ref: '#/components/schemas/PersonRef' } } }
             - { type: 'null' }
         drawn: { type: boolean }
+        drawnAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }], description: 'When the names were (last) drawn: for its host only ("You drew the names · 26 Nov"), null for everyone else' }
         redrawnAt: { anyOf: [{ $ref: '#/components/schemas/DateTime' }, { type: 'null' }], description: 'Set when the names were drawn again after someone had opened theirs: everyone opens theirs again' }
         opened: { type: integer, description: 'How many have opened theirs (never who)' }
         total: { type: integer }

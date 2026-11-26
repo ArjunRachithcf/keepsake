@@ -1831,6 +1831,8 @@ export interface components {
             /** @description Who shouldn't draw whom (both ways): for its host only, null for everyone else */
             exclusions: components["schemas"]["PersonRef"][][] | null;
             drawn: boolean;
+            /** @description When the names were (last) drawn: for its host only ("You drew the names · 26 Nov"), null for everyone else */
+            drawnAt: components["schemas"]["DateTime"] | null;
             /** @description Set when the names were drawn again after someone had opened theirs: everyone opens theirs again */
             redrawnAt: components["schemas"]["DateTime"] | null;
             /** @description How many have opened theirs (never who) */

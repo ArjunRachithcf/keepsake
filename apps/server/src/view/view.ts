@@ -526,7 +526,7 @@ export function viewFor(db: Db, cfg: Pick<Config, 'mode' | 'timezone' | 'sealing
           ? exclusionsOf(db, d.id).map((e) => [pref(e.a), pref(e.b)].sort(byName)).filter((x): x is [api.PersonRef, api.PersonRef] => x.every(Boolean))
             .sort((x, y) => byName(x[0], y[0]) || byName(x[1], y[1]))
           : null,
-        drawn: d.drawnAt !== null, redrawnAt: d.redrawnAt,
+        drawn: d.drawnAt !== null, drawnAt: manages ? d.drawnAt : null, redrawnAt: d.redrawnAt,
         opened: ps.filter((p) => p.openedAt).length, total: ps.length,
         over: dayHasCome(c, d, now), revealed,
         canManage: manages,
