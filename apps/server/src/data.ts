@@ -393,7 +393,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
       },
       /** The morning batch (jobs/morning.ts), from the scheduler: who was told is woken in the push queue. */
       // Once a day: the batch kinds' notices, and a push to every subscribed device whatever it was told (Gate surprise H1).
-      // And the rollover of guests' claims: a covered one whose celebration has passed is settled (Gate re-attack R4).
+      // And the rollover of guests' claims: one no draw or veil covers any more is settled (Gate re-attack R4, Q1).
       morning: (now: Date) => {
         const first = due(db, cfg, now);
         if (first) db.transaction(() => settleGuestClaims(db, keyring(cfg), today(cfg.timezone, now), cfg.timezone));

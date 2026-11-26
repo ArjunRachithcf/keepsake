@@ -41,10 +41,11 @@ rate limited, read-only except claims, questions and the guest's own name; no ro
   or given ones stay with nobody's name, as when a giver leaves (ADR 0003). The changing request does it, never a
   person's reading one. **Except while a draw or its veil covers the claim** (Gate surprise M1, 2026-11-26: the guest
   and the wish's person in it, the claim made up to its day): then nothing goes. The claim stays as it is, unnamed like
-  every claim between a draw's people, and still counts, until the veil lifts or the draw's day has passed, whichever is first (Gate re-attack R4,
-  2026-11-26: a draw revealed "never" lifts no veil, and an old claim after a re-draw stayed for good, a reservation
-  nobody would fulfil); the morning batch after that, or the first change, settles it as above. Once the celebration
-  has passed, what the guest gave nobody can still change, so nothing more is told by it going. Had it gone, the one unnamed claim that went would sit on the wish of the guest's person, and every giver,
+  every claim between a draw's people, and still counts, until the veil lifts, the draw's day passed or not (Gate re-attack 2, Q1, 2026-11-26: settling it
+  after the day, as R4 had it, made the one claim that went overnight the cousin's, on her person's wish, and named a
+  pair that "never" keeps secret for good); the morning batch after the veil lifts, or the first change, settles it as
+  above. Accepted (R4): with a draw revealed "never", such a claim, after a re-draw or a revoked link, stays a
+  nobody's reservation that still counts until the wish itself is removed or received. Had it gone, the one unnamed claim that went would sit on the wish of the guest's person, and every giver,
   the host who revoked included, would know whom the guest drew. A wish a kid edits (waiting for a parent again)
   keeps its guests' claims too: the reservation is there when the parent says yes. Accepted: once the celebration
   itself is removed, its draw links go and such a claim becomes nobody's for good (it still counts; nothing releases

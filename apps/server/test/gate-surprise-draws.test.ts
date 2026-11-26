@@ -81,24 +81,38 @@ describe('M1 (probe P5): a draw guest\'s claim stays, unnamed, while the draw or
     expect(onTarget()).toBe(1);
   });
 
-  it('after a re-draw, the cousin\'s old claim stays nobody\'s until Christmas has passed, then goes at the morning rollover, with a draw revealed never (Gate re-attack R4)', async () => {
-    for (let i = 0; i < 20; i++) {
+  it.each(['revoke', 'move', 'redraw'] as const)('after a %s, the cousin\'s claim stays nobody\'s past Christmas while the draw is revealed never; the rollover changes no wish (re-attack 2, Q1)', async (variant) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-12-01T10:00:00.000Z'));
+    for (let i = 0; i < 3; i++) {
       const x = await drawnWithCousin();
-      expect(x.db.select().from(t.draw).get()!.revealOn).toBeNull();
-      await ok(x.s.person('p_alex').send('PATCH', '/api/celebrations/c_xmas/draw', { budgetMinor: 2000, kidsDraw: true, notLastYear: false, exclusions: [['p_alex', 'p_sam']] }));
-      if ((await ok(x.g.send('POST', '/api/guest/draw/open'))).json().person.id === x.target) continue;
-      const old = () => x.db.select().from(t.claim).all().filter((c) => c.wishId === `w_${x.target.slice(2)}_xmas` && c.guestId !== null).length;
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2026-12-24T09:00:00.000Z'));
-      x.s.built.morning(new Date());
-      await ok(x.s.person('p_alex').send('PATCH', '/api/wishes/w_alex_xmas', { note: 'Any' }));
-      expect(old()).toBe(1);
+      if (variant === 'revoke') await ok(x.s.person('p_alex').send('DELETE', `/api/links/${x.made.link.id}`));
+      if (variant === 'move') await ok(x.s.person(x.target === 'p_mia' ? 'p_sam' : x.target).send('PATCH', `/api/wishes/w_${x.target.slice(2)}_xmas`, { celebrationId: x.target === 'p_mia' ? 'c_mia' : 'c_cousins' }));
+      if (variant === 'redraw') await ok(x.s.person('p_alex').send('PATCH', '/api/celebrations/c_xmas/draw', { budgetMinor: 2000, kidsDraw: true, notLastYear: false, exclusions: [['p_alex', 'p_sam']] }));
+      const before = await x.claims();
       vi.setSystemTime(new Date('2026-12-26T09:00:00.000Z'));
       x.s.built.morning(new Date());
-      expect(old()).toBe(0);
-      return;
+      await ok(x.s.person('p_alex').send('PATCH', '/api/wishes/w_alex_xmas', { note: 'Any' }));
+      const d = (await ok(x.s.person('p_alex').get('/api/celebrations/c_xmas/draw'))).json();
+      expect([d.revealOn, d.revealed, await x.claims()]).toEqual([null, false, before]);
+      expect(x.db.select().from(t.claim).all().filter((c) => c.wishId === `w_${x.target.slice(2)}_xmas`)).toHaveLength(2);
+      vi.setSystemTime(new Date('2026-12-01T10:00:00.000Z'));
     }
-    throw new Error('the re-draw never gave the cousin someone else');
+  });
+
+  it('once the veil lifts, the morning rollover settles a revoked cousin\'s only-made claim', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-12-01T10:00:00.000Z'));
+    const x = await drawnWithCousin();
+    await ok(x.s.person('p_alex').send('DELETE', `/api/links/${x.made.link.id}`));
+    const onTarget = () => x.db.select().from(t.claim).all().filter((c) => c.wishId === `w_${x.target.slice(2)}_xmas`).length;
+    x.db.update(t.draw).set({ revealOn: '2026-12-27' }).run();
+    vi.setSystemTime(new Date('2026-12-26T09:00:00.000Z'));
+    x.s.built.morning(new Date());
+    expect(onTarget()).toBe(2);
+    vi.setSystemTime(new Date('2026-12-27T09:00:00.000Z'));
+    x.s.built.morning(new Date());
+    expect(onTarget()).toBe(1);
   });
 
   it('a kid\'s edit of a listed wish sends it back to a parent: the cousin\'s reservation is kept, there when the parent says yes', async () => {
