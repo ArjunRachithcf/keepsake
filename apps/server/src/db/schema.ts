@@ -11,6 +11,11 @@ export const person = sqliteTable('person', {
   name: text('name').notNull(),
   role: text('role', { enum: ['admin', 'adult', 'kid'] }).notNull(),
   createdAt: text('created_at').notNull(),
+  /**
+   * Under HomersLab, when the edge last brought this person (at most an hour off): the edge says nothing when someone
+   * leaves, so nobody it has not shown for 30 days is pushed (Gate surprise L5). Standalone: null.
+   */
+  lastSeenAt: text('last_seen_at'),
 }, (t) => [
   uniqueIndex('person_external_id').on(t.externalId),
   check('person_role', sql`${t.role} IN ('admin', 'adult', 'kid')`),

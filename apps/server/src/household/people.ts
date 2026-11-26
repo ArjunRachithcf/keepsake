@@ -137,12 +137,19 @@ export function setManagers(db: Db, kidId: string, managerIds: string[]): void {
  * Under HomersLab: the person the edge names, added the first time and kept in step after (name, role). A request
  * without a valid role is refused by the caller: Keepsake cannot tell an adult from a kid without it.
  */
-export function syncHomersLabPerson(db: Db, id: Identity & { role: Role }): Person {
+/** How stale lastSeenAt may be before a request writes it again (one write an hour, not one a request). */
+const SEEN_EVERY_MS = 3_600_000;
+export function syncHomersLabPerson(db: Db, id: Identity & { role: Role }, now = new Date()): Person {
   const existing = db.select().from(t.person).where(eq(t.person.externalId, id.externalId)).get();
   if (!existing) {
-    const p = { id: ulid(), externalId: id.externalId, name: id.name ?? 'Someone', role: id.role, createdAt: new Date().toISOString() };
+    const p = { id: ulid(), externalId: id.externalId, name: id.name ?? 'Someone', role: id.role, createdAt: now.toISOString(), lastSeenAt: now.toISOString() };
     db.insert(t.person).values(p).run();
     return getPerson(db, p.id)!;
+  }
+  // A request through the edge is the only sign Keepsake has that someone is still in the household (Gate surprise L5).
+  if (!existing.lastSeenAt || now.getTime() - Date.parse(existing.lastSeenAt) > SEEN_EVERY_MS) {
+    db.update(t.person).set({ lastSeenAt: now.toISOString() }).where(eq(t.person.id, existing.id)).run();
+    existing.lastSeenAt = now.toISOString();
   }
   if (existing.role !== id.role || (id.name && existing.name !== id.name)) {
     // HomersLab decides roles there: no last-admin check (nobody signs in with a Keepsake passkey).

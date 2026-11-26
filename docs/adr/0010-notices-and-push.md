@@ -90,4 +90,8 @@ client in the server (ADR 0011); the service worker (`apps/web/public/sw.js`) al
 touches `/api`. Accepted: the push service learns when a device gets something (not what); a push can arrive while
 the screen is unlocked next to someone else, and says only "Something new". Under HomersLab a subscription has no
 Keepsake session to end with: it ends when the person turns notifications off on that device, the browser drops it,
-the person leaves the household, or the app has not been opened on that device for 30 days.
+or the app has not been opened on that device for 30 days. HomersLab's edge never tells Keepsake that someone left
+(Homeward has no household API or removal call yet, #86), so a request through the edge is the only sign of
+membership: each one marks its person seen (`person.last_seen_at`, at most once an hour), and nobody unseen for 30
+days is pushed, cover pushes included (Gate surprise L5). **The gap, accepted until Homeward #86**: someone removed
+from the household keeps getting "Something new" on their devices for up to 30 days.

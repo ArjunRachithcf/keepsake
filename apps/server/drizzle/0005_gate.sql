@@ -1,0 +1,1 @@
+ALTER TABLE `person` ADD `last_seen_at` text;

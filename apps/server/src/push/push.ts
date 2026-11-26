@@ -296,7 +296,11 @@ export class Pusher {
     this.woken.clear();
     this.heldBack.clear();
     const people = this.db.select().from(t.pendingPush).all().map((p) => p.personId);
-    const subs = this.db.select().from(t.pushSubscription).where(inArray(t.pushSubscription.personId, people)).all();
+    // Someone the edge has not brought for CONFIRM_DAYS (HomersLab: it never says who left) is pushed no more (Gate
+    // surprise L5); their rows go as if pushed. Standalone people have no lastSeenAt: their sessions decide.
+    const gone = new Set(this.db.select({ id: t.person.id }).from(t.person)
+      .where(lt(t.person.lastSeenAt, new Date(now - CONFIRM_DAYS * DAY).toISOString())).all().map((p) => p.id));
+    const subs = this.db.select().from(t.pushSubscription).where(inArray(t.pushSubscription.personId, people)).all().filter((s) => !gone.has(s.personId));
     // A person's pending row goes only once each of their devices has been tried (issue #13, 4): a crash or a stop
     // in the middle of sending leaves it, and the next start pushes them again (a device reached gets a second push).
     const left = new Map(people.map((p) => [p, subs.filter((s) => s.personId === p).length]));

@@ -7,8 +7,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { openDb } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { Pusher } from '../src/push/push';
-import { sessionCookie } from './helpers';
-import { as, makeHome, ok, pin, reads, setNow, type Home } from './m4';
+import { buildApp } from '../src/app';
+import { hl, homerslab, household, sessionCookie } from './helpers';
+import { as, countingTransport, makeHome, ok, pin, reads, setNow, withDevices, type Home } from './m4';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
 beforeAll(() => pin(T0));
@@ -147,5 +148,32 @@ describe('H1 (probes P1, P2): whose phone lights up after a thank-you or an answ
     expect(await pushedSince(h)).toEqual({});
     const every = Object.fromEntries([...new Set(h.db.select().from(t.pushSubscription).all().map((s) => s.personId))].map((p) => [p, 1]));
     expect(await batch(h, NEXT)).toEqual(every);
+  });
+});
+
+describe('L5: under HomersLab, nobody the edge has not brought for 30 days is pushed', () => {
+  it('a request through the edge marks its person seen (at most once an hour); someone unseen for 30 days gets no push', async () => {
+    const db = household();
+    db.update(t.person).set({ externalId: 'hl-robin' }).where(eq(t.person.id, 'p_robin')).run();
+    const pushes = withDevices(db);
+    const built = await buildApp(homerslab('127.0.0.1', { KEEPSAKE_EGRESS: 'on' }), db, { pushTransport: countingTransport(pushes) });
+    try {
+      const seen = () => db.select().from(t.person).where(eq(t.person.id, 'p_robin')).get()!.lastSeenAt;
+      expect(seen()).toBeNull();
+      await ok(built.app.inject({ url: '/api/home', headers: hl('hl-robin', 'Robin', 'adult'), remoteAddress: '127.0.0.1' }));
+      expect(seen()).toBe(T0.toISOString());
+      setNow(new Date(T0.getTime() + 31 * 86_400_000));
+      // Every device stays confirmed: only the person's absence counts.
+      db.update(t.pushSubscription).set({ confirmedAt: new Date().toISOString() }).run();
+      built.pusher.wake(['p_robin', 'p_sam']);
+      await built.pusher.idle();
+      expect(Object.fromEntries(pushes)).toEqual({ p_sam: 1 });
+      expect(db.select().from(t.pendingPush).all()).toEqual([]);
+      // Back through the edge: pushed again.
+      await ok(built.app.inject({ url: '/api/home', headers: hl('hl-robin', 'Robin', 'adult'), remoteAddress: '127.0.0.1' }));
+      built.pusher.wake(['p_robin']);
+      await built.pusher.idle();
+      expect(pushes.get('p_robin')).toBe(1);
+    } finally { await built.app.close(); }
   });
 });
