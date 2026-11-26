@@ -10,7 +10,7 @@
 // - The key (VAPID) is kept like the sealing key (push/keys.ts): outside the database and its backup.
 // - A standalone subscription is the session's: it ends when that session ends (sign-out, a lost device).
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, eq, inArray, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, count, eq, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
 import { tell, type NoticeKind } from '../notices/notices';
 import { asDb, type Db } from '../db/open';
 import * as t from '../db/schema';
@@ -120,11 +120,18 @@ const DAY = 86_400_000;
  * is told, and a push's arrival is not the moment of the change. `idle()` runs the queue now (tests).
  *
  * Answers: 2xx sent; 404 or 410 drops the subscription; 429 holds back that push service for the rest of the tick
- * (its pushes wait for the next one); 5xx and a failure on our side change nothing; any other 4xx for FAILING_DAYS
- * drops it (PR #12 review, L4). A subscription not confirmed for CONFIRM_DAYS goes (N4).
+ * (its pushes wait for the next one, their people still in pending_push); 5xx and a failure on our side change nothing
+ * (the push counts as tried, not sent again); any other 4xx for FAILING_DAYS drops it (PR #12 review, L4). A
+ * subscription not confirmed for CONFIRM_DAYS goes (N4). A person's pending_push row goes only once each of their
+ * devices has been tried (issue #13, 4).
  */
 /** A pending row that fails is tried again after 1, 2, 4 … minutes (at most an hour), and set aside after this many tries. */
 export const MAX_ATTEMPTS = 8;
+/**
+ * A row set aside is kept this long after its last try (its retry time), for whoever reads the log to look at it, then
+ * pruned with the people it names (issue #13, 3; ADR 0010).
+ */
+export const SET_ASIDE_DAYS = 14;
 /** stop() waits at most this long for pushes being sent (a hung push service must not hold up a shutdown, L1). */
 export const STOP_WAIT_MS = 2_000;
 
@@ -137,7 +144,12 @@ export interface PusherOptions {
 
 export class Pusher {
   private resolvers: Partial<Record<NoticeKind, Resolver>> = {};
-  private held = new Set<string>();
+  /** The devices of a person still pending that were reached already (a 429 held back another one of theirs). */
+  private reached = new Map<string, Set<string>>();
+  /** People woken since this tick read who is pending: their row stays, for the news the tick's pushes may not cover. */
+  private woken = new Set<string>();
+  /** People whose push a 429 held back at the last tick: pending, but sent only at a real next tick (idle()). */
+  private heldBack = new Set<string>();
   private running: Promise<void> | null = null;
   private timer: NodeJS.Timeout | undefined;
   private stopped = false;
@@ -160,7 +172,12 @@ export class Pusher {
   wake(personIds: Iterable<string>, db: Db = this.db): void {
     if (!this.transport) return;
     const since = new Date().toISOString();
-    for (const personId of new Set(personIds)) db.insert(t.pendingPush).values({ personId, since }).onConflictDoNothing().run();
+    for (const personId of new Set(personIds)) {
+      db.insert(t.pendingPush).values({ personId, since }).onConflictDoNothing().run();
+      // Something new since their devices were reached: all of them are pushed again.
+      this.woken.add(personId);
+      this.reached.delete(personId);
+    }
   }
 
   /** Ticks from now on (main.ts, buildApp); never keeps the process alive. */
@@ -175,8 +192,9 @@ export class Pusher {
     arm();
   }
   /**
-   * Stops for good: no tick after it, pushes being sent waited for at most STOP_WAIT_MS (the rest stay pending in the
-   * database), and what is pending made into its notices, whose pushes go at the next start (L1, L4).
+   * Stops for good: no tick after it, pushes being sent waited for at most STOP_WAIT_MS (whoever is not done, the
+   * device being sent to included, stays pending in the database; issue #13, 1), and what is pending made into its
+   * notices, whose pushes go at the next start (L1, L4).
    */
   async stop(): Promise<void> {
     this.stopped = true;
@@ -221,7 +239,7 @@ export class Pusher {
     const now = new Date().toISOString();
     return Boolean(this.db.select({ id: t.pendingNotice.id }).from(t.pendingNotice)
       .where(and(lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now)))).limit(1).get())
-      || Boolean(this.db.select({ id: t.pendingPush.personId }).from(t.pendingPush).limit(1).get());
+      || this.db.select({ id: t.pendingPush.personId }).from(t.pendingPush).all().some((r) => !this.heldBack.has(r.id) || this.woken.has(r.id));
   }
 
   /** One tick: what was handed over so far is told and pushed. */
@@ -237,36 +255,61 @@ export class Pusher {
   private async run(): Promise<void> {
     const now = Date.now();
     this.makeNotices();
+    this.db.delete(t.pendingNotice).where(and(gte(t.pendingNotice.attempts, MAX_ATTEMPTS), lt(t.pendingNotice.nextAt, new Date(now - SET_ASIDE_DAYS * DAY).toISOString()))).run();
     if (!this.transport) { this.db.delete(t.pendingPush).run(); return; }
     // A session that has ended takes its device's subscription with it (the foreign key); unconfirmed ones go.
     pruneSessions(this.db);
     this.db.delete(t.pushSubscription).where(lt(t.pushSubscription.confirmedAt, new Date(now - CONFIRM_DAYS * DAY).toISOString())).run();
+    // Whoever is woken from here on has news the pushes below may not cover: their row stays for the next tick.
+    this.woken.clear();
+    this.heldBack.clear();
     const people = this.db.select().from(t.pendingPush).all().map((p) => p.personId);
-    if (people.length) this.db.delete(t.pendingPush).where(inArray(t.pendingPush.personId, people)).run();
-    const held = [...this.held];
-    this.held.clear();
-    const subs = this.db.select().from(t.pushSubscription).where(or(inArray(t.pushSubscription.personId, people), inArray(t.pushSubscription.id, held))).all();
+    const subs = this.db.select().from(t.pushSubscription).where(inArray(t.pushSubscription.personId, people)).all();
+    // A person's pending row goes only once each of their devices has been tried (issue #13, 4): a crash or a stop
+    // in the middle of sending leaves it, and the next start pushes them again (a device reached gets a second push).
+    const left = new Map(people.map((p) => [p, subs.filter((s) => s.personId === p).length]));
+    const waiting = new Set<string>();
+    const done = (personId: string) => {
+      if (waiting.has(personId)) { this.heldBack.add(personId); return; }
+      this.reached.delete(personId);
+      if (!this.woken.has(personId)) this.db.delete(t.pendingPush).where(eq(t.pendingPush.personId, personId)).run();
+    };
+    for (const [p, n] of left) if (n === 0) done(p);
     const throttled = new Set<string>();
-    for (const [i, s] of subs.entries()) {
-      // Stopping: the devices not reached yet keep their push pending, for the next start.
-      if (this.stopped) { this.wake(subs.slice(i).map((x) => x.personId)); break; }
+    for (const s of subs) {
+      // Stopping: whoever is not done keeps their push pending, for the next start (L4; issue #13, 1).
+      if (this.stopped) return;
+      const reached = this.reached.get(s.personId) ?? new Set<string>();
+      this.reached.set(s.personId, reached);
       const service = new URL(s.endpoint).hostname;
-      if (throttled.has(service)) { this.held.add(s.id); continue; }
-      let status: number;
-      try { status = await this.transport(s); } catch { status = 0; }
-      const at = new Date().toISOString();
-      if (status >= 200 && status < 300) {
-        if (s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: null }).where(eq(t.pushSubscription.id, s.id)).run();
-      } else if (status === 404 || status === 410) {
-        this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
-      } else if (status === 429) {
-        throttled.add(service);
-        this.held.add(s.id);
-      } else if (status >= 400 && status < 500) {
-        if (!s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: at }).where(eq(t.pushSubscription.id, s.id)).run();
-        else if (Date.parse(at) - Date.parse(s.failingSince) > FAILING_DAYS * DAY) this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
+      if (reached.has(s.id)) {
+        // Reached at an earlier tick, before a 429 held back another of this person's devices.
+      } else if (throttled.has(service)) {
+        waiting.add(s.personId);
+      } else {
+        let status: number;
+        try { status = await this.transport(s); } catch { status = 0; }
+        // The stop's wait ran out while this push was on its way: the database may be closed already.
+        if (this.stopped) return;
+        const at = new Date().toISOString();
+        if (status >= 200 && status < 300) {
+          if (s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: null }).where(eq(t.pushSubscription.id, s.id)).run();
+        } else if (status === 404 || status === 410) {
+          this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
+        } else if (status === 429) {
+          throttled.add(service);
+          waiting.add(s.personId);
+        } else if (status >= 400 && status < 500) {
+          if (!s.failingSince) this.db.update(t.pushSubscription).set({ failingSince: at }).where(eq(t.pushSubscription.id, s.id)).run();
+          else if (Date.parse(at) - Date.parse(s.failingSince) > FAILING_DAYS * DAY) this.db.delete(t.pushSubscription).where(eq(t.pushSubscription.id, s.id)).run();
+        }
+        // 5xx, or nothing (a failure on our side or the network's): the subscription stays as it is, and it counts as
+        // tried (ADR 0010: the notice is still in the app).
+        if (status !== 429) reached.add(s.id);
       }
-      // 5xx, or nothing (a failure on our side or the network's): the subscription stays as it is.
+      const n = left.get(s.personId)! - 1;
+      left.set(s.personId, n);
+      if (n === 0) done(s.personId);
     }
   }
 }

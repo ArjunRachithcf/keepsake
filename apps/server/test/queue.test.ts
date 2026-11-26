@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app';
 import * as t from '../src/db/schema';
-import { MAX_ATTEMPTS, Pusher, STOP_WAIT_MS, type Subscription } from '../src/push/push';
+import { MAX_ATTEMPTS, Pusher, SET_ASIDE_DAYS, STOP_WAIT_MS, type Subscription } from '../src/push/push';
 import { standalone } from './helpers';
 import { as, makeHome, ok, pin, type Home } from './m4';
 
@@ -88,5 +88,93 @@ describe('the push queue', () => {
       await next.pusher.tick();
       expect([sent.map((s) => s.personId), h.db.select().from(t.pendingPush).all()]).toEqual([['p_quinn'], []]);
     } finally { await next.app.close(); }
+  });
+
+  it('a row set aside is pruned SET_ASIDE_DAYS after its last try, with the people it names; one still tried is not (issue #13, 3)', async () => {
+    const h = await home(ON);
+    const p = new Pusher(h.db, async () => 201);
+    p.resolve('answered', () => { throw new Error('broken'); });
+    p.tell({ kind: 'answered', subjectId: 'q_aside', day: '2026-12-01' });
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      h.db.update(t.pendingNotice).set({ nextAt: null }).run();
+      await p.idle();
+    }
+    p.tell({ kind: 'answered', subjectId: 'q_waiting', day: '2026-12-01' });
+    await p.idle();
+    const rows = () => h.db.select().from(t.pendingNotice).all().map((r) => [r.subjectId, r.attempts]);
+    expect(rows()).toEqual([['q_aside', MAX_ATTEMPTS], ['q_waiting', 1]]);
+    // Its last try's retry time is an hour after T0 at most: just before the retention, it stays.
+    vi.setSystemTime(new Date(T0.getTime() + SET_ASIDE_DAYS * 86_400_000));
+    await p.tick();
+    expect(rows().map((r) => r[0])).toEqual(['q_aside', 'q_waiting']);
+    vi.setSystemTime(new Date(T0.getTime() + (SET_ASIDE_DAYS + 1) * 86_400_000));
+    await p.tick();
+    expect(rows()).toEqual([['q_waiting', 3]]);
+  });
+
+  /** Alex, Robin and Sam each have one device, in that order; Robin's push service hangs until released. */
+  function threeDevices(h: Home) {
+    h.db.delete(t.pushSubscription).run();
+    for (const p of ['p_alex', 'p_robin', 'p_sam']) {
+      h.db.insert(t.pushSubscription).values({ id: `ps_${p}`, personId: p, endpoint: `https://fcm.googleapis.com/fcm/send/${p}`, p256dh: 'x', auth: 'x', createdAt: T0.toISOString(), confirmedAt: T0.toISOString() }).run();
+    }
+    let release!: () => void;
+    const hung = new Promise<number>((done) => { release = () => done(201); });
+    const calls: string[] = [];
+    const transport = async (s: Subscription) => { calls.push(s.personId); return s.personId === 'p_robin' ? hung : 201; };
+    return { release, calls, transport };
+  }
+  const pendingPushes = (h: Home) => h.db.select().from(t.pendingPush).all().map((r) => r.personId).sort();
+
+  it('a stop while a push is being sent keeps it, and everyone not reached yet, pending; whoever was reached is done (issue #13, 1)', async () => {
+    const h = await home(ON);
+    const { release, calls, transport } = threeDevices(h);
+    const p = new Pusher(h.db, transport);
+    p.wake(['p_alex', 'p_robin', 'p_sam']);
+    void p.tick();
+    await vi.waitFor(() => expect(calls).toEqual(['p_alex', 'p_robin']), { timeout: 2000, interval: 5 });
+    await p.stop();
+    expect(pendingPushes(h)).toEqual(['p_robin', 'p_sam']);
+    // The push that was hung ends after the stop: nothing more is sent or changed.
+    release();
+    await new Promise((done) => setTimeout(done, 50));
+    expect([calls, pendingPushes(h)]).toEqual([['p_alex', 'p_robin'], ['p_robin', 'p_sam']]);
+  }, 10_000);
+
+  it('a crash in the middle of sending, or after a 429, loses no push: the next start sends them (issue #13, 4)', async () => {
+    const h = await home(ON);
+    const { calls, transport } = threeDevices(h);
+    const crashed = new Pusher(h.db, transport);
+    crashed.wake(['p_alex', 'p_robin', 'p_sam']);
+    void crashed.tick();
+    await vi.waitFor(() => expect(calls).toEqual(['p_alex', 'p_robin']), { timeout: 2000, interval: 5 });
+    // The process dies here: no stop(). The next one sends what was not sent; Robin's service answers 429 now.
+    const sent: string[] = [];
+    let status = (_p: string) => (_p === 'p_robin' ? 429 : 201);
+    const next = new Pusher(h.db, async (s) => { sent.push(s.personId); return status(s.personId); });
+    await next.tick();
+    // Alex was reached before the crash; Robin's push was on its way, Sam's not sent yet.
+    expect([sent, pendingPushes(h)]).toEqual([['p_robin'], ['p_robin', 'p_sam']]);
+    // What the 429 held back is still in the database: another crash loses nothing either.
+    status = () => 201;
+    sent.length = 0;
+    const third = new Pusher(h.db, async (s) => { sent.push(s.personId); return status(s.personId); });
+    await third.idle();
+    expect([sent, pendingPushes(h)]).toEqual([['p_robin', 'p_sam'], []]);
+  });
+
+  it('news for someone while their push is being sent is pushed again after it', async () => {
+    const h = await home(ON);
+    const { release, calls, transport } = threeDevices(h);
+    const p = new Pusher(h.db, transport);
+    p.wake(['p_alex', 'p_robin', 'p_sam']);
+    const first = p.tick();
+    await vi.waitFor(() => expect(calls).toEqual(['p_alex', 'p_robin']), { timeout: 2000, interval: 5 });
+    p.wake(['p_alex']);
+    release();
+    await first;
+    expect(pendingPushes(h)).toEqual(['p_alex']);
+    await p.idle();
+    expect([calls, pendingPushes(h)]).toEqual([['p_alex', 'p_robin', 'p_sam', 'p_alex'], []]);
   });
 });

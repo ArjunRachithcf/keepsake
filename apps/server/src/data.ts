@@ -119,14 +119,18 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
   /** A change that may draw names, draw them again or clear them: the draw's people (but whoever did it) are told. */
   // The change and its pending row in one transaction: kept or lost together (PR #12 third review, L3).
   const atomically = <T>(f: () => T): T => db.transaction(() => f());
-  // A refused draw keeps what it wrote before refusing (its audit row), as it did outside a transaction; a failure
-  // writing the pending rows undoes the change.
+  // A refused draw keeps what it wrote before refusing (its try, its audit row), as it did outside a transaction; any
+  // other failure, and one writing the pending rows, undoes everything (issue #13, 2).
   const drawsTold = <T>(r: Req, f: () => T): T => {
-    let refused: { e: unknown } | undefined;
+    let refused: { e: Refused } | undefined;
     const v = atomically(() => {
       const before = drawStamps(db);
       let out: T;
-      try { out = f(); } catch (e) { refused = { e }; return undefined as T; }
+      try { out = f(); } catch (e) {
+        if (!(e instanceof Refused)) throw e;
+        refused = { e };
+        return undefined as T;
+      }
       const by = me(r).id;
       for (const d of drawsChanged(db, before)) tellLater('draw', d.celebrationId, { again: true, people: d.people.filter((p) => p !== by) });
       return out;
