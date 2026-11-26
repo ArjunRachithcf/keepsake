@@ -26,7 +26,15 @@ CREATE TABLE `pending_notice` (
 	`day` text NOT NULL,
 	`again` integer DEFAULT 0 NOT NULL,
 	`people` text,
-	`created_at` text NOT NULL
+	`created_at` text NOT NULL,
+	`attempts` integer DEFAULT 0 NOT NULL,
+	`next_at` text
+);
+--> statement-breakpoint
+CREATE TABLE `pending_push` (
+	`person_id` text PRIMARY KEY NOT NULL,
+	`since` text NOT NULL,
+	FOREIGN KEY (`person_id`) REFERENCES `person`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE TABLE `push_subscription` (

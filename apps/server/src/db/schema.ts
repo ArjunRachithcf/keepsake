@@ -505,6 +505,15 @@ export const pendingNotice = sqliteTable('pending_notice', {
   again: integer('again').notNull().default(0),
   people: text('people'),
   createdAt: text('created_at').notNull(),
+  /** Failed tries (PR #12 third review, L2): one that fails is tried again later, and set aside after MAX_ATTEMPTS. */
+  attempts: integer('attempts').notNull().default(0),
+  nextAt: text('next_at'),
+});
+
+/** Someone with news whose push has not gone yet (the morning batch, the queue, a stop): pushed at the next tick (L4). */
+export const pendingPush = sqliteTable('pending_push', {
+  personId: text('person_id').primaryKey().references(() => person.id, { onDelete: 'cascade' }),
+  since: text('since').notNull(),
 });
 
 export const jobRun = sqliteTable('job_run', {

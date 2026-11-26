@@ -10,7 +10,7 @@
 // - The key (VAPID) is kept like the sealing key (push/keys.ts): outside the database and its backup.
 // - A standalone subscription is the session's: it ends when that session ends (sign-out, a lost device).
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, count, eq, inArray, lt, or } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNull, lt, lte, or } from 'drizzle-orm';
 import { tell, type NoticeKind } from '../notices/notices';
 import { asDb, type Db } from '../db/open';
 import * as t from '../db/schema';
@@ -123,17 +123,30 @@ const DAY = 86_400_000;
  * (its pushes wait for the next one); 5xx and a failure on our side change nothing; any other 4xx for FAILING_DAYS
  * drops it (PR #12 review, L4). A subscription not confirmed for CONFIRM_DAYS goes (N4).
  */
+/** A pending row that fails is tried again after 1, 2, 4 … minutes (at most an hour), and set aside after this many tries. */
+export const MAX_ATTEMPTS = 8;
+/** stop() waits at most this long for pushes being sent (a hung push service must not hold up a shutdown, L1). */
+export const STOP_WAIT_MS = 2_000;
+
+export interface PusherOptions {
+  tickMs?: number;
+  jitterMs?: number;
+  /** Where a failing pending row is reported: its id and kind only, never who or what (L2). */
+  warn?: (message: string, fields: { pendingId: string; kind: string; attempts: number }) => void;
+}
+
 export class Pusher {
   private resolvers: Partial<Record<NoticeKind, Resolver>> = {};
-  private waiting = new Set<string>();
   private held = new Set<string>();
   private running: Promise<void> | null = null;
   private timer: NodeJS.Timeout | undefined;
-  constructor(private readonly db: Db, private readonly transport: Transport | null, private readonly o: { tickMs?: number; jitterMs?: number } = {}) {}
+  private stopped = false;
+  constructor(private readonly db: Db, private readonly transport: Transport | null, private readonly o: PusherOptions = {}) {}
 
   /**
    * A notice to make (and push) at the next tick: one durable row (pending_notice), the same work however many are
-   * told, so a stop or a crash before the tick loses nothing (PR #12 review, N-M1).
+   * told, so a stop or a crash before the tick loses nothing (PR #12 review, N-M1). Called inside the changing
+   * request's own transaction, so the change and its row are kept or lost together (third review, L3).
    */
   tell(x: Telling): void {
     this.db.insert(t.pendingNotice).values({
@@ -143,42 +156,73 @@ export class Pusher {
   }
   /** How a kind finds who it tells (data.ts). */
   resolve(kind: NoticeKind, r: Resolver): void { this.resolvers[kind] = r; }
-  /** People already told (the morning batch): pushed at the next tick. */
-  wake(personIds: Iterable<string>): void { if (this.transport) for (const p of personIds) this.waiting.add(p); }
+  /** People already told (the morning batch): pushed at the next tick, kept in the database until then. */
+  wake(personIds: Iterable<string>, db: Db = this.db): void {
+    if (!this.transport) return;
+    const since = new Date().toISOString();
+    for (const personId of new Set(personIds)) db.insert(t.pendingPush).values({ personId, since }).onConflictDoNothing().run();
+  }
 
   /** Ticks from now on (main.ts, buildApp); never keeps the process alive. */
   start(): void {
-    if (this.timer) return;
+    if (this.timer || this.stopped) return;
     const arm = () => {
+      // A tick that ends after stop() arms nothing (third review, L1).
+      if (this.stopped) return;
       this.timer = setTimeout(() => { void this.tick().finally(arm); }, (this.o.tickMs ?? 30_000) + Math.random() * (this.o.jitterMs ?? 30_000));
       this.timer.unref();
     };
     arm();
   }
-  /** Stops ticking; what is pending becomes its notices first (their pushes wait for the next start's morning). */
+  /**
+   * Stops for good: no tick after it, pushes being sent waited for at most STOP_WAIT_MS (the rest stay pending in the
+   * database), and what is pending made into its notices, whose pushes go at the next start (L1, L4).
+   */
   async stop(): Promise<void> {
+    this.stopped = true;
     clearTimeout(this.timer);
     this.timer = undefined;
-    await this.running;
+    if (this.running) {
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([this.running, new Promise<void>((ok) => { timer = setTimeout(ok, STOP_WAIT_MS); })]);
+      clearTimeout(timer);
+    }
     this.makeNotices();
   }
 
-  /** The pending changes become notices; returns who was told something new. Each row goes once its notices exist. */
-  private makeNotices(): string[] {
-    const told: string[] = [];
-    for (const x of this.db.select().from(t.pendingNotice).orderBy(asc(t.pendingNotice.createdAt), asc(t.pendingNotice.id)).all()) {
-      this.db.transaction((tx0) => {
-        const tx = asDb(tx0);
-        const named = x.people ? (JSON.parse(x.people) as string[]) : (this.resolvers[x.kind]?.(x.subjectId, x.day) ?? []);
-        // Someone who left the household since the change is told nothing.
-        const people = named.length ? tx.select({ id: t.person.id }).from(t.person).where(inArray(t.person.id, named)).all().map((p) => p.id) : [];
-        told.push(...tell(tx, people, x.kind, x.subjectId, x.day, { again: Boolean(x.again) }));
-        tx.delete(t.pendingNotice).where(eq(t.pendingNotice.id, x.id)).run();
-      });
+  /**
+   * The pending changes that are due become notices, and everyone told something new a pending push, each row in one
+   * transaction with them. A row that fails is reported without its content, tried again later and set aside after
+   * MAX_ATTEMPTS; it never stops the other rows (third review, L2).
+   */
+  private makeNotices(): void {
+    const now = new Date();
+    const due = this.db.select().from(t.pendingNotice).where(and(lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now.toISOString()))))
+      .orderBy(asc(t.pendingNotice.createdAt), asc(t.pendingNotice.id)).all();
+    for (const x of due) {
+      try {
+        this.db.transaction((tx0) => {
+          const tx = asDb(tx0);
+          const named = x.people ? (JSON.parse(x.people) as string[]) : (this.resolvers[x.kind]?.(x.subjectId, x.day) ?? []);
+          // Someone who left the household since the change is told nothing.
+          const people = named.length ? tx.select({ id: t.person.id }).from(t.person).where(inArray(t.person.id, named)).all().map((p) => p.id) : [];
+          this.wake(tell(tx, people, x.kind, x.subjectId, x.day, { again: Boolean(x.again) }), tx);
+          tx.delete(t.pendingNotice).where(eq(t.pendingNotice.id, x.id)).run();
+        });
+      } catch {
+        const attempts = x.attempts + 1;
+        const nextAt = new Date(now.getTime() + Math.min(2 ** (attempts - 1), 60) * 60_000).toISOString();
+        this.db.update(t.pendingNotice).set({ attempts, nextAt }).where(eq(t.pendingNotice.id, x.id)).run();
+        this.o.warn?.(attempts >= MAX_ATTEMPTS ? 'a pending notice failed again and is set aside' : 'a pending notice failed; it is tried again later', { pendingId: x.id, kind: x.kind, attempts });
+      }
     }
-    return told;
   }
-  private pending(): boolean { return Boolean(this.db.select({ id: t.pendingNotice.id }).from(t.pendingNotice).limit(1).get()); }
+  private pending(): boolean {
+    const now = new Date().toISOString();
+    return Boolean(this.db.select({ id: t.pendingNotice.id }).from(t.pendingNotice)
+      .where(and(lt(t.pendingNotice.attempts, MAX_ATTEMPTS), or(isNull(t.pendingNotice.nextAt), lte(t.pendingNotice.nextAt, now)))).limit(1).get())
+      || Boolean(this.db.select({ id: t.pendingPush.personId }).from(t.pendingPush).limit(1).get());
+  }
 
   /** One tick: what was handed over so far is told and pushed. */
   tick(): Promise<void> {
@@ -187,23 +231,25 @@ export class Pusher {
   }
   /** Ticks until nothing handed over is left (what a 429 held back waits for a real next tick). */
   async idle(): Promise<void> {
-    while (this.running || this.pending() || this.waiting.size) await this.tick();
+    while (this.running || this.pending()) await this.tick();
   }
 
   private async run(): Promise<void> {
     const now = Date.now();
-    for (const p of this.makeNotices()) if (this.transport) this.waiting.add(p);
-    if (!this.transport) { this.waiting.clear(); return; }
+    this.makeNotices();
+    if (!this.transport) { this.db.delete(t.pendingPush).run(); return; }
     // A session that has ended takes its device's subscription with it (the foreign key); unconfirmed ones go.
     pruneSessions(this.db);
     this.db.delete(t.pushSubscription).where(lt(t.pushSubscription.confirmedAt, new Date(now - CONFIRM_DAYS * DAY).toISOString())).run();
-    const people = [...this.waiting];
+    const people = this.db.select().from(t.pendingPush).all().map((p) => p.personId);
+    if (people.length) this.db.delete(t.pendingPush).where(inArray(t.pendingPush.personId, people)).run();
     const held = [...this.held];
-    this.waiting.clear();
     this.held.clear();
     const subs = this.db.select().from(t.pushSubscription).where(or(inArray(t.pushSubscription.personId, people), inArray(t.pushSubscription.id, held))).all();
     const throttled = new Set<string>();
-    for (const s of subs) {
+    for (const [i, s] of subs.entries()) {
+      // Stopping: the devices not reached yet keep their push pending, for the next start.
+      if (this.stopped) { this.wake(subs.slice(i).map((x) => x.personId)); break; }
       const service = new URL(s.endpoint).hostname;
       if (throttled.has(service)) { this.held.add(s.id); continue; }
       let status: number;

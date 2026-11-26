@@ -29,8 +29,11 @@ something is new.
   neither an answer's time nor the moment a push arrives depends on, or points at, the request that caused it. Pushes
   go only through the egress client (ADR 0011) and only to a known push service (Google, Mozilla, Apple, Microsoft): a
   subscription's endpoint is checked when it is made, so a subscription cannot point Keepsake at the household's
-  network. A stop (SIGTERM) makes what is pending into its notices before it ends; after a crash, the rows are still
-  there for the next start.
+  network. A stop (SIGTERM) arms no further tick, waits at most 2 s for pushes being sent, and makes what is pending
+  into its notices before it ends; whoever has a push not yet sent keeps it in `pending_push`, sent at the next start.
+  After a crash, both are still there. The pending row is written in the transaction of the change it belongs to. A
+  row that fails is logged by its id and kind only, tried again after 1, 2, 4 … minutes (at most an hour) and set
+  aside after 8 tries; it never holds up the others (third review, L1–L4).
 - **What a push service answers** (L4; only its status is read, the body is never parsed): 404 or 410 drops the
   subscription; 429 holds that service back until the next tick (its other pushes wait and are sent then); a 5xx, a
   timeout or our own failure never drops one; another 4xx drops it only after 3 days of failing.

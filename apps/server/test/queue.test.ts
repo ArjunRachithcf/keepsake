@@ -1,0 +1,92 @@
+// The push queue's lifecycle (PR #12 third review, L1–L4): stopping for good and quickly, a failing pending row that
+// blocks nothing, the pending row in the change's own transaction, and the pushes a stop could not send kept for the
+// next start.
+import { eq } from 'drizzle-orm';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { buildApp } from '../src/app';
+import * as t from '../src/db/schema';
+import { MAX_ATTEMPTS, Pusher, STOP_WAIT_MS, type Subscription } from '../src/push/push';
+import { standalone } from './helpers';
+import { as, makeHome, ok, pin, type Home } from './m4';
+
+const T0 = new Date('2026-12-01T10:00:00.000Z');
+const BATCH = new Date('2026-12-02T08:00:00.000Z');
+const ON = { KEEPSAKE_EGRESS: 'on' };
+beforeAll(() => pin(T0));
+afterAll(() => { vi.useRealTimers(); });
+const homes: Home[] = [];
+const home = async (...a: Parameters<typeof makeHome>) => { const h = await makeHome(...a); homes.push(h); return h; };
+afterEach(async () => { vi.setSystemTime(T0); for (const h of homes.splice(0)) await h.built.app.close(); });
+
+/** Quinn asks Robin, the batch delivers it; returns the question's id. */
+async function asked(h: Home): Promise<string> {
+  const q = (await ok(as(h, 'quinn').send('POST', '/api/people/p_robin/questions', { text: 'Which size?' }))).json().id as string;
+  vi.setSystemTime(BATCH);
+  h.built.morning(BATCH);
+  await h.built.pusher.idle();
+  return q;
+}
+
+describe('the push queue', () => {
+  it('stop() arms no tick after it, and does not wait on a hung push service beyond STOP_WAIT_MS (L1)', async () => {
+    const h = await home(ON);
+    let release!: () => void;
+    const hung = new Promise<number>((done) => { release = () => done(201); });
+    let calls = 0;
+    const p = new Pusher(h.db, async () => { calls++; return hung; }, { tickMs: 1, jitterMs: 0 });
+    p.wake(['p_robin']);
+    p.start();
+    await vi.waitFor(() => expect(calls).toBe(1), { timeout: 2000, interval: 5 });
+    const at = performance.now();
+    await p.stop();
+    expect(performance.now() - at).toBeLessThan(STOP_WAIT_MS + 1000);
+    // A tick after stop() would make this row into its notice.
+    p.tell({ kind: 'draw', subjectId: 'c_after', day: '2026-12-01', people: ['p_robin'] });
+    release();
+    await new Promise((done) => setTimeout(done, 100));
+    expect([calls, h.db.select().from(t.pendingNotice).all().map((r) => r.subjectId)]).toEqual([1, ['c_after']]);
+  }, 10_000);
+
+  it('a pending row that fails is reported without its content, tried again later, set aside after MAX_ATTEMPTS, and never blocks the others (L2)', async () => {
+    const h = await home(ON);
+    const warned: unknown[] = [];
+    const p = new Pusher(h.db, async () => 201, { warn: (m, f) => warned.push([m, f]) });
+    p.resolve('answered', () => { throw new Error('q_secret is broken'); });
+    p.tell({ kind: 'answered', subjectId: 'q_secret', day: '2026-12-01' });
+    p.tell({ kind: 'draw', subjectId: 'c_one', day: '2026-12-01', people: ['p_robin'] });
+    await p.idle();
+    const notices = h.db.select().from(t.notice).where(eq(t.notice.subjectId, 'c_one')).all().map((n) => n.personId);
+    const bad = () => h.db.select().from(t.pendingNotice).all();
+    expect([notices, bad().map((r) => [r.subjectId, r.attempts])]).toEqual([['p_robin'], [['q_secret', 1]]]);
+    expect(JSON.stringify(warned)).not.toMatch(/q_secret|p_robin|broken/);
+    // Tried again once due, until set aside; idle() never spins on it.
+    for (let i = 0; i < MAX_ATTEMPTS + 2; i++) {
+      h.db.update(t.pendingNotice).set({ nextAt: null }).run();
+      await p.idle();
+    }
+    expect(bad().map((r) => r.attempts)).toEqual([MAX_ATTEMPTS]);
+    expect(warned).toHaveLength(MAX_ATTEMPTS);
+  });
+
+  it('the pending row is written in the change\'s own transaction: if it cannot be, the change is undone (L3)', async () => {
+    const h = await home(ON);
+    const q = await asked(h);
+    h.built.pusher.tell = () => { throw new Error('the disk is full'); };
+    expect((await as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'M' })).statusCode).toBe(500);
+    expect(h.db.select().from(t.question).where(eq(t.question.id, q)).get()!.state).toBe('open');
+  });
+
+  it('the notices a stop makes keep their push pending in the database; the next start sends it (L4)', async () => {
+    const h = await makeHome(ON);
+    const q = await asked(h);
+    await ok(as(h, 'robin').send('POST', `/api/questions/${q}/answer`, { text: 'M' }));
+    await h.built.app.close();
+    expect(h.db.select().from(t.pendingPush).all().map((r) => r.personId)).toEqual(['p_quinn']);
+    const sent: Subscription[] = [];
+    const next = await buildApp(standalone(ON), h.db, { pushTransport: async (s) => { sent.push(s); return 201; } });
+    try {
+      await next.pusher.tick();
+      expect([sent.map((s) => s.personId), h.db.select().from(t.pendingPush).all()]).toEqual([['p_quinn'], []]);
+    } finally { await next.app.close(); }
+  });
+});

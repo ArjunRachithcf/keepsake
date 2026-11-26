@@ -73,7 +73,9 @@ export async function buildApp(cfg: Config, db: Db, opts: AppOptions = {}): Prom
   const challenges = new Challenges();
   // The one way out (ADR 0011): pushes and shop pages both go through it.
   const egress = opts.egress ?? createEgress({ enabled: cfg.egress });
-  const pusher = new Pusher(db, opts.pushTransport ?? (cfg.egress ? webPushTransport(egress, () => usableVapid(cfg), cfg.vapidSubject) : null));
+  const pusher = new Pusher(db, opts.pushTransport ?? (cfg.egress ? webPushTransport(egress, () => usableVapid(cfg), cfg.vapidSubject) : null), {
+    warn: (message, fields) => app.log.warn(fields, message),
+  });
   const data = dataFor(cfg, db, { pusher, egress });
   pusher.start();
   app.addHook('onClose', async () => pusher.stop());
