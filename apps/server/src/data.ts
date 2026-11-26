@@ -303,7 +303,7 @@ export function dataFor(cfg: Config, db: Db, outside: Outside = {}) {
     /** The sheet import (import/import.ts): admins only, checked there too. */
     imports: {
       dryRun: (r: Req, i: ImportInput) => viewOf(r).importPlan(dryRun(db, admin(r), i)),
-      apply: (r: Req, i: ImportInput) => viewOf(r).importDone(changed(applyImport(db, admin(r), i))),
+      apply: (r: Req, i: ImportInput) => viewOf(r).importDone(changed(applyImport(db, admin(r), i, cfg.timezone))),
     },
     /** What a guest does (ADR 0009), as the request's guest: only on what their link reaches. */
     guest: {

@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { openDb } from '../src/db/open';
 import * as t from '../src/db/schema';
 import { Pusher } from '../src/push/push';
-import { as, makeHome, ok, pin, setNow, type Home } from './m4';
+import { as, makeHome, ok, pin, reads, setNow, type Home } from './m4';
 
 const T0 = new Date('2026-12-01T10:00:00.000Z');
 beforeAll(() => pin(T0));
@@ -77,5 +77,39 @@ describe('L4 (probe P7): what is deleted leaves the database files', () => {
       expect([bytes.includes('TAKEN-BACK-QUESTION'), bytes.includes('p_quinn_asker')]).toEqual([false, false]);
       db.$client.close();
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('H2 (probe P3): what the sheet says was bought never shows on its person\'s list by its absence', () => {
+  const csv = (status: string) => [
+    'Person,Item,Link,Priority,Status,Bought by,Price,Occasion,Notes',
+    'Robin,Wool gloves,,,,,,Christmas,',
+    `Robin,A kettle,,,${status},Sam,,Christmas,`,
+    `Robin,A teapot,,,${status},Someone else,,Christmas,`,
+    'Robin,A lamp,,,Reserved,Sam,,Christmas,',
+  ].join('\n');
+  // The import's wishes get new ids (ULIDs, from the moment and chance): numbered in order of appearance instead.
+  const plain = (snap: Record<string, string>) => {
+    const ids = new Map<string, string>();
+    return JSON.stringify(snap).replace(/\b[0-9A-HJKMNP-TV-Z]{26}\b/g, (u) => { if (!ids.has(u)) ids.set(u, `ulid${ids.size}`); return ids.get(u)!; });
+  };
+  it('Robin\'s every answer is the same bytes whatever the Status column says; Sam sees the kettle bought, the teapot as an imported reservation', async () => {
+    const robin: string[] = [];
+    for (const status of ['', 'Reserved', 'Bought', 'Given', 'Purchased']) {
+      const h = await home();
+      await ok(as(h, 'alex').send('POST', '/api/import', { csv: csv(status), people: {}, occasions: {} }));
+      robin.push(plain(await reads(h, 'robin')));
+      const gifts = ((await ok(as(h, 'sam').get('/api/people/p_robin'))).json().wishes as { name: string; gift: { claims: { state: string; imported: boolean; mine: boolean }[] } }[])
+        .filter((w) => ['A kettle', 'A teapot'].includes(w.name)).map((w) => [w.name, w.gift.claims.map((c) => [c.state, c.imported, c.mine])]);
+      if (status === 'Bought') expect(gifts).toEqual([['A kettle', [['bought', false, true]]], ['A teapot', [['bought', true, false]]]]);
+      // Given: gone from the givers' lists ("given once, gone everywhere"); kept as given claims, revealed after Christmas.
+      if (status === 'Given') {
+        expect(gifts).toEqual([]);
+        const claims = h.db.select().from(t.claim).where(eq(t.claim.state, 'given')).all().filter((c) => c.id !== 'cl_scarf');
+        expect(claims.map((c) => [c.giverId, c.imported, c.givenOn, c.occasionOn]).sort()).toEqual([['p_sam', 0, '2026-12-01', '2026-12-24'], [null, 1, '2026-12-01', '2026-12-24']].sort());
+      }
+    }
+    expect(robin.slice(1)).toEqual([robin[0], robin[0], robin[0], robin[0]]);
+    expect(robin[0]).toContain('A kettle');
   });
 });

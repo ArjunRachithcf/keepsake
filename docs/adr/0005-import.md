@@ -13,7 +13,12 @@ time). Names and occasions match case-insensitively; an unmatched occasion is an
 person is not part of becomes any time. Reserved rows become claims by the "Bought by" household member (not the
 person, not a kid), and a Reserved row whose buyer is nobody here who may give becomes nobody's **imported
 reservation** (review L1: so nobody buys it twice; givers see "An imported reservation", an admin releases it,
-audited); Bought (or Given) rows are skipped; Priority "High", "Most wanted" or "1" is most wanted. Limits:
+audited). Bought (or Purchased) and Given rows are imported the same way, as claims in state `bought` or `given` (Gate
+surprise H2, 2026-11-26: skipped, they were missing from their person's list, which said exactly what was bought for
+them); a Given row counts as given on the day of the import, so it is revealed the day after the occasion that follows
+(ADR 0003), never earlier: an old sheet's Given rows from a past celebration show as received only after the next one,
+with a thank-you prompt then (an admin deletes such a wish first if that is not wanted). The person's answers are the
+same bytes whatever the Status column says (`test/gate-surprise.test.ts`); Priority "High", "Most wanted" or "1" is most wanted. Limits:
 512 KB, 2000 rows. A cell's leading `=`, `+`, `-`, `@`, tab or CR is dropped. A fictional sample is in `seed-sample/`.
 
 **Accepted (second review of PR #11)**: an imported reservation on an admin's own wish is released by another admin

@@ -195,7 +195,7 @@ const listed = (w: Wish) => {
 };
 const overNow = (db: Db, w: Wish, g: Given, today: string) => isOver(w, g, calendarOf(db), today);
 /** Marked given today: the occasion's day as it is now is kept, so the reveal can only move later from here. */
-const givenFields = (db: Db, w: Wish, given: boolean, today: string) =>
+export const givenFields = (db: Db, w: Wish, given: boolean, today: string) =>
   (given ? { givenOn: today, occasionOn: occasionOf(w, today, calendarOf(db)).date } : { givenOn: null, occasionOn: null });
 
 /** Who gives: someone of the household, or a guest by their link (ADR 0009). */
