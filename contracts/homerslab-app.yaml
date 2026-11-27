@@ -24,10 +24,29 @@ identity:
   # Asked of Homeward, not there yet (Homeward #86: a person's removal, and who manages which kid): until then Keepsake
   # learns of a member only from their requests (ADR 0010 "Under HomersLab"), and its admins set kids' parents.
   household_api: requested
+  # The edge deletes every X-HomersLab-* header a client sends on EVERY path, guest_paths below included: there the
+  # request still comes from the edge's address, so a client's own X-HomersLab-Person would otherwise be trusted.
+  strips_client_headers: all_paths
 audience: household                        # adults and kids (kids' wishes wait for a parent, spec §2)
-# Guests by link (ADR 0009) have no HomersLab account: the edge lets these through without a sign-in (and still strips
-# every X-HomersLab-* header). /api/guest/* takes only Keepsake's own guest session; everything else stays behind sign-in.
-guest_paths: [/guest, /assets/*, /api/guest, /api/guest/*]
+# Guests by link (ADR 0009) have no HomersLab account: the edge lets these through without a sign-in, and only these
+# (exact paths; `/*` a prefix). Everyone else signs in through HomersLab: there is no Keepsake sign-in under HomersLab
+# (the first admin is the edge's, from X-HomersLab-Role: no setup link). /api/guest and /api/guest/* take only
+# a guest link's token or Keepsake's own guest session (every route under them, test/routes.contract.test.ts); /guest is the guest's page
+# (index.html), /assets/* the build's scripts and styles, and the rest the web shell's own static files that page
+# loads (icons, the web manifest and its icons, the service worker the page registers): no household data in any.
+guest_paths:
+  - /guest
+  - /assets/*
+  - /api/guest
+  - /api/guest/*
+  - /favicon.ico
+  - /favicon.svg
+  - /apple-touch-icon.png
+  - /site.webmanifest
+  - /icon-192.png
+  - /icon-512.png
+  - /maskable-512.png
+  - /sw.js
 secrets:
   - { key: KEEPSAKE_SEALING_KEY, file: true, description: 'Key that seals the draw assignments (32 bytes, base64; outside the database and its backup, ADR 0004). Without it Keepsake runs but makes and opens no draw' }
   - { key: KEEPSAKE_VAPID_KEY, file: true, description: 'Web Push key (a P-256 private scalar, 32 bytes, base64 or base64url; outside the database and its backup, ADR 0010). Without it Keepsake sends no push (the news still shows in the app)' }

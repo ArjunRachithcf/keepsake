@@ -2,8 +2,11 @@
 import { startAuthentication, startRegistration, WebAuthnError } from '@simplewebauthn/browser';
 import { api, type AuthSession, type EnrolStart, type SignInStart } from './api';
 
+/** The browser made or used no passkey: closed, refused, or (signing in) none for Keepsake on this device. */
+export class PasskeyNotUsed extends Error {}
+
 const friendly = (e: unknown): Error => {
-  if (e instanceof WebAuthnError || (e instanceof Error && e.name === 'NotAllowedError')) return new Error('The passkey was not used. Try again when you are ready.');
+  if (e instanceof WebAuthnError || (e instanceof Error && e.name === 'NotAllowedError')) return new PasskeyNotUsed('The passkey was not used. Try again when you are ready.');
   return e instanceof Error ? e : new Error('Something went wrong.');
 };
 

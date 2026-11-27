@@ -31,7 +31,7 @@ try {
 const keyWarning = keyFileWarning(cfg);
 if (keyWarning) app.log.warn(keyWarning);
 const setupFile = ensureSetupLink(db, cfg);
-if (setupFile) app.log.warn(`Keepsake needs its first admin: open the link in ${setupFile} (valid 24 hours, once)`);
+if (setupFile) app.log.warn(`Keepsake needs its first admin: open the link in ${setupFile} (once, for 24 hours from when it was written; a restart keeps it)`);
 await app.listen({ host: cfg.host, port: cfg.port });
 // The morning batch (ADR 0008, 0010): 08:00 household time, and now if today's has not run.
 scheduleMorning(db, cfg, (now) => morning(now), (e) => app.log.error(e, 'the morning batch failed; trying again in 15 minutes'));

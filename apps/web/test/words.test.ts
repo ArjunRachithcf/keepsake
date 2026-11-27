@@ -8,7 +8,9 @@ import { groupWords } from '../src/gift';
 import { count, rowsLeftOut } from '../src/import';
 import { move } from '../src/router';
 import { tabTitle } from '../src/ui';
-import { deviceWord, passkeyName } from '../src/pages/SignIn';
+import { deviceWord, linkWords, NO_PASSKEY, passkeyName, signInWords } from '../src/pages/SignIn';
+import { ApiError } from '../src/api';
+import { PasskeyNotUsed } from '../src/passkeys';
 
 describe('dates, day first', () => {
   const now = new Date('2026-11-26T12:00:00Z');
@@ -116,5 +118,21 @@ describe('a group gift says only enough or not, and your own share (ADR 0003)', 
     expect(JSON.stringify(w)).not.toMatch(/80|120/);
     expect(groupWords(g({ enough: true }), 'CHF').state).toBe('Enough');
     expect(groupWords(g({ myShareMinor: null }), 'CHF').mine).toBeNull();
+  });
+});
+
+describe('sign-in and one-time links say what went wrong (Arjun\'s click-through)', () => {
+  it('no passkey here matched anyone, or the browser used none: no passkey for Keepsake on this device yet', () => {
+    expect(NO_PASSKEY).toBe('No passkey for Keepsake on this device yet. Ask an admin for a sign-in link.');
+    expect(signInWords(new ApiError(401, 'that passkey did not sign you in'))).toBe(NO_PASSKEY);
+    expect(signInWords(new PasskeyNotUsed('The passkey was not used.'))).toBe(`${NO_PASSKEY} If there is one, try again.`);
+    expect(signInWords(new ApiError(401, 'this sign-in step expired; start again'))).toBe('This sign-in step expired; start again');
+    expect(signInWords(new ApiError(429, 'too many tries; wait a minute'))).toBe('Too many tries; wait a minute');
+  });
+  it('a replaced or used setup link points to the newest one in keys/setup-link.txt', () => {
+    const gone = new ApiError(401, 'this link is unknown, used or expired');
+    expect(linkWords('setup', gone)).toBe('This setup link has been replaced or used. Use the newest one in keys/setup-link.txt.');
+    expect(linkWords('enrol', gone)).toBe('This sign-in link has been used or has expired. Ask whoever made it for a new one.');
+    expect(linkWords('setup', new ApiError(400, 'name: required'))).toBe('Name: required');
   });
 });

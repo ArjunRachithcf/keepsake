@@ -66,7 +66,63 @@ describe('the first admin', () => {
     expect([await session(`keepsake_session=${live}`), await session(`__Host-keepsake_session=${live}`)]).toEqual([false, true]);
   });
 
-  it('a new start-up replaces the setup link; a link planted at the path is not followed', () => {
+  it('a restart keeps an unused, unexpired setup link: the one someone was sent still works', () => {
+    const file = ensureSetupLink(db, cfg)!;
+    const first = setupToken();
+    expect(ensureSetupLink(db, cfg)).toBe(file);
+    expect(ensureSetupLink(db, cfg, new Date(Date.now() + 23 * 3_600_000))).toBe(file);
+    expect(setupToken()).toBe(first);
+    expect(findInvite(db, first)).not.toBeNull();
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it('a restart replaces a setup link that expired, or whose file is gone, changed or holds another link', () => {
+    ensureSetupLink(db, cfg);
+    const first = setupToken();
+    // expired: a fresh one, and the old one stops working
+    ensureSetupLink(db, cfg, new Date(Date.now() + 25 * 3_600_000));
+    const second = setupToken();
+    expect(second).not.toBe(first);
+    expect(findInvite(db, first)).toBeNull();
+    // the file gone
+    const file = join(cfg.keysDir, SETUP_FILE);
+    rmSync(file);
+    ensureSetupLink(db, cfg);
+    const third = setupToken();
+    expect(third).not.toBe(second);
+    expect(findInvite(db, second)).toBeNull();
+    // the file changed to a token that is no open setup invite
+    writeFileSync(file, `${ORIGIN}/setup#${'Z'.repeat(43)}\n`);
+    ensureSetupLink(db, cfg);
+    expect(setupToken()).not.toBe('Z'.repeat(43));
+    expect(findInvite(db, third)).toBeNull();
+    // another origin in the file (KEEPSAKE_ORIGIN changed): a fresh link at the new address
+    const token = setupToken();
+    writeFileSync(file, `https://elsewhere.example/setup#${token}\n`);
+    ensureSetupLink(db, cfg);
+    expect(readFileSync(file, 'utf8')).toMatch(new RegExp(`^${ORIGIN}/setup#`));
+    expect(findInvite(db, token)).toBeNull();
+  });
+
+  it('the setup page can tell a good link from a replaced or used one before a name is typed (400 against 401)', async () => {
+    ensureSetupLink(db, cfg);
+    const first = setupToken();
+    expect((await post('/api/auth/enrol/options', { token: first })).statusCode).toBe(400);
+    ensureSetupLink(db, cfg, new Date(Date.now() + 25 * 3_600_000));
+    const replaced = await post('/api/auth/enrol/options', { token: first });
+    expect([replaced.statusCode, replaced.json()]).toEqual([401, { error: 'this link is unknown, used or expired' }]);
+    // asking without a name spends nothing: the newest link still works
+    expect((await enrol(setupToken(), 'Alex')).statusCode).toBe(200);
+  });
+
+  it('a used setup link is not replaced at a restart: the household has its admin, and the file is gone', async () => {
+    ensureSetupLink(db, cfg);
+    expect((await enrol(setupToken(), 'Alex')).statusCode).toBe(200);
+    expect(ensureSetupLink(db, cfg)).toBeNull();
+    expect(existsSync(join(cfg.keysDir, SETUP_FILE))).toBe(false);
+  });
+
+  it('a link planted at the path is not followed (nor kept): a fresh link replaces it', () => {
     ensureSetupLink(db, cfg);
     const first = setupToken();
     const target = join(cfg.keysDir, 'elsewhere.txt');

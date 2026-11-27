@@ -1,7 +1,12 @@
 // HomersLab identity (ADR 0001, docs/security.md "For M1: identity"): the headers count only from the trusted proxy's
 // socket address (::ffff: normalised; never X-Forwarded-For), are dropped from anyone else, and homerslab mode refuses
 // to start without its three settings.
+import { existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ensureSetupLink, SETUP_FILE } from '../src/auth/invites';
+import { openDb } from '../src/db/open';
 import { REDACTED, buildApp, type BuiltApp } from '../src/app';
 import { loadConfig } from '../src/config';
 import { clientKey, dropUntrustedIdentity, fromTrustedProxy, prefix64, resolveIdentity } from '../src/identity';
@@ -116,6 +121,29 @@ describe('homerslab mode', () => {
     const app = await buildApp(standalone(), household());
     expect((await app.app.inject({ url: '/api/household', headers: hl('hl-alex', 'Alex', 'admin') })).statusCode).toBe(401);
     await app.app.close();
+  });
+});
+
+describe('homerslab mode: the first admin is the edge\'s', () => {
+  it('an empty install writes no setup link and needs none: the first request the edge names as admin is the admin', async () => {
+    const keys = join(mkdtempSync(join(tmpdir(), 'keepsake-hl-keys-')), 'keys');
+    const c = homerslab(PROXY, { KEEPSAKE_KEYS_DIR: keys });
+    const db = openDb(':memory:');
+    expect(ensureSetupLink(db, c)).toBeNull();
+    expect(existsSync(join(keys, SETUP_FILE))).toBe(false);
+    const { app } = await buildApp(c, db);
+    const session = await app.inject({ url: '/api/auth/session', remoteAddress: PROXY });
+    expect(session.json()).toEqual({ mode: 'homerslab', signedIn: false, setupNeeded: false });
+    const first = await app.inject({ url: '/api/household', headers: hl('hl-first', 'Kim', 'admin'), remoteAddress: PROXY });
+    expect(first.statusCode, first.body).toBe(200);
+    expect(first.json().me).toMatchObject({ name: 'Kim', role: 'admin', signsIn: null });
+    // and Keepsake's own sign-in is not there to be used instead
+    for (const url of ['/api/auth/enrol/options', '/api/auth/sign-in/options']) {
+      expect((await app.inject({ method: 'POST', url, headers: { origin: ORIGIN, 'content-type': 'application/json' }, payload: { token: 'A'.repeat(43), name: 'Mallory' }, remoteAddress: PROXY })).statusCode, url).toBe(404);
+    }
+    expect((await app.inject({ method: 'POST', url: `/api/people/${first.json().me.id}/invites`, headers: { ...hl('hl-first', 'Kim', 'admin'), origin: ORIGIN }, remoteAddress: PROXY })).statusCode).toBe(404);
+    expect(ensureSetupLink(db, c)).toBeNull();
+    await app.close();
   });
 });
 

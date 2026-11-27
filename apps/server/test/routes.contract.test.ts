@@ -1,6 +1,6 @@
 // Every operation of contracts/openapi.yaml is served, and only those; each answers with a status the spec declares
 // and a body that validates against the spec's schema for it; and deny by default holds (securitySchemes, Origin).
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
@@ -104,6 +104,41 @@ describe('the HomersLab manifest', () => {
     expect(Object.keys(m.network).sort()).toEqual(['egress', 'push_egress']);
     expect(m.secrets.map((x: { key: string; file: boolean }) => [x.key, x.file])).toEqual([['KEEPSAKE_SEALING_KEY', true], ['KEEPSAKE_VAPID_KEY', true]]);
     expect(Object.keys(m.env)).not.toContain('KEEPSAKE_VAPID_KEY');
+  });
+});
+
+describe('the HomersLab manifest: what the edge lets through without a sign-in', () => {
+  const m = parse(readFileSync(new URL('../../../contracts/homerslab-app.yaml', import.meta.url), 'utf8'));
+  const shell = readdirSync(new URL('../../web/public/', import.meta.url)).filter((f) => !f.startsWith('.')).map((f) => `/${f}`);
+
+  it('guest_paths are complete and nothing more: the guest page, the build, the guest API and the web shell\'s static files', () => {
+    expect([...m.guest_paths].sort()).toEqual(['/guest', '/assets/*', '/api/guest', '/api/guest/*', ...shell].sort());
+    // the shell's files are the build's own, none a page of the household's
+    for (const f of shell) expect(f).toMatch(/^\/[a-z0-9-]+\.(?:ico|svg|png|webmanifest|js)$/);
+  });
+
+  it('every guest operation lies under /api/guest, and every operation there takes a guest link or session only', () => {
+    for (const o of ops) {
+      const guestOnly = JSON.stringify(security(o)) === JSON.stringify([{ guestSession: [] }]);
+      const under = o.path === '/guest' || o.path.startsWith('/guest/');
+      if (guestOnly) expect(under, o.op.operationId).toBe(true);
+      if (under) expect(guestOnly || (o.path === '/guest/session' && isPublic(o)), o.op.operationId).toBe(true);
+    }
+  });
+
+  it('the edge strips every client X-HomersLab-* header on every path, guest paths included', () => {
+    expect(m.identity.strips_client_headers).toBe('all_paths');
+  });
+
+  it('under HomersLab nothing on a guest path answers anyone the edge does not name with the household\'s data', async () => {
+    const db = withM4(withDraws(household()));
+    const { app } = await buildApp(homerslab('127.0.0.1'), db, { webauthn: fakeWebAuthn() });
+    for (const o of ops.filter((x) => x.path === '/guest' || x.path.startsWith('/guest/'))) {
+      // as the edge forwards a guest path: from its address, no identity, no session
+      const res = await app.inject({ ...request(o), remoteAddress: '127.0.0.1' });
+      expect([401, 409], `${o.op.operationId} ${res.statusCode}`).toContain(res.statusCode);
+    }
+    await app.close();
   });
 });
 

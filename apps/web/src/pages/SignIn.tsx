@@ -2,9 +2,9 @@
 // invite (/enrol#token). The token is read from the #fragment, kept in memory only, and taken out of the address bar
 // and history at once. The logo kit's lockup leads each of them; on a desktop the words sit beside the card.
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { message, type AuthSession } from '../api';
+import { ApiError, message, type AuthSession } from '../api';
 import { Icon } from '../icons';
-import { enrolOptions, finishEnrol, signIn } from '../passkeys';
+import { enrolOptions, finishEnrol, PasskeyNotUsed, signIn } from '../passkeys';
 import { AppIcon, Field, Logo, Notice, tabTitle, useBusy } from '../ui';
 
 export function takeToken(): string | null {
@@ -30,6 +30,32 @@ export const passkeyName = (name: string, ua: string) => {
   const n = name.trim();
   return n ? `${n}’s ${d}` : d === 'device' ? 'This device' : `This ${d}`;
 };
+
+/** What the server says of a link that is unknown, used or expired (the same for each: it names no reason). */
+const LINK_GONE = 'this link is unknown, used or expired';
+/** What the server says of a passkey that matched nobody (one answer for every failure). */
+const NO_MATCH = 'that passkey did not sign you in';
+export const NO_PASSKEY = 'No passkey for Keepsake on this device yet. Ask an admin for a sign-in link.';
+
+/**
+ * Why signing in did not work, in words that say what to do: no passkey here matched anyone, or the browser used
+ * none (it cannot tell us whether there was none for Keepsake on this device or the window was closed).
+ */
+export function signInWords(e: unknown): string {
+  if (e instanceof ApiError && e.status === 401 && e.message === NO_MATCH) return NO_PASSKEY;
+  if (e instanceof PasskeyNotUsed) return `${NO_PASSKEY} If there is one, try again.`;
+  return message(e);
+}
+
+/** Why a one-time link did not work: a setup link is replaced at a start once it expired, or spent by its use. */
+export function linkWords(kind: 'setup' | 'enrol', e: unknown): string {
+  if (e instanceof ApiError && e.status === 401 && e.message === LINK_GONE) {
+    return kind === 'setup'
+      ? 'This setup link has been replaced or used. Use the newest one in keys/setup-link.txt.'
+      : 'This sign-in link has been used or has expired. Ask whoever made it for a new one.';
+  }
+  return message(e);
+}
 
 /** The frame of the pages before an account: the lockup, a line about this Keepsake, the words and the card. */
 function AuthFrame({ badge, intro, children, foot }: { badge?: ReactNode; intro: ReactNode; children: ReactNode; foot?: ReactNode }) {
@@ -75,7 +101,7 @@ export function SignIn({ session, onSignedIn }: { session: AuthSession; onSigned
   }
   const go = async () => {
     if (!guard.start()) return; setError(null);
-    try { onSignedIn(await signIn()); } catch (e) { setError(message(e)); } finally { guard.end(); }
+    try { onSignedIn(await signIn()); } catch (e) { setError(signInWords(e)); } finally { guard.end(); }
   };
   return (
     <AuthFrame badge={<Host />} intro={intro}>
@@ -92,7 +118,7 @@ export function SignIn({ session, onSignedIn }: { session: AuthSession; onSigned
         <p className="ks-auth-lede ks-narrow">What others get you stays a surprise. Your passkey signs you in; there is no password.</p>
         {session.setupNeeded && (
           <Notice title="Keepsake needs its first admin.">
-            Open the setup link in the file <code>setup-link.txt</code> in Keepsake’s data folder. It works once, for 24 hours; restarting Keepsake makes a new one.
+            Open the setup link in the file <code>keys/setup-link.txt</code>, beside Keepsake’s data folder. It works once, for 24 hours; a restart keeps it until then, and writes a new one after.
           </Notice>
         )}
         <button type="button" className="btn btn-primary btn-lg btn-block" onClick={() => void go()} aria-busy={busy} disabled={busy}>
@@ -118,8 +144,11 @@ export function Enrol({ kind, token, onSignedIn }: { kind: 'setup' | 'enrol'; to
   const [busy, guard] = useBusy();
   const [error, setError] = useState<string | null>(token ? null : 'This link is incomplete. Open the whole link again.');
   useEffect(() => {
-    if (kind !== 'enrol' || !token) return;
-    enrolOptions(token).then((s) => setInvitee(s.person.name), (e) => setError(message(e)));
+    if (!token) return;
+    if (kind === 'enrol') { enrolOptions(token).then((s) => setInvitee(s.person.name), (e) => setError(linkWords(kind, e))); return; }
+    // The setup link is checked before anyone types a name: without one the server answers "name: required" (400)
+    // for a good link and the 401 for a replaced or used one, so a stale link says so at once.
+    enrolOptions(token).then(() => undefined, (e) => { if (!(e instanceof ApiError && e.status === 400)) setError(linkWords(kind, e)); });
   }, [kind, token]);
   // The passkey's name follows the person's ("Inês’s iPhone") until they change it themselves.
   const who = kind === 'setup' ? name : invitee ?? '';
@@ -131,7 +160,7 @@ export function Enrol({ kind, token, onSignedIn }: { kind: 'setup' | 'enrol'; to
     if (!token) return;
     if (!guard.start()) return; setError(null);
     try { onSignedIn(await finishEnrol(await enrolOptions(token, kind === 'setup' ? name.trim() : undefined), label.trim() || 'Passkey')); }
-    catch (err) { setError(message(err)); } finally { guard.end(); }
+    catch (err) { setError(linkWords(kind, err)); } finally { guard.end(); }
   };
   const lede = kind === 'setup' ? 'You become the household’s admin. A passkey on this device signs you in; there is no password.' : 'A passkey on this device signs you in; there is no password.';
   return (
