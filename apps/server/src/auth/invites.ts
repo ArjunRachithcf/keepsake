@@ -1,7 +1,7 @@
 // One-time links to enrol a passkey (Philobiblos ADR 0010): the first admin's setup link, an admin's invite, your own
 // link for another device, and `keepsake recover`'s. The token travels in the link's #fragment (never in a request
 // line or a log) and the database keeps only its hash.
-import { closeSync, constants, fchmodSync, mkdirSync, openSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { ulid } from 'ulid';
@@ -51,19 +51,37 @@ export function openRecovery(db: Db, now = new Date()): boolean {
 }
 
 /**
- * Standalone start-up: while no admin can sign in, a fresh setup link (older ones stop working) is written to
- * KEEPSAKE_KEYS_DIR/setup-link.txt, readable by Keepsake's user only, never into the data folder: a backup of it must
- * not carry a live admin link (Gate routes L2). Never the first visitor: whoever can read the
- * data folder becomes the first admin. The log says where the file is, never the link.
+ * Standalone start-up: while no admin can sign in, a setup link is written to KEEPSAKE_KEYS_DIR/setup-link.txt,
+ * readable by Keepsake's user only, never into the data folder: a backup of it must not carry a live admin link (Gate
+ * routes L2). Never the first visitor: whoever can read the data folder becomes the first admin. The log says where
+ * the file is, never the link.
+ * A restart keeps the link someone may have been sent: while the file (a regular file, not a symlink) still holds the
+ * link of an open setup invite (unused, unexpired: its token hashes to that invite's), it stays as it is. Otherwise
+ * (none yet, expired, used, or the file gone or changed) a fresh one replaces it and older ones stop working.
  */
-export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir' | 'keysDir'>): string | null {
+export function ensureSetupLink(db: Db, cfg: Pick<Config, 'mode' | 'origin' | 'dataDir' | 'keysDir'>, now = new Date()): string | null {
   if (cfg.mode !== 'standalone' || !setupNeeded(db)) {
     if (!openRecovery(db)) removeSetupLink(cfg);
     return null;
   }
+  const kept = keptSetupLink(db, cfg, now);
+  if (kept) return kept;
   db.delete(t.invite).where(eq(t.invite.kind, 'setup')).run();
-  const { url } = createInvite(db, cfg, { kind: 'setup' });
+  const { url } = createInvite(db, cfg, { kind: 'setup', now });
   return writeLinkFile(cfg, url);
+}
+
+/** The link file, if it holds the link of the open setup invite (and only that). */
+function keptSetupLink(db: Db, cfg: Pick<Config, 'origin' | 'keysDir'>, now: Date): string | null {
+  const file = join(cfg.keysDir, SETUP_FILE);
+  try {
+    if (!lstatSync(file).isFile()) return null;
+    const m = /^(.+)\/setup#([A-Za-z0-9_-]{43})\n$/.exec(readFileSync(file, 'utf8'));
+    if (!m || m[1] !== cfg.origin) return null;
+    return findInvite(db, m[2], now)?.kind === 'setup' ? file : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `keepsake recover <admin id>`: a one-time link (24 hours) for an admin who lost every passkey, into the same file. */
