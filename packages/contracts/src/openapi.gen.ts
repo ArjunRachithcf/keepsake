@@ -927,7 +927,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made */
+        /** Imports the sheet in one transaction (every name mapped or skipped); nothing of the file is kept but the wishes and claims it made and a keyed fingerprint of its cells, so the same file is imported once (409 already imported, checked only once the plan is complete and valid; also for a second request while the first runs) */
         post: operations["importSheet"];
         delete?: never;
         options?: never;
@@ -1287,6 +1287,8 @@ export interface components {
             passkeys: components["schemas"]["Passkey"][];
         };
         Household: {
+            /** @description The household's IANA time zone (KEEPSAKE_TZ): every day and time is written in it, whatever the device's */
+            timeZone: string;
             /** @description Whether this server reads shop pages for "Add from a link" (ADR 0011: it lists shops, and egress is on) */
             addFromLink: boolean;
             mode: components["schemas"]["Mode"];
@@ -1676,6 +1678,8 @@ export interface components {
             name: string;
         };
         GuestPage: {
+            /** @description The household's IANA time zone (KEEPSAKE_TZ): every day and time is written in it, whatever the device's */
+            timeZone: string;
             /** @description The link's id: the guest page names it in X-Keepsake-Link */
             link: components["schemas"]["Id"];
             /** @enum {unknown} */
@@ -1831,6 +1835,8 @@ export interface components {
             /** @description Who shouldn't draw whom (both ways): for its host only, null for everyone else */
             exclusions: components["schemas"]["PersonRef"][][] | null;
             drawn: boolean;
+            /** @description When the names were (last) drawn: for its host only ("You drew the names · 26 Nov"), null for everyone else */
+            drawnAt: components["schemas"]["DateTime"] | null;
             /** @description Set when the names were drawn again after someone had opened theirs: everyone opens theirs again */
             redrawnAt: components["schemas"]["DateTime"] | null;
             /** @description How many have opened theirs (never who) */

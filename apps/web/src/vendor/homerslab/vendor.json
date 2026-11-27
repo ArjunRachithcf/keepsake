@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/ArjunRachithcf/homeward",
+  "path": "design/",
+  "commit": "96af36896ec966083f3f845d4683c76af6e98acc",
+  "license": "Apache-2.0 (fonts/inter.woff2: SIL Open Font License 1.1, fonts/OFL-inter.txt)",
+  "files": {
+    "tokens.css": "bdd609f552638d1724a8fcc72abe4eb0577898c9ce064ee6e2714db6df462b3a",
+    "components.css": "051322387dc4a9238ea013d2b0ada3037f2daffc578db2a43ba4b2457b824781",
+    "icons.js": "8d9428a9ea3f6daa4c2c5a6ed65a1c0d7d7a76842a96c5fe135c4a0b65cf3141",
+    "motion.js": "c5983ff22501b6e69cb83c781948dcb65db169f094769b8cddb6bcf1e1553f86",
+    "mark.svg": "3db56c86af8b6b54da292b84e78f7689d9c38136013f95f614e8e853cac227b0",
+    "fonts/inter.woff2": "2a06f61c2b98e1063217b684b44c2862bd95e7b61858dcb297bd039eea9f4c9b",
+    "fonts/OFL-inter.txt": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+  }
+}

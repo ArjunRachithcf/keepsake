@@ -71,7 +71,7 @@ export const MESSAGES = [
   'someone in the household has a name like that: add something to tell them apart, or confirm',
   // the sheet import (M4, ADR 0005)
   'the file is not a CSV the importer reads', 'the file has more than 2000 rows', 'the file needs the columns Person and Item',
-  'map or skip every name in the file first', 'people and occasions: names of up to 200 characters, each to an id or null',
+  'map or skip every name in the file first', 'already imported', 'people and occasions: names of up to 200 characters, each to an id or null',
   // notices, push, reminders, thank-yous (M5, ADR 0010)
   'endpoint: a push service this Keepsake knows', 'keys: the subscription\'s p256dh and auth', 'sync: true or false', 'push is off on this server',
   'your own celebrations remind you a week before', 'it is thanked for already',

@@ -5,10 +5,18 @@
 // "Bought by", or nobody's imported reservation (Gate surprise H2: a skipped Bought row would be missing from its
 // person's list, which says it was bought). Applying
 // makes everything in one transaction, or nothing. Nothing of the file is kept but the wishes and claims it made: no
-// table holds it, no log gets it, and the plan names only what the admin needs to map.
+// table holds it, no log gets it, and the plan names only what the admin needs to map. One fingerprint stays: of the
+// file's cells, so the same file is never imported twice (409 "already imported": a double click, a second tab). It is
+// keyed (HMAC-SHA256 under a key derived from the sealing key, kept outside the database: `import.hmac:<hash>`), so a
+// backup of the database alone cannot be checked against a guessed sheet; with no sealing key it is a plain SHA-256
+// (`import.sha256:<hash>`). It is checked only once the plan is complete and valid, right before the writes, in the
+// same transaction: no answer tells a file seen before from one with a wrong mapping, and a file that is no repeat is
+// really imported (and audited), so guessing a sheet's cells costs real imports. Applying is one synchronous
+// transaction, so a second request waits for the first and then finds its fingerprint.
 //
 // Spreadsheet formulas never come through: a cell that starts with =, +, -, @, a tab or a carriage return loses those
 // characters (CSV injection, should anything be exported to a sheet again), links must be http(s) and prices numbers.
+import { createHash, createHmac } from 'node:crypto';
 import { and, count, eq, inArray, max } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import { asDb, type Db } from '../db/open';
@@ -204,6 +212,17 @@ function planOf(db: Db, i: ImportInput): { plan: Plan; make: NewWish[] } {
   return { plan, make };
 }
 
+/**
+ * The file's fingerprints: its cells (not its bytes: a byte order mark makes no other file) under each sealing key (the
+ * current one first, which a new import stores), and the plain SHA-256 (stored only when there is no key; still
+ * matched, for an import made before there was one).
+ */
+export function fingerprints(csv: string, keys: Buffer[]): string[] {
+  const cells = JSON.stringify(parseCsv(csv));
+  const keyed = keys.map((k) => `import.hmac:${createHmac('sha256', createHmac('sha256', k).update('keepsake-import-fingerprint').digest()).update(cells).digest('hex')}`);
+  return [...keyed, `import.sha256:${createHash('sha256').update(cells).digest('hex')}`];
+}
+
 const adminOnly = (me: Person) => { if (me.role !== 'admin') throw new Refused(403, 'admins only'); };
 
 /** The dry run: what applying would do. Nothing is written. */
@@ -213,12 +232,15 @@ export function dryRun(db: Db, me: Person, i: ImportInput): Plan {
 }
 
 /** Applies the plan in one transaction (every name mapped or skipped first). Returns what it made. */
-export function applyImport(db: Db, me: Person, i: ImportInput, tz = 'UTC'): { wishes: number; claims: number; skipped: number } {
+export function applyImport(db: Db, me: Person, i: ImportInput, tz = 'UTC', keys: Buffer[] = []): { wishes: number; claims: number; skipped: number } {
   adminOnly(me);
   return db.transaction((tx0) => {
     const tx = asDb(tx0);
     const { plan, make } = planOf(tx, i);
     if (!plan.ready) throw new Refused(409, 'map or skip every name in the file first');
+    // Only now, with the plan complete and valid: has this file been imported before?
+    const seen = fingerprints(i.csv, keys);
+    if (seen.some((key) => tx.select().from(t.setting).where(eq(t.setting.key, key)).get())) throw new Refused(409, 'already imported');
     const now = new Date().toISOString();
     const next = new Map<string, number>();
     for (const w of make) {
@@ -237,6 +259,7 @@ export function applyImport(db: Db, me: Person, i: ImportInput, tz = 'UTC'): { w
       }
     }
     tx.insert(t.audit).values({ id: ulid(), at: now, actorId: me.id, action: 'imported', subjectId: ulid() }).run();
+    tx.insert(t.setting).values({ key: seen[0]!, value: now }).run();
     return { wishes: plan.wishes, claims: plan.claims, skipped: plan.skipped.length };
   });
 }

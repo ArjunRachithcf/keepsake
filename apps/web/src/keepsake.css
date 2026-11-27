@@ -1,0 +1,308 @@
+/* Keepsake on HomersLab's design system (UI round 4). Loaded after the vendored kit (vendor/homerslab/tokens.css and
+   components.css), which stays as Homeward has it: only what Keepsake has and Homeward does not is here (the shell's
+   two layouts, posters, the draw card, wish rows, the made-here link, the app's sheets). Every colour comes from the
+   tokens; the posters keep their own four colourways. Phone: 640 px and below (the kit's phone breakpoint: the tab
+   bar, sheets from the bottom); wider: the floating glass sidebar; above 1000 px (the kit's split): two columns. */
+
+/* ======================================================================== the page and its wallpaper */
+html { background: var(--wall-base); }
+body.has-wallpaper { min-height: 100vh; min-height: 100dvh; }
+#root { min-height: 100vh; min-height: 100dvh; }
+.skip { position: absolute; left: 12px; top: -100px; z-index: var(--z-toast); padding: 10px 16px; border-radius: var(--radius-pill); background: var(--accent); color: var(--on-accent); text-decoration: none; font-weight: var(--weight-semibold); }
+.skip:focus { top: calc(12px + env(safe-area-inset-top)); }
+
+/* the logo: the kit's files, the light cut or the white one as the theme says (never the name retyped) */
+.ks-logo { display: flex; align-items: center; flex: none; }
+.ks-logo img { display: block; height: auto; }
+.ks-logo .logo-l { display: var(--logo-light, block); }
+.ks-logo .logo-d { display: var(--logo-dark, none); }
+.ks-logo-sm img { width: 108px; }
+.ks-logo-side img { width: 120px; }
+.ks-logo-lg img { width: 290px; max-width: 100%; }
+.ks-app-icon { display: block; flex: none; width: 96px; height: 96px; border-radius: var(--radius-icon); box-shadow: var(--mat-depth); }
+.ks-app-icon.is-sm { width: 56px; height: 56px; }
+
+/* the phone and the wider screens each show their own parts */
+@media (max-width: 640px) { .ks-wide { display: none !important; } }
+@media (min-width: 641px) { .ks-narrow { display: none !important; } }
+
+/* ======================================================================== the shell */
+.ks-shell { display: flex; align-items: flex-start; min-height: 100vh; min-height: 100dvh; }
+.ks-shell > .sidebar.glass { flex: none; z-index: var(--z-sticky); }
+.ks-main { flex: 1; min-width: 0; padding: 24px 40px 64px 32px; }
+.ks-page { width: 100%; max-width: 1000px; display: grid; gap: var(--space-6); align-content: start; }
+.ks-page:focus { outline: none; }
+@media (max-width: 640px) {
+  .ks-shell { display: block; }
+  /* the tab bar never covers the page: the last button clears it, the home indicator too */
+  .ks-main { padding: calc(14px + env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right)) calc(var(--tabbar-height) + 36px + env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left)); }
+  .ks-page { gap: 22px; }
+}
+@media (min-width: 641px) and (max-width: 860px) { .ks-main { padding: 20px 20px 48px 20px; } }
+
+/* the sidebar: My wishes, Family, Celebrations; Coming up; Household and the account at the foot. The chosen place is
+   a pill that slides to it on the snappy spring (the tab bar's lens, sideways) */
+.ks-side .nav { position: relative; }
+.ks-side .nav-item { position: relative; z-index: 1; }
+.ks-side .nav .nav-item[aria-current="page"] { background: transparent; }
+.ks-side .nav-item.is-here { background: color-mix(in srgb, var(--surface) 40%, transparent); }
+.ks-nav-lens { position: absolute; left: 0; right: 0; top: 0; z-index: 0; height: 36px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 72%, transparent); transform: translateY(var(--y, 0px)); opacity: 0; pointer-events: none; transition: transform var(--dur-snappy) var(--spring-snappy), height var(--dur-snappy) var(--spring-snappy), opacity var(--dur-fast); }
+.ks-nav-lens.is-on { opacity: 1; }
+.ks-nav-lens.is-still { transition: none; }
+.ks-side .nav-item .poster-small { width: 18px; height: 18px; border-radius: 5px; }
+.ks-side .me-row { width: 100%; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; transition: background-color var(--dur-fast), transform var(--dur-spring) var(--spring); }
+.ks-side .me-row:hover { background: var(--hover); }
+.ks-side .me-row:active { transform: scale(var(--press-scale)); transition-duration: var(--dur-fast), var(--dur-press); }
+.ks-brand { display: flex; align-items: center; height: var(--bar-height); padding: 0 8px; }
+
+/* the tab bar: three tabs (the kit's), never over the page's last button */
+.ks-tabbar { --n: 3; }
+@media (min-width: 641px) { .ks-tabbar { display: none; } }
+
+/* the phone's top line: the small lockup or the way back, and glass capsules for the actions */
+.ks-top { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.ks-top-end { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.ks-top .icon-btn { width: 40px; height: 40px; }
+.ks-top .icon-btn .icon { width: 20px; height: 20px; stroke-width: 1.8; }
+.ks-top .icon-btn .avatar { width: 30px; height: 30px; font-size: 13px; }
+.ks-top .topbar-back.is-plain { color: var(--text); padding: 0 14px; }
+
+/* a page's head: the large title, its line, its actions (on a phone in the top line instead) */
+.ks-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
+.ks-head h1 { font-size: var(--fs-large-title); line-height: var(--lh-title); font-weight: var(--weight-bold); letter-spacing: var(--tracking-large); text-wrap: balance; }
+.ks-head h1:focus { outline: none; }
+.ks-head .page-sub { margin-top: 8px; color: var(--text-2); max-width: 72ch; }
+.ks-head .page-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+.ks-head .page-ident { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.ks-head .eyebrow { font-size: var(--fs-sub); font-weight: var(--weight-semibold); color: var(--text-2); margin-bottom: 4px; }
+@media (min-width: 641px) { .ks-head { padding-top: 24px; } }
+@media (max-width: 640px) { .ks-head { flex-direction: column; align-items: stretch; } .ks-head .page-ident { gap: 14px; } }
+
+/* two columns on a desktop: the main list, and a rail of what sits beside it */
+.ks-two { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: var(--space-6); align-items: start; }
+.ks-two > * { min-width: 0; display: grid; gap: var(--space-6); align-content: start; }
+.ks-two.is-wide-rail { grid-template-columns: minmax(0, 1fr) 380px; }
+@media (max-width: 1000px) { .ks-two, .ks-two.is-wide-rail { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) { .ks-two, .ks-two > * { gap: 22px; } }
+
+/* ======================================================================== lists on the wallpaper */
+.ks-section { display: grid; min-width: 0; }
+.group.glass { background-color: var(--mat-thick); }
+.group-head .btn-plain { margin-left: auto; }
+.ks-stack { display: grid; gap: var(--space-4); }
+.ks-buttons { display: grid; gap: 10px; }
+.ks-buttons .btn { height: 44px; }
+.ks-buttons .btn:not(.btn-destructive):not(.btn-primary) { background: var(--mat-thick); }
+.row-error { font-size: var(--fs-sub); color: var(--red-text); margin-top: 4px; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.row-text { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.row-note { font-size: var(--fs-sub); color: var(--text); margin-top: 2px; white-space: normal; }
+.row-foot { font-size: var(--fs-foot); color: var(--text-2); }
+.row .row-form { display: flex; gap: 8px; align-items: center; width: 100%; }
+.row .row-form .input { flex: 1; min-width: 0; height: 36px; }
+.row-wrap { flex-wrap: wrap; }
+.row-wrap .row-trail { flex-wrap: wrap; }
+@media (max-width: 640px) { .row.row-wrap .row-trail { width: 100%; } }
+.row.is-busy { opacity: 0.6; }
+.badge { display: inline-flex; align-items: center; height: 20px; margin-left: 6px; padding: 0 8px; border-radius: var(--radius-pill); background: var(--fill); color: var(--text); font-size: 12px; font-weight: var(--weight-semibold); vertical-align: 1px; }
+
+/* a wish row: its name (a star when most wanted), price and celebration, the note; a giver's state below */
+.ks-wish { align-items: flex-start; }
+.ks-wish .row-title { white-space: normal; }
+.ks-wish .row-sub { white-space: normal; }
+.ks-wish .row-title.is-done { text-decoration: line-through; color: var(--text-2); }
+.ks-star { color: var(--orange); width: 14px; height: 14px; margin-right: 4px; vertical-align: -1px; display: inline-block; }
+.ks-taken { font-size: var(--fs-sub); font-weight: var(--weight-semibold); color: var(--accent); margin-top: 4px; }
+.ks-taken.is-other { color: var(--text-2); font-weight: var(--weight-medium); }
+.ks-group-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.ks-wish-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+@media (min-width: 1001px) { .ks-wish.has-trail .ks-wish-actions { margin-top: 8px; } }
+
+/* celebration chips: a row that scrolls sideways on a phone */
+.ks-chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+.ks-chips::-webkit-scrollbar { display: none; }
+.ks-chips .chip { height: 34px; flex: none; }
+.ks-chips .poster-small { width: 14px; height: 14px; border-radius: 4px; }
+@media (max-width: 640px) { .ks-chips { margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); } }
+
+/* ======================================================================== posters and the draw (Keepsake's own) */
+.poster {
+  --base: #0F3B34; --dot: #C2503E; --dot2: #D9A33B;
+  position: relative; overflow: hidden; padding: 20px; border-radius: var(--radius-card); color: #FFFFFF; background:
+    radial-gradient(circle at 84% 24%, var(--dot) 0 34px, transparent 35px),
+    radial-gradient(circle at 92% 82%, var(--dot2) 0 22px, transparent 23px),
+    var(--base);
+  box-shadow: var(--mat-depth);
+}
+.poster-pine { --base: #0F3B34; --dot: #C2503E; --dot2: #D9A33B; }
+.poster-berry { --base: #8E2445; --dot: #F7B8CB; --dot2: #F2C14E; }
+.poster-night { --base: #1C2A4A; --dot: #F1E3B5; --dot2: #8B9BC4; }
+.poster-gold { --base: #6B4E0F; --dot: #E2C275; --dot2: #C9A24A; }
+.poster > * { position: relative; max-width: 68%; }
+.poster-small { flex: none; width: 36px; height: 36px; padding: 0; border-radius: 10px; box-shadow: none; background:
+  radial-gradient(circle at 74% 28%, var(--dot) 0 6px, transparent 7px), radial-gradient(circle at 36% 70%, var(--dot2) 0 4px, transparent 5px), var(--base); }
+.poster-eyebrow { font-size: var(--fs-foot); font-weight: var(--weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; }
+.poster-title { margin-top: 30px; font-size: var(--fs-large-title); line-height: 1.1; font-weight: var(--weight-bold); letter-spacing: var(--tracking-large); }
+.poster-title:focus { outline: none; }
+.poster-sub { margin-top: 4px; font-size: var(--fs-sub); }
+.poster .btn { margin-top: 14px; background: #FFFFFF; color: var(--base); }
+.poster .btn-row .btn { margin-top: 0; }
+.poster .btn.is-soft { background: rgba(255, 255, 255, 0.16); color: #FFFFFF; }
+.poster-hero { min-height: 168px; }
+@media (min-width: 641px) { .poster-hero { min-height: 200px; padding: 28px; } .poster-hero .poster-title { font-size: 44px; } .poster-hero .poster-sub { font-size: var(--fs-body); } }
+.next-card { display: block; color: inherit; text-decoration: none; border-radius: var(--radius-card); transition: transform var(--dur-spring) var(--spring); }
+.next-card:active { transform: scale(0.98); transition-duration: var(--dur-press); }
+.next-card .poster { min-height: 150px; }
+.next-title { margin-top: 34px; font-size: var(--fs-title); line-height: 1.2; font-weight: var(--weight-bold); letter-spacing: var(--tracking-title); }
+
+.draw-card { position: relative; overflow: hidden; display: grid; gap: 4px; justify-items: start; min-height: 168px; padding: 20px; border-radius: var(--radius-card); background: #1C2A4A; color: #FFFFFF; box-shadow: var(--mat-depth); transition: background-color var(--dur-smooth) var(--spring-smooth); }
+.draw-card::after { content: ""; position: absolute; right: -36px; top: -36px; width: 140px; height: 140px; border-radius: 50%; background: #8B9BC4; opacity: 0.35; pointer-events: none; transition: background-color var(--dur-smooth); }
+.draw-card > * { position: relative; z-index: 1; }
+.draw-card.is-open { background: #0F3B34; }
+.draw-card.is-open::after { background: #D9A33B; }
+.draw-title { margin-top: 8px; font-size: var(--fs-large-title); line-height: 1.1; font-weight: var(--weight-bold); letter-spacing: var(--tracking-large); }
+.draw-card .btn { margin-top: 12px; background: #FFFFFF; color: #1C2A4A; }
+.draw-card .btn-text { margin-top: 10px; padding: 0; border: 0; background: none; color: #FFFFFF; font: inherit; font-size: var(--fs-sub); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.draw-progress { height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; margin-top: 8px; }
+.draw-progress > span { display: block; height: 100%; width: var(--value, 0%); background: var(--accent); border-radius: 3px; transition: width var(--dur-smooth) var(--spring-smooth); }
+/* the reveal: the card gives a little and springs back, its light swells, the name comes into focus. Short: under a
+   second, and nothing under reduced motion (the kit's rule sets every duration to 0) */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ks-draw-give { 0% { transform: scale(1); } 22% { transform: scale(0.965); } 100% { transform: scale(1); } }
+  @keyframes ks-draw-light { from { transform: scale(0.35); opacity: 0.1; } 55% { opacity: 0.55; } to { transform: scale(1); opacity: 0.35; } }
+  @keyframes ks-draw-name { from { opacity: 0; transform: translateY(14px) scale(0.92); filter: blur(10px); letter-spacing: 0.04em; } }
+  @keyframes ks-draw-line { from { opacity: 0; transform: translateY(6px); } }
+  .draw-card.is-revealing { animation: ks-draw-give var(--dur-bouncy) var(--spring-bouncy) both; }
+  .draw-card.is-revealing::after { animation: ks-draw-light var(--dur-reveal) var(--ease-out) both; }
+  .draw-card.is-revealing .draw-title { animation: ks-draw-name 620ms var(--ease-out) 90ms both; }
+  .draw-card.is-revealing .poster-eyebrow, .draw-card.is-revealing .poster-sub, .draw-card.is-revealing .btn-text { animation: ks-draw-line var(--dur-base) var(--ease-out) 260ms both; }
+}
+:root[data-motion="reduce"] .draw-card.is-revealing, :root[data-motion="reduce"] .draw-card.is-revealing * { animation: none !important; }
+
+/* the poster picker of a celebration's form */
+.ks-posters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; border: 0; padding: 0; margin: 0; }
+.ks-posters legend { margin-bottom: 8px; padding: 0; }
+.ks-poster-option { display: grid; justify-items: center; gap: 6px; padding: 8px; border-radius: var(--radius-inner); cursor: pointer; font-size: var(--fs-sub); }
+.ks-poster-option input { position: absolute; opacity: 0; pointer-events: none; }
+.ks-poster-option .poster-small { width: 44px; height: 44px; border-radius: 12px; transition: transform var(--dur-spring) var(--spring), box-shadow var(--dur-fast); }
+.ks-poster-option:has(input:checked) .poster-small { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--accent); transform: scale(1.04); }
+.ks-poster-option:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* a list of ticks (parents, for whom, who draws): each a real, labelled checkbox */
+.ks-checks { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; min-width: 0; }
+.ks-checks legend { padding: 0; margin-bottom: 6px; }
+.ks-checks-row { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.ks-check { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; }
+.ks-check input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex: none; }
+.ks-switch-row { display: flex; align-items: center; gap: 12px; }
+.ks-switch-row > span { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.ks-switch-row label { font-weight: var(--weight-medium); cursor: pointer; }
+.row.ks-switch-row { cursor: default; }
+
+/* ======================================================================== a link made here: under the button that made it */
+.ks-made { display: grid; gap: 10px; margin: 0 var(--row-pad-x) 14px; padding: 14px 16px; border-radius: var(--radius-inner); background: var(--accent-tint); }
+.ks-made b { font-weight: var(--weight-semibold); }
+.ks-made p { font-size: var(--fs-sub); color: var(--text); }
+.ks-made .cmd { background: var(--surface); }
+.ks-made .cmd code { color: var(--text); user-select: all; }
+.ks-made.is-indented { margin-left: calc(var(--row-pad-x) + 44px); }
+@media (max-width: 640px) { .ks-made.is-indented { margin-left: var(--row-pad-x); } }
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ks-made-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }
+  .ks-made { animation: ks-made-in var(--dur-smooth) var(--spring-smooth) both; }
+}
+
+/* ======================================================================== sign-in, setup and the guest page */
+.ks-auth { min-height: 100vh; min-height: 100dvh; padding: calc(20px + env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left)); }
+.ks-auth-inner { width: 100%; max-width: 1100px; margin: 0 auto; display: grid; gap: 16px; }
+.ks-auth-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.ks-auth-bar .pill { background: var(--mat-thick); }
+.ks-auth-split { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 64px; align-items: center; padding-top: 72px; }
+.ks-auth-intro { display: grid; gap: 20px; align-content: start; }
+.ks-auth-intro :is(h1, .ks-auth-display) { font-size: 52px; line-height: 1.05; font-weight: var(--weight-bold); letter-spacing: var(--tracking-large); max-width: 14ch; text-wrap: balance; }
+.ks-auth-intro .ks-soft { color: var(--text-2); }
+.ks-auth-intro > p:not(.ks-auth-display) { color: var(--text-2); font-size: var(--fs-headline); line-height: 1.45; max-width: 52ch; }
+.ks-auth-card { border-radius: 30px; padding: 32px 28px 28px; display: grid; gap: 18px; }
+.ks-auth-card .ks-card-head { display: flex; align-items: center; gap: 14px; }
+.ks-auth-card .btn-lg { height: 50px; }
+.ks-auth-card .group { background: color-mix(in srgb, var(--text) 5%, var(--mat-solid-thick)); box-shadow: none; }
+.ks-auth-title { font-size: 28px; line-height: 1.1; font-weight: var(--weight-bold); letter-spacing: var(--tracking-large); text-wrap: balance; }
+.ks-auth-title:focus { outline: none; }
+.ks-auth-lede { color: var(--text-2); font-size: var(--fs-headline); line-height: 1.4; }
+.ks-center { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.ks-plate { width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; background: var(--mat-plate); box-shadow: var(--mat-inner), var(--mat-depth); color: var(--accent); }
+.ks-plate .icon { width: 38px; height: 38px; stroke-width: 1.3; }
+.ks-auth .footnote { text-align: center; padding: 0 24px; }
+@media (max-width: 900px) {
+  .ks-auth-split { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-top: 16px; }
+  .ks-auth-intro :is(h1, .ks-auth-display) { font-size: 34px; }
+}
+@media (max-width: 640px) {
+  .ks-auth-intro { display: none; }
+  .ks-auth-card { padding: 32px 20px 24px; }
+  .ks-auth-card.is-hero { padding-top: 40px; justify-items: center; text-align: center; }
+  .ks-auth-card.is-hero .ks-card-head { flex-direction: column; }
+  .ks-auth-card.is-hero .group { text-align: left; width: 100%; }
+}
+.ks-guest { max-width: 1100px; margin: 0 auto; display: grid; gap: var(--space-6); }
+.ks-guest .ks-auth-bar .pill { height: 32px; padding: 0 14px; }
+
+/* ======================================================================== sheets: the app's own, never the browser's boxes */
+/* The native modal dialog holds the scrim and the kit's sheet: the page behind is inert, Escape asks to close. The
+   dialog itself is only the top layer's frame. */
+dialog.ks-dialog { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; overflow: visible; }
+dialog.ks-dialog::backdrop { background: transparent; }
+dialog.ks-dialog .sheet { overflow: hidden; }
+dialog.ks-dialog .sheet-body { min-height: 0; }
+.sheet-icon { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--pill-green-bg); color: var(--pill-green-ink); }
+.sheet-icon .icon { width: 22px; height: 22px; stroke-width: 2; }
+.sheet-icon.is-red { background: var(--pill-red-bg); color: var(--pill-red-ink); }
+.sheet-foot .btn { min-width: 96px; }
+.sheet-body > form { display: grid; gap: var(--space-4); }
+.sheet-body .notice { font-size: var(--fs-sub); }
+@media (max-width: 640px) {
+  .sheet-foot { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .sheet-foot .btn { min-width: 0; }
+}
+.ks-quote { padding: 12px 16px; border-radius: var(--radius-inner); background: color-mix(in srgb, var(--text) 6%, var(--mat-solid-thick)); font-weight: var(--weight-medium); }
+.ks-promises { display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; }
+.ks-promises li { display: flex; gap: 10px; align-items: flex-start; }
+.ks-promises li .icon { margin-top: 3px; color: var(--accent); }
+.ks-promises small { display: block; color: var(--text-2); font-size: var(--fs-sub); }
+.ks-pair { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ks-pair .select { flex: 1; min-width: 120px; }
+.input-short { max-width: 160px; }
+.textarea { font: inherit; }
+
+/* the glass level, in the account sheet */
+.ks-glass-pick .segmented { width: 100%; }
+
+/* ======================================================================== the import's dry run */
+.ks-import-table { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
+.ks-import-table th { text-align: left; font-size: var(--fs-sub); color: var(--text-2); font-weight: var(--weight-semibold); padding: 8px var(--row-pad-x); }
+.ks-import-table td { padding: 8px var(--row-pad-x); border-top: var(--hairline) solid var(--separator); vertical-align: middle; }
+.ks-import-table .select { min-width: 160px; }
+
+/* ======================================================================== motion: lists and screens */
+/* a page's rows insert and leave on motion.js's list transition (the kit's ::view-transition rules); the screen
+   pushes and pops between a list and its detail. Under reduced motion the kit cross-fades or cuts. */
+.loading { color: var(--text-2); padding: 12px var(--row-pad-x); }
+
+@media print { .ks-tabbar, .ks-side { display: none !important; } }
+
+/* rows wrapped in list items (a link row, a row with its made-here link): the separator between them all the same */
+.group > li:not(.row) { position: relative; list-style: none; }
+.group > li:not(.row) + li:not(.ks-made) > .row::before, .group > li:not(.row) + li.row::before, .group > li.row + li:not(.row):not(.ks-made) > .row::before {
+  content: ""; position: absolute; top: 0; left: var(--sep-inset); right: 0; border-top: var(--hairline) solid var(--separator);
+}
+.group > .ks-made:first-child { margin-top: 14px; }
+.group > .ks-made:only-child { margin: 14px; }
+@media (max-width: 1000px) {
+  .ks-two > .is-first-on-phone { order: -1; }
+  /* a guest's page on a phone: their name first, then the list, then the rest */
+  .ks-two.is-guest > * { display: contents; }
+  .ks-two.is-guest .ks-name-first { order: -1; }
+}
+
+/* A sheet on its way out takes no clicks (it is also inert): nothing in it runs twice. */
+.sheet.is-leaving, .scrim.is-leaving { pointer-events: none; }

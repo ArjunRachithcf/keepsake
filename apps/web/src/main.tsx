@@ -1,7 +1,16 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+// HomersLab's design system, vendored unchanged (src/vendor/homerslab, README.md there), then Keepsake's own look.
+import './vendor/homerslab/tokens.css';
+import './vendor/homerslab/components.css';
+import './vendor/homerslab/icons.js';
+import './vendor/homerslab/motion.js';
+import './keepsake.css';
 import { App } from './App';
-import './app.css';
+import { savedGlass, setGlass } from './motion';
+
+// This device's glass level (the account sheet sets it): there at once, before the first paint glides anywhere.
+setGlass(savedGlass(), false);
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
 

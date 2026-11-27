@@ -1,17 +1,16 @@
-// Family (spec §4): the grown-ups and the kids (with how many wishes wait for you); for admins, the household:
-// people, roles, kids' managers, one-time links, the currency, every guest link, and the sheet's one-time import.
-import { useEffect, useId, useState } from 'react';
-import { api, ApiError, message, type Celebration, type Home, type OneTimeLink, type PasskeyReset, type Passkeys, type Person } from '../api';
+// Family (spec §4): the grown-ups and the kids (with how many wishes wait for you), notifications on this device, and
+// standalone your passkeys and signing out. Admins reach the Household from here (and from the sidebar).
+import { useEffect, useState } from 'react';
+import { api, type Home, type Person } from '../api';
 import { roleLabel, useHousehold } from '../household';
-import { Field, Group, Link, Notice, PageHead, Sheet } from '../ui';
-import { LinksList } from '../links';
-import { ImportWizard } from '../import';
+import { Icon } from '../icons';
+import { AccountButton, You } from '../account';
 import { PushSwitch } from '../notify';
+import { Avatar, Group, Link, PageHead, TopLine } from '../ui';
 
 export function Family({ onSignOut }: { onSignOut?: () => void }) {
-  const { household, me } = useHousehold();
+  const { household, me, person } = useHousehold();
   const [waiting, setWaiting] = useState<Record<string, number>>({});
-  const [manage, setManage] = useState(false);
   useEffect(() => {
     api<Home>('/home').then((h) => {
       const n: Record<string, number> = {};
@@ -21,188 +20,39 @@ export function Family({ onSignOut }: { onSignOut?: () => void }) {
   }, []);
   const grownUps = household.people.filter((p) => p.role !== 'kid');
   const kids = household.people.filter((p) => p.role === 'kid');
+  const approvers = (p: Person) => {
+    const ms = p.managers.map((m) => (m === me.id ? 'you' : person(m)?.name)).filter(Boolean) as string[];
+    if (!ms.length) return 'the admins approve their wishes';
+    return `${ms.length === 1 ? ms[0] : `${ms.slice(0, -1).join(', ')} and ${ms.at(-1)}`} ${ms.length === 1 && ms[0] !== 'you' ? 'approves' : 'approve'} ${p.name}’s wishes`;
+  };
   const row = (p: Person) => (
-    <li className="row" key={p.id}>
-      <Link to={`/family/${p.id}`} className="row-link">
-        <span className="avatar" aria-hidden="true">{p.name.slice(0, 1).toUpperCase()}</span>
-        <span className="row-text">
+    <li key={p.id} data-row={p.id}>
+      <Link to={`/family/${p.id}`} className="row row-link">
+        <span className="row-lead"><Avatar id={p.id} name={p.name} /></span>
+        <span className="row-main">
           <span className="row-title">{p.id === me.id ? `${p.name} (you)` : p.name}</span>
-          <span className="row-sub">{roleLabel(p)}{waiting[p.id] ? ` · ${waiting[p.id]} to approve` : ''}</span>
+          <span className="row-sub wrap">{roleLabel(p)}{p.role === 'kid' ? ` · ${approvers(p)}` : ''}</span>
         </span>
-        <span className="chevron" aria-hidden="true">›</span>
+        {waiting[p.id] ? <span className="pill pill-orange">{waiting[p.id]} to approve</span> : null}
+        <Icon name="chevronRight" className="icon row-chev" />
       </Link>
     </li>
   );
   return (
     <>
-      <PageHead title="Family" action={me.role === 'admin' ? <button type="button" className="btn" onClick={() => setManage(true)}>Household</button> : undefined} />
-      <Group title="Grown-ups">{grownUps.map(row)}</Group>
-      {kids.length > 0 && <Group title="Kids" footer="A kid’s new wish waits for a parent before anyone else sees it.">{kids.map(row)}</Group>}
-      <PushSwitch />
-      {onSignOut && <You onSignOut={onSignOut} />}
-      <Sheet title="Household" open={manage} onClose={() => setManage(false)}>
-        <ManageHousehold />
-      </Sheet>
-    </>
-  );
-}
-
-/** Adds someone; a name like a guest's by link is asked about first (their claims would read alike). */
-async function addPerson(name: string, role: Person['role']): Promise<boolean> {
-  try {
-    await api('/people', { method: 'POST', body: { name, role } });
-  } catch (e) {
-    if (!(e instanceof ApiError && e.status === 409 && e.message.startsWith('a guest by link has that name'))) throw e;
-    if (!confirm(`A guest by link is called ${name} too, so their claims would read alike. Add ${name} anyway?`)) return false;
-    await api('/people', { method: 'POST', body: { name, role, confirmName: true } });
-  }
-  return true;
-}
-
-function ManageHousehold() {
-  const { household, me, reload } = useHousehold();
-  const id = useId();
-  const [error, setError] = useState<string | null>(null);
-  const [link, setLink] = useState<{ name: string; link: OneTimeLink } | null>(null);
-  const [asked, setAsked] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [role, setRole] = useState<Person['role']>('adult');
-  const [currency, setCurrency] = useState(household.currency ?? '');
-  const standalone = household.mode === 'standalone';
-  const run = async (f: () => Promise<unknown>) => {
-    setError(null);
-    try { await f(); await reload(); } catch (e) { setError(message(e)); }
-  };
-  const grownUps = household.people.filter((p) => p.role !== 'kid');
-  const [celebrations, setCelebrations] = useState<Celebration[]>([]);
-  useEffect(() => { api<{ upcoming: Celebration[] }>('/celebrations').then((c) => setCelebrations(c.upcoming), () => undefined); }, []);
-  return (
-    <div className="stack">
-      {error && <Notice kind="error">{error}</Notice>}
-      {asked && <Notice>{asked}</Notice>}
-      <form className="stack" onSubmit={(e) => { e.preventDefault(); void run(() => api('/household', { method: 'PATCH', body: { currency: currency.trim().toUpperCase() || null } })); }}>
-        <Field label="Currency" id={`${id}-cur`} hint="Three letters (ISO 4217), like CHF, EUR or USD. Every price is in it.">
-          <input className="input input-short" id={`${id}-cur`} value={currency} maxLength={3} autoCapitalize="characters" onChange={(e) => setCurrency(e.target.value)} aria-describedby={`${id}-cur-hint`} />
-        </Field>
-        <button type="submit" className="btn">Save the currency</button>
-      </form>
-
-      {standalone && (
-        <form className="stack" onSubmit={(e) => { e.preventDefault(); void run(async () => { if (await addPerson(name.trim(), role)) setName(''); }); }}>
-          <h3 className="sub-title">Add someone</h3>
-          <Field label="Name" id={`${id}-name`}><input className="input" id={`${id}-name`} value={name} onChange={(e) => setName(e.target.value)} maxLength={60} /></Field>
-          <Field label="Role" id={`${id}-role`}>
-            <select className="input" id={`${id}-role`} value={role} onChange={(e) => setRole(e.target.value as Person['role'])}>
-              <option value="adult">Grown-up</option><option value="kid">Kid</option><option value="admin">Admin</option>
-            </select>
-          </Field>
-          <button type="submit" className="btn" disabled={!name.trim()}>Add</button>
-        </form>
-      )}
-      {!standalone && <p className="hint">People and roles come from HomersLab. Kids’ parents are set here.</p>}
-
-      <h3 className="sub-title">People</h3>
-      <ul className="group">
-        {household.people.map((p) => (
-          <li className="row manage-row" key={p.id}>
-            <p className="row-title">{p.name} <span className="row-sub">· {roleLabel(p)}{standalone && p.signsIn === false ? ' · no passkey yet' : ''}</span></p>
-            {p.role === 'kid' && (
-              <fieldset className="managers">
-                <legend className="row-sub">Parents (they approve {p.name}’s wishes; none ticked: the admins)</legend>
-                {grownUps.map((g) => (
-                  <label key={g.id} className="check">
-                    <input type="checkbox" checked={p.managers.includes(g.id)} onChange={(e) => void run(() => api(`/people/${p.id}/managers`, {
-                      method: 'PUT', body: { managerIds: e.target.checked ? [...p.managers, g.id] : p.managers.filter((m) => m !== g.id) },
-                    }))} /> {g.name}
-                  </label>
-                ))}
-              </fieldset>
-            )}
-            {standalone && p.signsIn === false && (
-              <button type="button" className="btn btn-sm" onClick={() => void run(async () => setLink({ name: p.name, link: await api<OneTimeLink>(`/people/${p.id}/invites`, { method: 'POST' }) }))}>
-                Make a sign-in link<span className="sr-only"> for {p.name}</span>
-              </button>
-            )}
-            {standalone && p.id !== me.id && p.signsIn && (
-              <button type="button" className="btn btn-sm" onClick={() => { if (confirm(`Sign ${p.name} out on every device? Their passkeys stay.`)) void run(() => api(`/people/${p.id}/sessions/end`, { method: 'POST' })); }}>
-                Sign out their devices<span className="sr-only"> ({p.name})</span>
-              </button>
-            )}
-            {standalone && p.signsIn && p.role !== 'admin' && (
-              <button type="button" className="btn btn-sm" onClick={() => {
-                if (!confirm(`Lost every device? ${p.name} is told at once and can call it off. Their passkeys are removed and they are signed out everywhere an hour after another admin says yes too (or a day from now); then you send them a new sign-in link.`)) return;
-                void run(async () => {
-                  setAsked(null);
-                  const r = await api<PasskeyReset>(`/people/${p.id}/passkeys/reset`, { method: 'POST' });
-                  if (r.state === 'done') setLink({ name: p.name, link: await api<OneTimeLink>(`/people/${p.id}/invites`, { method: 'POST' }) });
-                  else {
-                    const from = r.notBefore ? new Date(r.notBefore).toLocaleString() : 'tomorrow';
-                    setAsked(r.waitsFor === 'an_hour'
-                      ? `${r.approvedBy?.name ?? 'Another admin'} said yes: press Reset passkeys again from ${from} to reset them. ${p.name} is told, and can call it off until then.`
-                      : `Asked: press Reset passkeys again from ${from} to reset them, or sooner, an hour after another admin presses it too. ${p.name}, the other admins and the people of their draws are told; ${p.name} can call it off.`);
-                  }
-                });
-              }}>
-                Reset passkeys<span className="sr-only"> ({p.name})</span>
-              </button>
-            )}
-            {standalone && p.id !== me.id && (
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Remove ${p.name} and all their wishes?`)) void run(() => api(`/people/${p.id}`, { method: 'DELETE' })); }}>
-                Remove<span className="sr-only"> {p.name}</span>
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-      <LinksList title="Guest links" footer="Every share link and personal draw link but those to your own wishes, revoked ones too. No address is shown again. Revoking one stops it at once." />
-      <ImportWizard celebrations={celebrations} />
-      {link && (
-        <Notice title={`A one-time link for ${link.name}`}>
-          <p>Send it to them yourself. It works once, until {new Date(link.link.expiresAt).toLocaleDateString()}.</p>
-          <input className="input" readOnly value={link.link.url} aria-label={`Sign-in link for ${link.name}`} onFocus={(e) => e.target.select()} />
-        </Notice>
-      )}
-    </div>
-  );
-}
-
-/** Standalone: your passkeys (remove one: its sessions end; the last stays), another device, sign out, everywhere. */
-function You({ onSignOut }: { onSignOut: () => void }) {
-  const [link, setLink] = useState<OneTimeLink | null>(null);
-  const [keys, setKeys] = useState<Passkeys['passkeys']>([]);
-  const [error, setError] = useState<string | null>(null);
-  const load = () => api<Passkeys>('/me/passkeys').then((p) => setKeys(p.passkeys), (e) => setError(message(e)));
-  useEffect(() => { void load(); }, []);
-  const run = async (f: () => Promise<unknown>) => { setError(null); try { await f(); } catch (e) { setError(message(e)); } };
-  return (
-    <>
-      <Group title="Your passkeys" footer="Removing one signs out the devices it signed in. Your last one stays.">
-        {keys.map((k) => (
-          <li className="row row-inline" key={k.id}>
-            <span className="row-text">
-              <span className="row-title">{k.label}</span>
-              <span className="row-sub">{[k.lastUsedAt ? `used ${new Date(k.lastUsedAt).toLocaleDateString()}` : 'not used yet', k.invitedBy ? `from ${k.invitedBy}’s invite` : null].filter(Boolean).join(' · ')}</span>
-            </span>
-            {keys.length > 1 && (
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => { if (confirm(`Remove the passkey “${k.label}”?`)) void run(async () => { await api(`/me/passkeys/${encodeURIComponent(k.id)}`, { method: 'DELETE' }); await load(); }); }}>
-                Remove<span className="sr-only"> {k.label}</span>
-              </button>
-            )}
-          </li>
-        ))}
-      </Group>
-      <section className="section stack" aria-label="Your devices">
-        <button type="button" className="btn btn-block" onClick={() => void run(async () => setLink(await api<OneTimeLink>('/me/passkeys/invite', { method: 'POST' })))}>Sign in on another device</button>
-        {link && (
-          <Notice title="A one-time link for your other device">
-            <p>Open it there within 24 hours; it works once.</p>
-            <input className="input" readOnly value={link.url} aria-label="Your one-time link" onFocus={(e) => e.target.select()} />
-          </Notice>
-        )}
-        {error && <Notice kind="error">{error}</Notice>}
-        <button type="button" className="btn btn-block" onClick={onSignOut}>Sign out</button>
-        <button type="button" className="btn btn-block btn-danger" onClick={() => { if (confirm('Sign out on every device, this one too?')) void run(async () => { await api('/me/sessions/end', { method: 'POST' }); onSignOut(); }); }}>Sign out everywhere</button>
-      </section>
+      <TopLine end={<>{me.role === 'admin' && <Link to="/household" className="topbar-back is-plain"><Icon name="home" />&nbsp;Household</Link>}<AccountButton /></>} />
+      <PageHead title="Family" wideSub sub={`${household.people.length} ${household.people.length === 1 ? 'person' : 'people'}. Open someone to see their wishes, ask them something, or keep an idea for them.`}
+        actions={me.role === 'admin' ? <Link to="/household" className="btn"><Icon name="home" />Household</Link> : undefined} />
+      <div className="ks-two">
+        <div>
+          <Group title="Grown-ups" lead="md">{grownUps.map(row)}</Group>
+          {kids.length > 0 && <Group title="Kids" lead="md" footer="A kid’s new wish waits for a parent before anyone else sees it.">{kids.map(row)}</Group>}
+        </div>
+        <div>
+          <PushSwitch />
+          {onSignOut && <You onSignOut={onSignOut} />}
+        </div>
+      </div>
     </>
   );
 }

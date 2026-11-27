@@ -11,7 +11,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp, type BuiltApp } from '../src/app';
 import type { Db } from '../src/db/open';
@@ -118,6 +118,39 @@ describe('setting up a draw', () => {
       const g = await as(who).get(DRAW);
       expect(g.statusCode).toBe(200);
       expect(g.json().exclusions, who).toBeNull();
+    }
+  });
+});
+
+describe('when the names were drawn (UI round 4: "You drew the names · 26 Nov")', () => {
+  it('is the host\'s only to see', async () => {
+    const db = home();
+    fiveInDraw(db);
+    const as = await start(db);
+    expect((await as('alex').get(DRAW)).json().drawnAt).toBeNull();
+    const run = await as('alex').send('POST', `${DRAW}/run`);
+    expect(run.statusCode, run.body).toBe(200);
+    expect(run.json().drawnAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    for (const who of ['sam', 'robin', 'quinn', 'mia', 'leo', 'uma'] as const) {
+      const g = await as(who).get(DRAW);
+      expect(g.statusCode).toBe(200);
+      expect(g.json().drawnAt, who).toBeNull();
+    }
+  });
+
+  it('is not an admin\'s to see when the celebration has a host who is someone else', async () => {
+    const db = home();
+    fiveInDraw(db);
+    // Uma is an admin outside the draw, Sam an admin in it; Alex hosts
+    db.update(t.person).set({ role: 'admin', adminSince: NOW }).where(inArray(t.person.id, ['p_uma', 'p_sam'])).run();
+    const as = await start(db);
+    expect((await as('alex').send('POST', `${DRAW}/run`)).statusCode).toBe(200);
+    expect((await as('alex').get(DRAW)).json().drawnAt).toMatch(/^\d{4}-/);
+    for (const who of ['uma', 'sam'] as const) {
+      const g = await as(who).get(DRAW);
+      expect(g.statusCode, who).toBe(200);
+      expect(g.json().drawnAt, who).toBeNull();
+      expect(g.json().canManage, who).toBe(false);
     }
   });
 });
